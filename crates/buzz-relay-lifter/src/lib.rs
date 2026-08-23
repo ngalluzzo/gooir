@@ -729,6 +729,14 @@ fn prove_production_gate(
                 unresolved: Some(format!("{risk} can run before required_scope_for_kind")),
             });
         }
+        if let Some(reason) =
+            receiver_binding_resolution_reason(ingest, prior_statements, gate_match)
+        {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
 
         return Ok(GateProof {
             span,
@@ -1036,6 +1044,195 @@ fn collect_use_tree_paths(
     }
 }
 
+#[derive(Default)]
+struct ModeledReceiverVisitor {
+    names: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for ModeledReceiverVisitor {
+    fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
+        self.names.extend(modeled_receiver_bindings(expression));
+        visit::visit_expr_method_call(self, expression);
+    }
+}
+
+fn modeled_receiver_bindings(call: &ExprMethodCall) -> Vec<String> {
+    let receiver = strip_expression(&call.receiver);
+    match call.method.to_string().as_str() {
+        "to_hex" if expression_is_field(receiver, "event", "id") => vec!["event".to_owned()],
+        "community" if expression_is_path(receiver, "tenant") => vec!["tenant".to_owned()],
+        "is_http" | "pubkey" if expression_is_path(receiver, "auth") => {
+            vec!["auth".to_owned()]
+        }
+        "into" => match receiver {
+            Expr::Path(path) if path.path.is_ident("error") => vec!["error".to_owned()],
+            Expr::Path(path) if path.path.is_ident("msg") => vec!["msg".to_owned()],
+            _ => Vec::new(),
+        },
+        "clone"
+            if matches!(receiver, Expr::Unary(unary)
+                if matches!(unary.op, syn::UnOp::Deref(_))
+                    && expression_is_path(&unary.expr, "arc")) =>
+        {
+            vec!["arc".to_owned()]
+        }
+        "as_secs" if expression_is_field(receiver, "event", "created_at") => {
+            vec!["event".to_owned()]
+        }
+        "len" if expression_is_field(receiver, "event", "content") => vec!["event".to_owned()],
+        "is_serving_active" if modeled_serving_state_read(call) => {
+            vec!["state".to_owned(), "tenant".to_owned()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn receiver_binding_resolution_reason(
+    ingest: &ItemFn,
+    prior_statements: &[Stmt],
+    gate_match: &syn::ExprMatch,
+) -> Option<String> {
+    let mut receivers = ModeledReceiverVisitor::default();
+    for statement in prior_statements {
+        receivers.visit_stmt(statement);
+    }
+    receivers.visit_expr_match(gate_match);
+    if receivers.names.is_empty() {
+        return None;
+    }
+
+    for name in ["event", "tenant", "auth", "state"] {
+        if !receivers.names.contains(name) {
+            continue;
+        }
+        let parameter_count = ingest
+            .sig
+            .inputs
+            .iter()
+            .filter(|argument| match argument {
+                syn::FnArg::Typed(argument) => direct_pattern_binding(&argument.pat, name),
+                syn::FnArg::Receiver(_) => false,
+            })
+            .count();
+        if parameter_count != 1 {
+            return Some(format!(
+                "modeled method receiver `{name}` does not originate at its canonical parameter"
+            ));
+        }
+    }
+    for name in ["msg", "error", "arc"] {
+        if receivers.names.contains(name)
+            && ingest.sig.inputs.iter().any(|argument| match argument {
+                syn::FnArg::Typed(argument) => pattern_binds_name(&argument.pat, name),
+                syn::FnArg::Receiver(_) => false,
+            })
+        {
+            return Some(format!(
+                "modeled method receiver `{name}` is shadowed by an input parameter"
+            ));
+        }
+    }
+
+    for statement in prior_statements {
+        let identity_event_rebinding = matches!(statement, Stmt::Local(local)
+            if direct_pattern_binding(&local.pat, "event")
+                && event_rebinding_preserves_identity(local));
+        let arc_origin_rebinding = matches!(statement, Stmt::Local(local)
+            if direct_pattern_binding(&local.pat, "event")
+                && event_rebinding_has_arc_origin(local));
+        for name in &receivers.names {
+            if (name == "event" && identity_event_rebinding)
+                || (name == "arc" && arc_origin_rebinding)
+            {
+                continue;
+            }
+            if statement_introduces_name(statement, name) {
+                return Some(format!(
+                    "modeled method receiver `{name}` is shadowed before the gate"
+                ));
+            }
+        }
+        let statement_receivers = receiver_names_in_statement(statement);
+        for name in statement_receivers {
+            match name.as_str() {
+                "arc" if !arc_origin_rebinding => {
+                    return Some(
+                        "modeled method receiver `arc` has no pinned event-rebinding origin"
+                            .to_owned(),
+                    );
+                }
+                "msg" | "error" => {
+                    return Some(format!(
+                        "modeled method receiver `{name}` has no direct error-pattern origin"
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for arm in &gate_match.arms {
+        let arm_receivers = receiver_names_in_arm(arm);
+        for name in arm_receivers {
+            if name == "arc" {
+                return Some(
+                    "modeled method receiver `arc` has no pinned event-rebinding origin".to_owned(),
+                );
+            }
+            if pattern_binds_name(&arm.pat, &name) && !matches!(name.as_str(), "msg" | "error") {
+                return Some(format!(
+                    "modeled method receiver `{name}` is shadowed by a gate pattern"
+                ));
+            }
+            if expression_introduces_name(&arm.body, &name) {
+                return Some(format!(
+                    "modeled method receiver `{name}` is rebound inside the gate"
+                ));
+            }
+            if matches!(name.as_str(), "msg" | "error")
+                && !pattern_is_direct_error_binding(&arm.pat, &name)
+            {
+                return Some(format!(
+                    "modeled method receiver `{name}` has an unproven gate-pattern origin"
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn receiver_names_in_statement(statement: &Stmt) -> BTreeSet<String> {
+    let mut receivers = ModeledReceiverVisitor::default();
+    receivers.visit_stmt(statement);
+    receivers.names
+}
+
+fn receiver_names_in_arm(arm: &syn::Arm) -> BTreeSet<String> {
+    let mut receivers = ModeledReceiverVisitor::default();
+    receivers.visit_arm(arm);
+    receivers.names
+}
+
+fn expression_introduces_name(expression: &Expr, expected: &str) -> bool {
+    let mut bindings = BindingIntroductionVisitor {
+        expected,
+        found: false,
+    };
+    bindings.visit_expr(expression);
+    bindings.found
+}
+
+fn pattern_is_direct_error_binding(pattern: &Pat, expected: &str) -> bool {
+    matches!(
+        pattern,
+        Pat::TupleStruct(pattern)
+            if pattern.path.is_ident("Err")
+                && pattern.elems.len() == 1
+                && matches!(pattern.elems.first(), Some(Pat::Ident(binding))
+                    if binding.ident == expected && binding.subpat.is_none())
+    )
+}
+
 fn gate_checks_incoming_kind(
     ingest: &ItemFn,
     call: &ExprCall,
@@ -1249,6 +1446,15 @@ fn event_rebinding_preserves_identity(local: &syn::Local) -> bool {
     }
 }
 
+fn event_rebinding_has_arc_origin(local: &syn::Local) -> bool {
+    let Some(initializer) = &local.init else {
+        return false;
+    };
+    event_rebinding_preserves_identity(local)
+        && matches!(strip_expression(&initializer.expr), Expr::MethodCall(unwrap)
+            if unwrap.method == "unwrap_or_else")
+}
+
 fn expression_binding_name(expression: &Expr) -> Option<String> {
     match strip_expression(expression) {
         Expr::Reference(reference) => expression_binding_name(&reference.expr),
@@ -1424,15 +1630,16 @@ impl PreGateRiskVisitor {
             .last()
             .map(|segment| segment.ident.to_string())
             .unwrap_or_else(|| "<unknown>".to_owned());
-        let modeled = match name.as_str() {
-            "debug" => {
-                expression.tokens.to_string()
-                    == "event_id = % event_id_hex , kind = kind_u32 , \"ingest_event\""
-            }
-            "error" => syn::parse2::<syn::LitStr>(expression.tokens.clone())
-                .is_ok_and(|message| message.value() == "spawn_blocking panicked: {e}"),
-            "format" => modeled_format_macro(expression.tokens.clone()),
-            _ => false,
+        let modeled = if expression.path.is_ident("debug") {
+            expression.tokens.to_string()
+                == "event_id = % event_id_hex , kind = kind_u32 , \"ingest_event\""
+        } else if expression.path.is_ident("error") {
+            syn::parse2::<syn::LitStr>(expression.tokens.clone())
+                .is_ok_and(|message| message.value() == "spawn_blocking panicked: {e}")
+        } else if expression.path.is_ident("format") {
+            modeled_format_macro(expression.tokens.clone())
+        } else {
+            false
         };
         if !modeled {
             self.risks.push(format!(
@@ -2000,6 +2207,81 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             );
 
         assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn qualified_modeled_macro_names_are_not_accepted() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "spoofed::format!(\"invalid: {e}\");\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "macro `format!`");
+    }
+
+    #[test]
+    fn modeled_method_receivers_cannot_be_shadowed() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, tenant: Tenant, attacker: EvilTenant) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let tenant = attacker;\n    tenant.community();\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "receiver `tenant` is shadowed");
+    }
+
+    #[test]
+    fn modeled_auth_receivers_cannot_be_shadowed() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, auth: IngestAuth, attacker: IngestAuth) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let auth = attacker;\n    auth.is_http();\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "receiver `auth` is shadowed");
+    }
+
+    #[test]
+    fn modeled_arc_receiver_requires_the_pinned_rebinding_origin() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "(*arc).clone();\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "no pinned event-rebinding origin");
+    }
+
+    #[test]
+    fn arc_new_does_not_prove_an_unrelated_arc_receiver() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let event = std::sync::Arc::new(event);\n    (*arc).clone();\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "no pinned event-rebinding origin");
+    }
+
+    #[test]
+    fn modeled_error_receiver_names_cannot_collide_with_parameters() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, msg: Error) -> Result<(), Error> {",
+            )
+            .replace(
+                "Err(error) => return Err(error.into()),",
+                "Err(msg) => return Err(msg.into()),",
+            );
+
+        assert_unproven_gate_is_partial(&source, "receiver `msg` is shadowed by an input");
     }
 
     #[test]

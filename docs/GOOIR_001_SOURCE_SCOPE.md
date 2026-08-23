@@ -71,7 +71,12 @@ must also remain unshadowed by bindings or imports in any pre-gate nested scope,
 by parameters, or at module level, so a modeled name cannot redirect to an
 unrelated implementation. Module-level imports are checked against the pinned
 helper paths, and the roots of modeled qualified calls and modeled macro names
-must likewise remain unshadowed.
+must likewise remain unshadowed. Modeled macros must use their exact
+unqualified paths; matching only a qualified path's final segment is not
+evidence of the modeled macro. Modeled method receivers likewise require their
+canonical input binding or a pinned local origin. Receiver parameters, nested
+shadowing, and gate-pattern rebinding make coverage partial rather than letting
+a familiar method spelling stand in for binding resolution.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
