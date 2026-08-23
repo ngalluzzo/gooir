@@ -71,7 +71,11 @@ must also remain unshadowed by bindings or imports in any pre-gate nested scope,
 by parameters, or at module level, so a modeled name cannot redirect to an
 unrelated implementation. Module-level imports are checked against the pinned
 helper paths, and the roots of modeled qualified calls and modeled macro names
-must likewise remain unshadowed. Modeled macros must use their exact
+must likewise remain unshadowed. The canonical ingest event parameter and the
+scope helper's event reference must resolve exactly to the foreign
+`nostr::Event` type: an unqualified `Event` requires one unconditional exact
+`use nostr::Event`, with no same-name generic, item, alias, alternate import,
+or shadowed `nostr` root. Modeled macros must use their exact
 unqualified paths; matching only a qualified path's final segment is not
 evidence of the modeled macro. Every evaluated binding inside those macro
 tokens is also origin-checked: explicit format arguments and implicit debug or

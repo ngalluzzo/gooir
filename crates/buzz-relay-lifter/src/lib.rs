@@ -688,6 +688,12 @@ fn prove_production_gate(
                 unresolved: Some(reason),
             });
         }
+        if let Some(reason) = canonical_event_type_resolution_reason(ingest_file, ingest) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
         if let Some(reason) =
             module_helper_resolution_reason(ingest_file, prior_statements, gate_match)
         {
@@ -1025,6 +1031,122 @@ fn module_import_paths(file: &syn::File, introduced_name: &str) -> Vec<String> {
         collect_use_tree_paths(&item.tree, &[], introduced_name, &mut imports);
     }
     imports
+}
+
+fn canonical_event_type_resolution_reason(file: &syn::File, ingest: &ItemFn) -> Option<String> {
+    let scope = find_function(file, "required_scope_for_kind")?;
+    let Some(ingest_event_type) = direct_parameter_type(ingest, "event") else {
+        return Some(
+            "ingest_event_inner canonical event parameter does not resolve exactly to `nostr::Event`"
+                .to_owned(),
+        );
+    };
+    let Some(scope_event_type) = direct_parameter_type(scope, "event") else {
+        return Some(
+            "required_scope_for_kind event parameter does not resolve exactly to `&nostr::Event`"
+                .to_owned(),
+        );
+    };
+    let syn::Type::Reference(scope_event_reference) = scope_event_type else {
+        return Some(
+            "required_scope_for_kind event parameter does not resolve exactly to `&nostr::Event`"
+                .to_owned(),
+        );
+    };
+    if scope_event_reference.mutability.is_some()
+        || scope_event_reference.lifetime.is_some()
+        || !type_resolves_to_nostr_event(file, scope, &scope_event_reference.elem)
+    {
+        return Some(
+            "required_scope_for_kind event parameter does not resolve exactly to `&nostr::Event`"
+                .to_owned(),
+        );
+    }
+    if !type_resolves_to_nostr_event(file, ingest, ingest_event_type) {
+        return Some(
+            "ingest_event_inner canonical event parameter does not resolve exactly to `nostr::Event`"
+                .to_owned(),
+        );
+    }
+    None
+}
+
+fn direct_parameter_type<'a>(function: &'a ItemFn, name: &str) -> Option<&'a syn::Type> {
+    let mut matching = function.sig.inputs.iter().filter_map(|argument| {
+        let syn::FnArg::Typed(argument) = argument else {
+            return None;
+        };
+        direct_pattern_binding(&argument.pat, name).then_some(&*argument.ty)
+    });
+    let parameter_type = matching.next()?;
+    matching.next().is_none().then_some(parameter_type)
+}
+
+fn type_resolves_to_nostr_event(file: &syn::File, function: &ItemFn, ty: &syn::Type) -> bool {
+    let syn::Type::Path(event_type) = ty else {
+        return false;
+    };
+    if event_type.qself.is_some()
+        || event_type
+            .path
+            .segments
+            .iter()
+            .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+    {
+        return false;
+    }
+
+    let name = path_name(&event_type.path);
+    if name == "nostr::Event" {
+        return !function_generic_shadows(function, "nostr")
+            && module_name_is_unshadowed(file, "nostr");
+    }
+    name == "Event"
+        && !function_generic_shadows(function, "Event")
+        && module_name_is_unshadowed(file, "nostr")
+        && exact_unconditional_import(file, "Event", "nostr::Event")
+}
+
+fn function_generic_shadows(function: &ItemFn, expected: &str) -> bool {
+    function
+        .sig
+        .generics
+        .params
+        .iter()
+        .any(|parameter| match parameter {
+            syn::GenericParam::Type(parameter) => parameter.ident == expected,
+            syn::GenericParam::Const(parameter) => parameter.ident == expected,
+            syn::GenericParam::Lifetime(_) => false,
+        })
+}
+
+fn module_name_is_unshadowed(file: &syn::File, expected: &str) -> bool {
+    module_import_paths(file, expected).is_empty()
+        && file.items.iter().all(|item| {
+            !matches!(item, Item::Macro(_))
+                && (matches!(item, Item::Use(_)) || !item_introduces_name(item, expected))
+        })
+}
+
+fn exact_unconditional_import(file: &syn::File, introduced: &str, expected: &str) -> bool {
+    let imports = module_import_paths(file, introduced);
+    if imports.len() != 1 || imports.first().map(String::as_str) != Some(expected) {
+        return false;
+    }
+    let introducing_uses = file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Use(item) if use_tree_introduces_name(&item.tree, introduced) => Some(item),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    introducing_uses.len() == 1
+        && introducing_uses[0].attrs.is_empty()
+        && file.items.iter().all(|item| {
+            !matches!(item, Item::Macro(_))
+                && (matches!(item, Item::Use(_)) || !item_introduces_name(item, introduced))
+        })
 }
 
 fn collect_use_tree_paths(
@@ -2439,6 +2561,7 @@ pub const fn is_moderation_command_kind(kind: u32) -> bool {
 "#;
 
     const INGEST_SOURCE: &str = r#"
+use nostr::Event;
 fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {
     match kind {
         KIND_MESSAGE => Ok(Scope::MessagesWrite),
@@ -2483,7 +2606,7 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift.job_decisions
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
-        assert_eq!(lift.gate_call.line_start, 12);
+        assert_eq!(lift.gate_call.line_start, 13);
     }
 
     #[test]
@@ -2599,6 +2722,97 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             );
 
         assert_unproven_gate_is_partial(&source, "one canonical incoming event parameter");
+    }
+
+    #[test]
+    fn canonical_event_parameter_requires_the_pinned_foreign_type() {
+        let source = INGEST_SOURCE.replace(
+            "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+            "async fn ingest_event_inner(kind_u32: u32, event: AltEvent) -> Result<(), Error> {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly to `nostr::Event`");
+    }
+
+    #[test]
+    fn alternate_event_imports_make_type_resolution_unproven() {
+        let source = INGEST_SOURCE.replace("use nostr::Event;", "use spoofed::Event;");
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly");
+    }
+
+    #[test]
+    fn local_event_aliases_make_type_resolution_unproven() {
+        let source = INGEST_SOURCE.replace("use nostr::Event;", "type Event = nostr::Event;");
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly");
+    }
+
+    #[test]
+    fn same_name_generic_event_types_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+            "async fn ingest_event_inner<Event>(kind_u32: u32, event: Event) -> Result<(), Error> {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly to `nostr::Event`");
+    }
+
+    #[test]
+    fn conditional_event_imports_make_type_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "use nostr::Event;",
+            "#[cfg(feature = \"alternate\")]\nuse nostr::Event;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly");
+    }
+
+    #[test]
+    fn local_nostr_modules_do_not_prove_the_foreign_event_type() {
+        let source = INGEST_SOURCE
+            .replace("use nostr::Event;", "mod nostr { pub struct Event; }")
+            .replace("event: &Event", "event: &nostr::Event")
+            .replace("event: Event", "event: nostr::Event");
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly");
+    }
+
+    #[test]
+    fn unexpanded_item_macros_make_event_type_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "use nostr::Event;",
+            "make_nostr_module!();\nuse nostr::Event;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly");
+    }
+
+    #[test]
+    fn scope_event_parameter_requires_the_pinned_foreign_type() {
+        let source = INGEST_SOURCE.replace("event: &Event", "event: &AltEvent");
+
+        assert_unproven_gate_is_partial(&source, "does not resolve exactly to `&nostr::Event`");
+    }
+
+    #[test]
+    fn qualified_foreign_event_types_remain_exhaustive() {
+        let source = INGEST_SOURCE
+            .replace("use nostr::Event;\n", "")
+            .replace("event: &Event", "event: &nostr::Event")
+            .replace("event: Event", "event: nostr::Event");
+        let lift = lift_relay_ingest(
+            &source,
+            KIND_SOURCE,
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "revision",
+        )
+        .expect("qualified nostr::Event fixture lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(lift.coverage.unresolved.is_empty());
     }
 
     #[test]
