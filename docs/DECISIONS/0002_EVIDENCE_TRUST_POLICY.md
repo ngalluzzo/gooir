@@ -26,7 +26,7 @@ authority registry.
 
 Multiple claims for the same exact contract remain ambiguous before trust is
 considered. A trusted claim never silently overrides a conflicting claim.
-Contract-version bridges preserve evidence and cannot mint trust.
+Contract-version bridges preserve payload and evidence and cannot mint trust.
 
 ## Rationale
 
@@ -44,6 +44,8 @@ onto a different assertion.
 ## Consequences
 
 - Existing test fixtures must explicitly construct a trust policy.
+- Graphs serialized before `attester` and `subject_digest` became required
+  conformance fields will fail deserialization instead of silently degrading.
 - Loaded graphs with self-reported verified evidence resolve as unknown unless
   the active host admits the exact operation-and-claim binding.
 - A later package may verify signed result envelopes and construct policies; it
@@ -55,5 +57,5 @@ onto a different assertion.
 
 The resolver tests cover default denial; exact admission; operation, payload, and
 attestation binding; conflicting admitted claims; and rejection of a bridge that
-changes evidence. The retry-safety integration tests demonstrate that a valid
-contract-version bridge preserves rather than creates trust.
+changes evidence or payload. The retry-safety integration tests demonstrate that
+a valid contract-version bridge preserves rather than creates trust.

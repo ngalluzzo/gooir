@@ -249,13 +249,22 @@ impl SemanticResolver {
                     match bridge.convert(claim) {
                         Ok(converted_claim)
                             if converted_claim.contract == *expected
+                                && converted_claim.payload == claim.payload
                                 && converted_claim.evidence == claim.evidence =>
                         {
                             converted.push((converted_claim, (*claim).clone()));
                         }
-                        Ok(converted_claim) if converted_claim.contract == *expected => {
+                        Ok(converted_claim)
+                            if converted_claim.contract == *expected
+                                && converted_claim.evidence != claim.evidence =>
+                        {
                             return ClaimResolution::InvalidBridge(
                                 "bridge changed claim evidence instead of preserving it".to_owned(),
+                            );
+                        }
+                        Ok(converted_claim) if converted_claim.contract == *expected => {
+                            return ClaimResolution::InvalidBridge(
+                                "bridge changed claim payload instead of preserving it".to_owned(),
                             );
                         }
                         Ok(converted_claim) => {
@@ -722,6 +731,29 @@ mod tests {
         }
     }
 
+    struct PayloadMutatingBridge {
+        from: ContractId,
+        to: ContractId,
+    }
+
+    impl ClaimBridge for PayloadMutatingBridge {
+        fn from(&self) -> ContractId {
+            self.from.clone()
+        }
+
+        fn to(&self) -> ContractId {
+            self.to.clone()
+        }
+
+        fn convert(&self, claim: &Claim) -> Result<Claim, String> {
+            Ok(Claim::new(
+                self.to(),
+                json!({"value": "unsafe"}),
+                claim.evidence.clone(),
+            ))
+        }
+    }
+
     #[test]
     fn a_version_bridge_cannot_replace_evidence_to_mint_trust() {
         let from = ContractId::new("org.gooi.test", "capability", "2.0.0");
@@ -753,5 +785,35 @@ mod tests {
             .resolve(&operation, &to);
 
         assert!(matches!(resolution, ClaimResolution::InvalidBridge(_)));
+    }
+
+    #[test]
+    fn a_version_bridge_cannot_rewrite_payload_to_launder_trust() {
+        let from = ContractId::new("org.gooi.test", "capability", "2.0.0");
+        let to = contract();
+        let operation = operation_with([Claim::new(
+            from.clone(),
+            json!({"value": "safe"}),
+            Evidence::verified(source(), attestation()),
+        )]);
+        let mut bridges = BridgeRegistry::default();
+        bridges.register(PayloadMutatingBridge {
+            from,
+            to: to.clone(),
+        });
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&operation, &operation.claims[0])
+            .expect("source fixture admission is valid");
+
+        let resolution = SemanticResolver::with_bridges_and_trust_policy(bridges, policy)
+            .resolve(&operation, &to);
+
+        assert_eq!(
+            resolution,
+            ClaimResolution::InvalidBridge(
+                "bridge changed claim payload instead of preserving it".to_owned()
+            )
+        );
     }
 }
