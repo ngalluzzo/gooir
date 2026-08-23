@@ -799,10 +799,28 @@ fn shadowed_unqualified_helper(ingest: &ItemFn, prior_statements: &[Stmt]) -> Op
 }
 
 fn statement_introduces_name(statement: &Stmt, expected: &str) -> bool {
-    match statement {
-        Stmt::Local(local) => pattern_binds_name(&local.pat, expected),
-        Stmt::Item(item) => item_introduces_name(item, expected),
-        Stmt::Expr(_, _) | Stmt::Macro(_) => false,
+    let mut bindings = BindingIntroductionVisitor {
+        expected,
+        found: false,
+    };
+    bindings.visit_stmt(statement);
+    bindings.found
+}
+
+struct BindingIntroductionVisitor<'a> {
+    expected: &'a str,
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for BindingIntroductionVisitor<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        self.found |= item_introduces_name(item, self.expected);
+        visit::visit_item(self, item);
+    }
+
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.found |= pattern.ident == self.expected;
+        visit::visit_pat_ident(self, pattern);
     }
 }
 
@@ -1965,6 +1983,21 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "let required = match required_scope_for_kind(kind_u32, &event) {",
             "use spoofed::debug;\n    debug!(event_id = % event_id_hex, kind = kind_u32, \"ingest_event\");\n    let required = match required_scope_for_kind(kind_u32, &event) {",
         );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn nested_local_helper_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "{\n        let verify_event = persist_before_gate;\n        verify_event(&event)?;\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
 
         assert_unproven_gate_is_partial(&source, "shadows modeled helper");
     }

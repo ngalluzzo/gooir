@@ -67,10 +67,11 @@ ambiguous, qualified, or shadowed arguments, ignored results, conditional or
 dead calls, non-terminating rejection arms, mutation, divergence, and
 unrecognized pre-gate calls or futures all degrade the affected decisions to
 unknown. The accepted unqualified scope, kind, validation, and result helpers
-must also remain unshadowed by local bindings, parameters, or imports so a
-modeled name cannot redirect to an unrelated implementation. Module-level
-imports are checked against the pinned helper paths, and the roots of modeled
-qualified calls and modeled macro names must likewise remain unshadowed.
+must also remain unshadowed by bindings or imports in any pre-gate nested scope,
+by parameters, or at module level, so a modeled name cannot redirect to an
+unrelated implementation. Module-level imports are checked against the pinned
+helper paths, and the roots of modeled qualified calls and modeled macro names
+must likewise remain unshadowed.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
