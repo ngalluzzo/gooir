@@ -139,11 +139,24 @@ pub fn lift_command_tree(
     }
 
     let mut commands = Vec::new();
-    let mut unresolved = command_attributes
-        .unresolved
-        .into_iter()
-        .map(|reason| format!("Cli.command: {reason}"))
+    let mut unresolved = parser
+        .attrs
+        .iter()
+        .filter_map(legacy_command_attribute_name)
+        .map(|name| format!("Cli: legacy `{name}` command attribute is not modeled"))
         .collect::<Vec<_>>();
+    if has_cfg(&parser.attrs) {
+        unresolved.push("conditional Cli parser surface".to_owned());
+    }
+    unresolved.extend(
+        command_attributes
+            .unresolved
+            .into_iter()
+            .map(|reason| format!("Cli.command: {reason}")),
+    );
+    if has_cfg(&command_field.attrs) {
+        unresolved.push("conditional Cli.command field".to_owned());
+    }
     let mut stack = Vec::new();
     visit_command_enum(
         source,
@@ -307,6 +320,12 @@ struct CommandAttributes {
 fn command_attr(attributes: &[Attribute]) -> CommandAttributes {
     let mut result = CommandAttributes::default();
     for attribute in attributes {
+        if let Some(name) = legacy_command_attribute_name(attribute) {
+            result
+                .unresolved
+                .push(format!("legacy `{name}` command attribute is not modeled"));
+            continue;
+        }
         if !attribute.path().is_ident("command") {
             continue;
         }
@@ -433,6 +452,12 @@ struct CommandContainerAttributes {
 fn command_container_attr(attributes: &[Attribute]) -> CommandContainerAttributes {
     let mut result = CommandContainerAttributes::default();
     for attribute in attributes {
+        if let Some(name) = legacy_command_attribute_name(attribute) {
+            result.unresolved.push(format!(
+                "legacy `{name}` command container attribute is not modeled"
+            ));
+            continue;
+        }
         if !attribute.path().is_ident("command") {
             continue;
         }
@@ -467,6 +492,16 @@ fn command_container_attr(attributes: &[Attribute]) -> CommandContainerAttribute
         }
     }
     result
+}
+
+fn legacy_command_attribute_name(attribute: &Attribute) -> Option<&'static str> {
+    if attribute.path().is_ident("clap") {
+        Some("clap")
+    } else if attribute.path().is_ident("structopt") {
+        Some("structopt")
+    } else {
+        None
+    }
 }
 
 fn has_cfg(attributes: &[Attribute]) -> bool {
@@ -618,6 +653,24 @@ enum MessagesCmd {
     }
 
     #[test]
+    fn conditional_root_command_fields_make_coverage_partial() {
+        let source = FIXTURE.replace(
+            "#[command(subcommand)]\n    command",
+            "#[command(subcommand)]\n    #[cfg_attr(feature = \"alternate\", clap(name = \"job\"))]\n    command",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("conditional root command wiring remains visible");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(
+            lift.coverage
+                .unresolved
+                .iter()
+                .any(|reason| reason.contains("conditional Cli.command field"))
+        );
+    }
+
+    #[test]
     fn enum_rename_all_uses_clap_casing_semantics() {
         let source = FIXTURE.replace(
             "#[derive(Subcommand)]\nenum Cmd",
@@ -707,6 +760,36 @@ enum MessagesCmd {
                 .iter()
                 .any(|command| command.path == ["set-profile"])
         );
+    }
+
+    #[test]
+    fn legacy_clap_variant_attributes_make_coverage_partial() {
+        let source = FIXTURE.replace(
+            "#[command(name = \"set-profile\")]",
+            "#[clap(name = \"job\")]",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("legacy Clap syntax remains visible as a partial lift");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(lift.coverage.unresolved.iter().any(|reason| {
+            reason.contains("set-profile: legacy `clap` command attribute is not modeled")
+        }));
+    }
+
+    #[test]
+    fn legacy_structopt_container_attributes_make_coverage_partial() {
+        let source = FIXTURE.replace(
+            "#[derive(Subcommand)]\nenum Cmd",
+            "#[derive(Subcommand)]\n#[structopt(rename_all = \"snake_case\")]\nenum Cmd",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("legacy StructOpt syntax remains visible as a partial lift");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(lift.coverage.unresolved.iter().any(|reason| {
+            reason.contains("Cmd: legacy `structopt` command container attribute is not modeled")
+        }));
     }
 
     #[test]

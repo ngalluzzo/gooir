@@ -56,11 +56,13 @@ predicates, evaluates every preceding match arm for each lifted job-kind value,
 and proves a direct top-level `required_scope_for_kind` match gate inside
 `ingest_event_inner`. Exhaustive coverage requires that the gate receive the
 latest incoming-event-derived kind binding, return an error through every
-`Err` arm including an unguarded catch-all, and follow only the explicitly
-modeled validation/read calls used by the pinned handler. Wrong or shadowed
-arguments, ignored results, conditional or dead calls, non-terminating
-rejection arms, mutation, divergence, and unrecognized pre-gate calls all
-degrade the affected decisions to unknown.
+`Err`-matching arm (including guarded or-pattern alternatives) with an
+unguarded catch-all, and follow only the explicitly modeled validation/read
+calls and awaited futures used by the pinned handler. A direct kind parameter
+is accepted only as the unique canonical `kind_u32` parameter. Wrong,
+ambiguous, or shadowed arguments, ignored results, conditional or dead calls,
+non-terminating rejection arms, mutation, divergence, and unrecognized
+pre-gate calls or futures all degrade the affected decisions to unknown.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
@@ -91,7 +93,10 @@ aliases, exact spans, and every group/leaf path. Implicit names and enum-level
 `#[command(skip)]` variants are omitted. Conditional variants, missing
 referenced enums, flattening, external subcommands, unparsed alias shapes, or
 any other unhandled variant-level invocation attribute make coverage partial;
-partial trees cannot project positive command-surface relations.
+partial trees cannot project positive command-surface relations. Deprecated but
+still supported `#[clap(...)]` and `#[structopt(...)]` attributes are detected
+at parser, command-field, enum, and variant boundaries and conservatively make
+coverage partial rather than bypassing the `command`-syntax parser.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-cli.lift.json`. It was produced with:

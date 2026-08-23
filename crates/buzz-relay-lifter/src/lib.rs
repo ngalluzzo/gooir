@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt};
 use syn::{
     BinOp, Expr, ExprCall, ExprMacro, ExprMethodCall, Item, ItemFn, Pat, Stmt, Token,
-    parse::{Parse, ParseStream},
+    parse::{Parse, ParseStream, Parser},
     spanned::Spanned,
     visit::{self, Visit},
 };
@@ -209,13 +209,11 @@ fn find_function<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemFn> {
 }
 
 fn direct_scope_match(function: &ItemFn) -> Option<&syn::ExprMatch> {
-    function.block.stmts.iter().find_map(|statement| {
-        let syn::Stmt::Expr(Expr::Match(expression), _) = statement else {
-            return None;
-        };
-        matches!(&*expression.expr, Expr::Path(path) if path.path.is_ident("kind"))
-            .then_some(expression)
-    })
+    let [syn::Stmt::Expr(Expr::Match(expression), _)] = function.block.stmts.as_slice() else {
+        return None;
+    };
+    matches!(&*expression.expr, Expr::Path(path) if path.path.is_ident("kind"))
+        .then_some(expression)
 }
 
 fn direct_u32_constants(file: &syn::File) -> BTreeMap<String, u32> {
@@ -686,6 +684,19 @@ fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError
             });
         }
 
+        let mut gate_arm_risks = PreGateRiskVisitor::default();
+        for arm in &gate_match.arms {
+            gate_arm_risks.visit_arm(arm);
+        }
+        if let Some(risk) = gate_arm_risks.risks.first() {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(format!(
+                    "{risk} can run inside the required_scope_for_kind gate"
+                )),
+            });
+        }
+
         let mut risks = PreGateRiskVisitor::default();
         for statement in prior_statements {
             risks.visit_stmt(statement);
@@ -768,6 +779,22 @@ fn gate_checks_incoming_kind(
             syn::FnArg::Receiver(_) => None,
         })
         .collect::<Vec<_>>();
+    if event_parameters.len() != 1 || event_parameters[0] != "event" {
+        return Err(
+            "ingest_event_inner does not have one canonical incoming event parameter".to_owned(),
+        );
+    }
+    if call.args.len() != 2
+        || call
+            .args
+            .get(1)
+            .and_then(expression_binding_name)
+            .is_none_or(|argument| argument != "event")
+    {
+        return Err(
+            "required_scope_for_kind does not receive the canonical incoming event".to_owned(),
+        );
+    }
 
     if let Some(local) = prior_statements.iter().rev().find_map(|statement| {
         let Stmt::Local(local) = statement else {
@@ -810,10 +837,7 @@ fn gate_checks_incoming_kind(
                     .to_owned(),
             );
         };
-        if event_parameters
-            .iter()
-            .any(|parameter| parameter == &argument_name)
-        {
+        if argument_name == "event" {
             return Ok(());
         }
         return Err(
@@ -822,15 +846,32 @@ fn gate_checks_incoming_kind(
         );
     }
 
-    if ingest.sig.inputs.iter().any(|argument| {
-        matches!(
-            argument,
-            syn::FnArg::Typed(argument)
-                if matches!(&*argument.pat, Pat::Ident(ident)
-                    if ident.ident == kind_name && kind_name.contains("kind"))
-        )
-    }) {
+    let kind_parameters = ingest
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|argument| match argument {
+            syn::FnArg::Typed(argument) => match &*argument.pat {
+                Pat::Ident(ident) if ident.ident.to_string().contains("kind") => {
+                    Some(ident.ident.to_string())
+                }
+                _ => None,
+            },
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if kind_name == "kind_u32" && kind_parameters == [kind_name.clone()] {
         return Ok(());
+    }
+
+    if kind_parameters
+        .iter()
+        .any(|parameter| parameter == &kind_name)
+    {
+        return Err(
+            "required_scope_for_kind direct kind parameter is ambiguous or not the canonical incoming kind"
+                .to_owned(),
+        );
     }
 
     Err("required_scope_for_kind kind argument is not derived from the incoming event".to_owned())
@@ -848,7 +889,7 @@ fn gate_rejection_returns(gate_match: &syn::ExprMatch) -> bool {
     let mut saw_error_arm = false;
     let mut saw_catch_all_error_arm = false;
     for arm in &gate_match.arms {
-        if pattern_constructor(&arm.pat).is_none_or(|constructor| constructor != "Err") {
+        if !pattern_can_match_error(&arm.pat) {
             continue;
         }
         saw_error_arm = true;
@@ -858,6 +899,20 @@ fn gate_rejection_returns(gate_match: &syn::ExprMatch) -> bool {
         saw_catch_all_error_arm |= pattern_is_catch_all_error(&arm.pat);
     }
     saw_error_arm && saw_catch_all_error_arm
+}
+
+fn pattern_can_match_error(pattern: &Pat) -> bool {
+    match pattern {
+        Pat::TupleStruct(pattern) => pattern
+            .path
+            .segments
+            .last()
+            .is_none_or(|segment| segment.ident != "Ok"),
+        Pat::Or(pattern) => pattern.cases.iter().any(pattern_can_match_error),
+        Pat::Guard(pattern) => pattern_can_match_error(&pattern.pat),
+        Pat::Paren(pattern) => pattern_can_match_error(&pattern.pat),
+        _ => true,
+    }
 }
 
 fn pattern_is_catch_all_error(pattern: &Pat) -> bool {
@@ -870,23 +925,14 @@ fn pattern_is_catch_all_error(pattern: &Pat) -> bool {
                 .is_some_and(|segment| segment.ident == "Err")
                 && pattern.elems.len() == 1 =>
         {
-            matches!(pattern.elems.first(), Some(Pat::Ident(_) | Pat::Wild(_)))
+            matches!(pattern.elems.first(), Some(Pat::Wild(_)))
+                || matches!(pattern.elems.first(), Some(Pat::Ident(ident)) if ident.subpat.is_none())
         }
+        Pat::Or(pattern) => pattern.cases.iter().any(pattern_is_catch_all_error),
         Pat::Paren(pattern) => pattern_is_catch_all_error(&pattern.pat),
+        Pat::Ident(pattern) => pattern.subpat.is_none(),
+        Pat::Wild(_) => true,
         _ => false,
-    }
-}
-
-fn pattern_constructor(pattern: &Pat) -> Option<String> {
-    match pattern {
-        Pat::TupleStruct(pattern) => pattern
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.to_string()),
-        Pat::Guard(pattern) => pattern_constructor(&pattern.pat),
-        Pat::Paren(pattern) => pattern_constructor(&pattern.pat),
-        _ => None,
     }
 }
 
@@ -970,12 +1016,21 @@ impl<'ast> Visit<'ast> for PreGateRiskVisitor {
 
     fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
         let method = expression.method.to_string();
-        if !allowed_pre_gate_method(&method) {
+        if !allowed_pre_gate_method_call(expression) && !modeled_serving_state_read(expression) {
             self.risks.push(format!(
                 "unrecognized method call `{method}` with unproven effects"
             ));
         }
         visit::visit_expr_method_call(self, expression);
+    }
+
+    fn visit_expr_await(&mut self, expression: &'ast syn::ExprAwait) {
+        let modeled = allowed_awaited_expression(&expression.base);
+        visit::visit_expr_await(self, expression);
+        if !modeled {
+            self.risks
+                .push("an unmodeled awaited future with unproven effects".to_owned());
+        }
     }
 
     fn visit_expr_macro(&mut self, expression: &'ast ExprMacro) {
@@ -997,10 +1052,46 @@ impl PreGateRiskVisitor {
             .last()
             .map(|segment| segment.ident.to_string())
             .unwrap_or_else(|| "<unknown>".to_owned());
-        if !matches!(name.as_str(), "debug" | "error" | "format") {
-            self.risks
-                .push(format!("unrecognized macro `{name}!` that may diverge"));
+        let modeled = match name.as_str() {
+            "debug" => {
+                expression.tokens.to_string()
+                    == "event_id = % event_id_hex , kind = kind_u32 , \"ingest_event\""
+            }
+            "error" => syn::parse2::<syn::LitStr>(expression.tokens.clone())
+                .is_ok_and(|message| message.value() == "spawn_blocking panicked: {e}"),
+            "format" => modeled_format_macro(expression.tokens.clone()),
+            _ => false,
+        };
+        if !modeled {
+            self.risks.push(format!(
+                "unmodeled macro `{name}!` that may diverge or have effects"
+            ));
         }
+    }
+}
+
+fn modeled_format_macro(tokens: proc_macro2::TokenStream) -> bool {
+    let parser = syn::punctuated::Punctuated::<Expr, Token![,]>::parse_terminated;
+    let Ok(arguments) = parser.parse2(tokens) else {
+        return false;
+    };
+    let mut arguments = arguments.iter();
+    let Some(Expr::Lit(format)) = arguments.next() else {
+        return false;
+    };
+    let syn::Lit::Str(format) = &format.lit else {
+        return false;
+    };
+    match format.value().as_str() {
+        "invalid: kind {kind_u32} is only accepted via WebSocket" | "invalid: {e}" => {
+            arguments.next().is_none()
+        }
+        "invalid: content exceeds maximum size of {} bytes (got {})" => {
+            matches!(arguments.next(), Some(Expr::Path(path)) if path.path.is_ident("MAX_EVENT_CONTENT_BYTES"))
+                && matches!(arguments.next(), Some(Expr::MethodCall(call)) if allowed_pre_gate_method_call(call))
+                && arguments.next().is_none()
+        }
+        _ => false,
     }
 }
 
@@ -1024,6 +1115,58 @@ fn allowed_pre_gate_function(path: &syn::Path) -> bool {
     )
 }
 
+fn allowed_awaited_expression(expression: &Expr) -> bool {
+    match strip_expression(expression) {
+        Expr::Call(call) => matches!(
+            strip_expression(&call.func),
+            Expr::Path(path) if path_name(&path.path) == "tokio::task::spawn_blocking"
+        ),
+        Expr::MethodCall(call) => modeled_serving_state_read(call),
+        _ => false,
+    }
+}
+
+fn modeled_serving_state_read(call: &ExprMethodCall) -> bool {
+    if call.method != "is_serving_active" || call.args.len() != 1 {
+        return false;
+    }
+    let Expr::Call(store) = strip_expression(&call.receiver) else {
+        return false;
+    };
+    if !matches!(
+        strip_expression(&store.func),
+        Expr::Path(path) if path_name(&path.path) == "buzz_deletion::store"
+    ) || store.args.len() != 1
+    {
+        return false;
+    }
+    let Some(store_argument) = store.args.first() else {
+        return false;
+    };
+    let Expr::Reference(reference) = strip_expression(store_argument) else {
+        return false;
+    };
+    let Expr::Field(field) = strip_expression(&reference.expr) else {
+        return false;
+    };
+    if !matches!(&field.member, syn::Member::Named(member) if member == "db")
+        || !matches!(strip_expression(&field.base), Expr::Path(path) if path.path.is_ident("state"))
+    {
+        return false;
+    }
+
+    let Some(community_argument) = call.args.first() else {
+        return false;
+    };
+    matches!(
+        strip_expression(community_argument),
+        Expr::MethodCall(community)
+            if community.method == "community"
+                && community.args.is_empty()
+                && matches!(strip_expression(&community.receiver), Expr::Path(path) if path.path.is_ident("tenant"))
+    )
+}
+
 fn assignment_operator(operator: &BinOp) -> bool {
     matches!(
         operator,
@@ -1040,21 +1183,53 @@ fn assignment_operator(operator: &BinOp) -> bool {
     )
 }
 
-fn allowed_pre_gate_method(name: &str) -> bool {
+fn allowed_pre_gate_method_call(call: &ExprMethodCall) -> bool {
+    let method = call.method.to_string();
+    let receiver = strip_expression(&call.receiver);
+    match method.as_str() {
+        "to_hex" => call.args.is_empty() && expression_is_field(receiver, "event", "id"),
+        "community" => call.args.is_empty() && expression_is_path(receiver, "tenant"),
+        "is_http" | "pubkey" => call.args.is_empty() && expression_is_path(receiver, "auth"),
+        "into" => {
+            call.args.is_empty()
+                && (matches!(receiver, Expr::Lit(literal) if matches!(literal.lit, syn::Lit::Str(_)))
+                    || matches!(receiver, Expr::Path(path) if path.path.is_ident("error") || path.path.is_ident("msg")))
+        }
+        "clone" => {
+            call.args.is_empty()
+                && matches!(receiver, Expr::Unary(unary)
+                    if matches!(unary.op, syn::UnOp::Deref(_))
+                        && expression_is_path(&unary.expr, "arc"))
+        }
+        "unwrap_or_else" => {
+            call.args.len() == 1
+                && matches!(receiver, Expr::Call(inner)
+                    if matches!(strip_expression(&inner.func), Expr::Path(path)
+                        if path_name(&path.path) == "std::sync::Arc::try_unwrap"))
+        }
+        "timestamp" => {
+            call.args.is_empty()
+                && matches!(receiver, Expr::Call(inner)
+                    if matches!(strip_expression(&inner.func), Expr::Path(path)
+                        if path_name(&path.path) == "chrono::Utc::now"))
+        }
+        "as_secs" => call.args.is_empty() && expression_is_field(receiver, "event", "created_at"),
+        "abs" => call.args.is_empty() && matches!(receiver, Expr::Binary(_)),
+        "len" => call.args.is_empty() && expression_is_field(receiver, "event", "content"),
+        _ => false,
+    }
+}
+
+fn expression_is_path(expression: &Expr, expected: &str) -> bool {
+    matches!(strip_expression(expression), Expr::Path(path) if path.path.is_ident(expected))
+}
+
+fn expression_is_field(expression: &Expr, base: &str, member: &str) -> bool {
     matches!(
-        name,
-        "abs"
-            | "as_secs"
-            | "clone"
-            | "community"
-            | "into"
-            | "is_http"
-            | "is_serving_active"
-            | "len"
-            | "pubkey"
-            | "timestamp"
-            | "to_hex"
-            | "unwrap_or_else"
+        strip_expression(expression),
+        Expr::Field(field)
+            if matches!(&field.member, syn::Member::Named(name) if name == member)
+                && expression_is_path(&field.base, base)
     )
 }
 
@@ -1270,6 +1445,47 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     }
 
     #[test]
+    fn ambiguous_kind_parameters_are_not_treated_as_the_incoming_kind() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, other_kind: u32, event: Event) -> Result<(), Error> {",
+            )
+            .replace(
+                "required_scope_for_kind(kind_u32, &event)",
+                "required_scope_for_kind(other_kind, &event)",
+            );
+
+        assert_unproven_gate_is_partial(&source, "ambiguous or not the canonical incoming kind");
+    }
+
+    #[test]
+    fn ambiguous_event_parameters_cannot_supply_the_kind_binding() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(event: Event, other_event: Event) -> Result<(), Error> {\n    let kind_u32 = event_kind_u32(&other_event);",
+            );
+
+        assert_unproven_gate_is_partial(&source, "one canonical incoming event parameter");
+    }
+
+    #[test]
+    fn gate_must_receive_the_canonical_incoming_event() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, other: Event) -> Result<(), Error> {",
+            )
+            .replace(
+                "required_scope_for_kind(kind_u32, &event)",
+                "required_scope_for_kind(kind_u32, &other)",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not receive the canonical incoming event");
+    }
+
+    #[test]
     fn ignored_gate_result_is_not_a_production_gate() {
         let source = INGEST_SOURCE.replace(
             "let required = match required_scope_for_kind(kind_u32, &event) {\n        Ok(scope) => scope,\n        Err(error) => return Err(error.into()),\n    };",
@@ -1367,6 +1583,105 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
 
         assert_unproven_gate_is_partial(&source, "unrecognized call `store_event`");
+    }
+
+    #[test]
+    fn opaque_awaited_futures_make_ordering_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "write_before_gate.await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unmodeled awaited future");
+    }
+
+    #[test]
+    fn serving_read_method_name_alone_does_not_authorize_an_await() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "write_before_gate.is_serving_active(tenant.community()).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "method call `is_serving_active`");
+    }
+
+    #[test]
+    fn allowed_method_names_require_the_pinned_receiver_shape() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "write_before_gate.clone();\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "method call `clone`");
+    }
+
+    #[test]
+    fn macros_with_unmodeled_arguments_make_ordering_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "format!(\"{}\", store_event(&event));\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "macro `format!`");
+    }
+
+    #[test]
+    fn error_alternatives_in_or_patterns_must_terminate() {
+        let source = INGEST_SOURCE.replace(
+            "Ok(scope) => scope,\n        Err(error) => return Err(error.into()),",
+            "Err(_) | Ok(Scope::Admin) if event.allowed => Scope::MessagesWrite,\n        Ok(scope) => scope,\n        Err(error) => return Err(error.into()),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not directly return");
+    }
+
+    #[test]
+    fn bound_subpatterns_do_not_count_as_error_catch_alls() {
+        let source = INGEST_SOURCE.replace(
+            "Err(error) => return Err(error.into()),",
+            "Err(error @ \"different error\") => return Err(error.into()),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not directly return");
+    }
+
+    #[test]
+    fn guarded_error_patterns_do_not_count_as_catch_alls() {
+        let source = INGEST_SOURCE.replace(
+            "Err(error) => return Err(error.into()),",
+            "Err(error) if event.allowed => return Err(error.into()),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not directly return");
+    }
+
+    #[test]
+    fn gate_arm_guards_cannot_hide_unmodeled_effects() {
+        let source = INGEST_SOURCE.replace(
+            "Err(error) => return Err(error.into()),",
+            "Err(error) if store_event(&event) => return Err(error.into()),\n        Err(error) => return Err(error.into()),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "inside the required_scope_for_kind gate");
+    }
+
+    #[test]
+    fn scope_match_must_be_the_whole_scope_function_body() {
+        let source = INGEST_SOURCE.replace(
+            "fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {",
+            "fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {\n    store_event(event);",
+        );
+        let error = lift_relay_ingest(
+            &source,
+            KIND_SOURCE,
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "revision",
+        )
+        .expect_err("scope helper effects outside the match must fail closed");
+
+        assert_eq!(error, LiftError::MissingScopeMatch);
     }
 
     #[test]
