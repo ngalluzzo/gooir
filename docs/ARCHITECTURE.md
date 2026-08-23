@@ -43,6 +43,10 @@ Lifted knowledge distinguishes:
 
 Negative findings must name the closed-world scope that justifies them. Runtime observation proves that a path exists; lack of an observation does not prove that no path exists.
 
+Software-surface facts also carry an artifact role: `production`, `test`, `mock`, or `documentation`. These roles are not interchangeable. A test bridge that fabricates an event proves test coverage; it cannot satisfy a production `Produces` requirement.
+
+Provenance explains where a lifted fact came from. A separate coverage witness explains why an absence is meaningful. A negative result requires exhaustive coverage for every mechanism named by the selected profile under one compatible scope. Excluded or failed artifacts, unresolved expansions, partial extraction, and incompatible build scopes degrade the result to unknown.
+
 ## Contract compatibility
 
 Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that converts a claim and preserves provenance. A conformance declaration is evidence, not universal proof, and unverified declarations remain untrusted.

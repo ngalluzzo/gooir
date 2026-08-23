@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "buzz-surface-profile"
+version = "0.1.0"
+dependencies = [
+ "semantics-software-surface-v1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gooir-analysis"
 version = "0.1.0"
 dependencies = [
@@ -72,6 +81,15 @@ name = "semantics-effects-v1"
 version = "0.1.0"
 dependencies = [
  "gooir-core",
+ "serde_json",
+]
+
+[[package]]
+name = "semantics-software-surface-v1"
+version = "0.1.0"
+dependencies = [
+ "gooir-core",
+ "serde",
  "serde_json",
 ]
 

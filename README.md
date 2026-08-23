@@ -20,7 +20,7 @@ The microkernel does not know `page`, `entity`, `retry`, React, Postgres, or Buz
 
 ## Current milestone
 
-`GOOIR-000` proves the architectural boundary before the Buzz product corpus is added:
+`GOOIR-000` is merged and proves the architectural boundary:
 
 - unknown dialect data round-trips without a plugin;
 - analyzers consume exact semantic contracts rather than dialect names;
@@ -28,6 +28,8 @@ The microkernel does not know `page`, `entity`, `retry`, React, Postgres, or Buz
 - unverified or unknown claims never become safety facts;
 - meaning-changing contract versions require an explicit bridge.
 - partial legality reports the exact pinned/unknown portability frontier.
+
+`GOOIR-001` is now lifting Buzz's pinned event surface. Its first staged input preserves separate production, test, mock, and documentation roles; exact source authority and byte-range provenance; and coverage witnesses that prevent incomplete searches from becoming universal negative claims. The staging snapshot is not trusted lifter output and cannot by itself close the milestone.
 
 See the [project brief](docs/PROJECT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), and [milestones](docs/MILESTONES.md).
 
