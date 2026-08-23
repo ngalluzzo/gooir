@@ -1,0 +1,87 @@
+{
+  "source": {
+    "authority": "github:block/buzz",
+    "artifact": "crates/buzz-core/src/kind.rs",
+    "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+    "sha256": "sha256:74533cfc1ac016dcb1a83279c2b06f93807f29489604cdccefc46b645acfce97"
+  },
+  "registry_symbol": "ALL_KINDS",
+  "job_kinds": [
+    {
+      "symbol": "KIND_JOB_REQUEST",
+      "value": 43001,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25566,
+        "byte_end": 25606,
+        "line_start": 518,
+        "line_end": 518
+      }
+    },
+    {
+      "symbol": "KIND_JOB_ACCEPTED",
+      "value": 43002,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25644,
+        "byte_end": 25685,
+        "line_start": 520,
+        "line_end": 520
+      }
+    },
+    {
+      "symbol": "KIND_JOB_PROGRESS",
+      "value": 43003,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25734,
+        "byte_end": 25775,
+        "line_start": 522,
+        "line_end": 522
+      }
+    },
+    {
+      "symbol": "KIND_JOB_RESULT",
+      "value": 43004,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25819,
+        "byte_end": 25858,
+        "line_start": 524,
+        "line_end": 524
+      }
+    },
+    {
+      "symbol": "KIND_JOB_CANCEL",
+      "value": 43005,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25897,
+        "byte_end": 25936,
+        "line_start": 526,
+        "line_end": 526
+      }
+    },
+    {
+      "symbol": "KIND_JOB_ERROR",
+      "value": 43006,
+      "registered": true,
+      "declaration": {
+        "byte_start": 25976,
+        "byte_end": 26014,
+        "line_start": 528,
+        "line_end": 528
+      }
+    }
+  ],
+  "coverage": {
+    "extractor_package": "org.gooi.lifter.buzz_protocol",
+    "extractor_version": "0.1.0",
+    "mechanism": "rust_direct_job_constants_and_registry",
+    "completeness": "exhaustive",
+    "included_artifacts": [
+      "crates/buzz-core/src/kind.rs"
+    ],
+    "unresolved_macros": []
+  }
+}

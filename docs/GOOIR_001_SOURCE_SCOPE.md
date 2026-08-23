@@ -30,3 +30,19 @@ Scoped searches also found no SDK job builder, CLI job command, or runtime dispa
 `buzz-surface-profile` expands the grouped rows and declares Buzz-specific requirements. `semantics-software-surface-v1` owns only the generic relation, artifact-role, profile, and coverage vocabulary. The eventual analyzer must depend on that contract package, never on the Buzz profile or fixture crate.
 
 The fixture is an oracle for staged development, not a source authority. GOOIR-001 closes only when independently versioned lifters reproduce the relations from the pinned source and the evidence/trust prerequisite has landed.
+
+## First native lifter
+
+`buzz-protocol-lifter` uses `syn` rather than a handwritten Rust parser. It extracts direct `KIND_JOB_*: u32` declarations, resolves their membership in the direct `ALL_KINDS` registry, computes source digests and byte spans, and marks coverage partial if any top-level macro invocation could hide additional declarations.
+
+The pinned run is checked in as `fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json`. It was produced with:
+
+```text
+cargo run -q -p buzz-protocol-lifter -- \
+  <buzz-root>/crates/buzz-core/src/kind.rs \
+  crates/buzz-core/src/kind.rs \
+  github:block/buzz \
+  39f8b46935736334cdd7045a4e4b5d7eb1a33888
+```
+
+The native output remains separate from software-surface contracts. A later projection package will map its declarations and registry membership into `Declares` and `Registers` relations without teaching the lifter or kernel about analysis requirements.
