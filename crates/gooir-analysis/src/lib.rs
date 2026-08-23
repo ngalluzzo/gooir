@@ -1,4 +1,7 @@
-use gooir_core::{Claim, ContractId, Operation, Program};
+use gooir_core::{
+    Claim, ConformanceEvidence, ContractId, Evidence, EvidenceStatus, Operation, Program,
+};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FindingLevel {
@@ -62,17 +65,97 @@ impl ProjectionRegistry {
     }
 }
 
+/// Contextual admission policy for conformance attestations.
+///
+/// The default policy denies all attestations. The host constructing a policy
+/// is responsible for validating attestation authenticity, authority, and the
+/// referenced result artifact before admission.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EvidenceTrustPolicy {
+    admitted: BTreeSet<ConformanceEvidence>,
+}
+
+impl EvidenceTrustPolicy {
+    /// Admits one exact attestation after the host validates it.
+    pub fn admit(&mut self, attestation: ConformanceEvidence) {
+        self.admitted.insert(attestation);
+    }
+
+    /// Returns this policy with one exact attestation admitted.
+    pub fn with_admitted(mut self, attestation: ConformanceEvidence) -> Self {
+        self.admit(attestation);
+        self
+    }
+
+    fn evaluate(&self, evidence: &Evidence) -> EvidenceTrustDecision {
+        if evidence.status != EvidenceStatus::Verified {
+            return EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::StatusNotVerified);
+        }
+
+        let Some(attestation) = &evidence.conformance else {
+            return EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::MissingAttestation);
+        };
+
+        if self.admitted.contains(attestation) {
+            EvidenceTrustDecision::Trusted
+        } else {
+            EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::AttestationNotAdmitted)
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum EvidenceTrustDecision {
+    Trusted,
+    Untrusted(EvidenceTrustFailure),
+}
+
+/// Reason a claim's evidence was not trusted by the active policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvidenceTrustFailure {
+    /// The evidence does not report verified status.
+    StatusNotVerified,
+    /// Verified status was reported without a conformance attestation.
+    MissingAttestation,
+    /// The host did not admit the exact conformance attestation.
+    AttestationNotAdmitted,
+}
+
 #[derive(Default)]
 pub struct SemanticResolver {
     bridges: BridgeRegistry,
     projections: ProjectionRegistry,
+    trust_policy: EvidenceTrustPolicy,
 }
 
 impl SemanticResolver {
+    /// Creates a resolver with bridges and a default-deny trust policy.
     pub fn with_bridges(bridges: BridgeRegistry) -> Self {
         Self {
             bridges,
             projections: ProjectionRegistry::default(),
+            trust_policy: EvidenceTrustPolicy::default(),
+        }
+    }
+
+    /// Creates a resolver with an explicit trust policy and no bridges.
+    pub fn with_trust_policy(trust_policy: EvidenceTrustPolicy) -> Self {
+        Self {
+            bridges: BridgeRegistry::default(),
+            projections: ProjectionRegistry::default(),
+            trust_policy,
+        }
+    }
+
+    /// Creates a resolver with explicit bridges and an explicit trust policy.
+    pub fn with_bridges_and_trust_policy(
+        bridges: BridgeRegistry,
+        trust_policy: EvidenceTrustPolicy,
+    ) -> Self {
+        Self {
+            bridges,
+            projections: ProjectionRegistry::default(),
+            trust_policy,
         }
     }
 
@@ -114,7 +197,7 @@ impl SemanticResolver {
             .collect::<Vec<_>>();
 
         match exact.as_slice() {
-            [claim] => return classify(claim.clone()),
+            [claim] => return self.classify(claim.clone()),
             claims if claims.len() > 1 => {
                 return ClaimResolution::Ambiguous(
                     claims.iter().map(|claim| claim.contract.clone()).collect(),
@@ -133,8 +216,16 @@ impl SemanticResolver {
             for bridge in &self.bridges.bridges {
                 if bridge.from() == claim.contract && bridge.to() == *expected {
                     match bridge.convert(claim) {
-                        Ok(converted_claim) if converted_claim.contract == *expected => {
+                        Ok(converted_claim)
+                            if converted_claim.contract == *expected
+                                && converted_claim.evidence == claim.evidence =>
+                        {
                             converted.push(converted_claim);
+                        }
+                        Ok(converted_claim) if converted_claim.contract == *expected => {
+                            return ClaimResolution::InvalidBridge(
+                                "bridge changed claim evidence instead of preserving it".to_owned(),
+                            );
                         }
                         Ok(converted_claim) => {
                             return ClaimResolution::InvalidBridge(format!(
@@ -152,7 +243,7 @@ impl SemanticResolver {
         }
 
         match converted.as_slice() {
-            [claim] => classify(claim.clone()),
+            [claim] => self.classify(claim.clone()),
             claims if claims.len() > 1 => ClaimResolution::Ambiguous(
                 claims.iter().map(|claim| claim.contract.clone()).collect(),
             ),
@@ -162,25 +253,29 @@ impl SemanticResolver {
             _ => ClaimResolution::Absent,
         }
     }
+
+    fn classify(&self, claim: Claim) -> ClaimResolution {
+        match self.trust_policy.evaluate(&claim.evidence) {
+            EvidenceTrustDecision::Trusted => ClaimResolution::Trusted(claim),
+            EvidenceTrustDecision::Untrusted(reason) => {
+                ClaimResolution::Untrusted { claim, reason }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClaimResolution {
     Trusted(Claim),
-    Untrusted(Claim),
+    Untrusted {
+        claim: Claim,
+        reason: EvidenceTrustFailure,
+    },
     VersionMismatch(Vec<ContractId>),
     Ambiguous(Vec<ContractId>),
     InvalidBridge(String),
     InvalidProjection(String),
     Absent,
-}
-
-fn classify(claim: Claim) -> ClaimResolution {
-    if claim.evidence.is_verified() {
-        ClaimResolution::Trusted(claim)
-    } else {
-        ClaimResolution::Untrusted(claim)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,8 +351,47 @@ fn visit_legality(
 
 #[cfg(test)]
 mod tests {
-    use super::{Legality, LegalityOracle, portability_frontier};
-    use gooir_core::{Operation, Program};
+    use super::{
+        BridgeRegistry, ClaimBridge, ClaimResolution, EvidenceTrustFailure, EvidenceTrustPolicy,
+        Legality, LegalityOracle, SemanticResolver, portability_frontier,
+    };
+    use gooir_core::{
+        Claim, ConformanceEvidence, ContractId, Evidence, Operation, Program, SourceRef,
+    };
+    use serde_json::json;
+
+    fn contract() -> ContractId {
+        ContractId::new("org.gooi.test", "capability", "1.0.0")
+    }
+
+    fn source() -> SourceRef {
+        SourceRef::new("fixture", "fixture.json", "revision")
+    }
+
+    fn attestation() -> ConformanceEvidence {
+        ConformanceEvidence::new(
+            "fixture-attester",
+            "fixture-suite@1",
+            "sha256:subject",
+            "sha256:result",
+        )
+    }
+
+    fn attested_claim(payload: &str, attestation: ConformanceEvidence) -> Claim {
+        Claim::new(
+            contract(),
+            json!({"value": payload}),
+            Evidence::verified(source(), attestation),
+        )
+    }
+
+    fn operation_with(claims: impl IntoIterator<Item = Claim>) -> Operation {
+        claims
+            .into_iter()
+            .fold(Operation::new("op", "fixture", "op"), |operation, claim| {
+                operation.with_claim(claim)
+            })
+    }
 
     struct FixtureTarget;
 
@@ -296,5 +430,148 @@ mod tests {
             frontier.entries[1].legality,
             Legality::Unknown { .. }
         ));
+    }
+
+    #[test]
+    fn self_reported_attestation_is_untrusted_by_default() {
+        let operation = operation_with([attested_claim("safe", attestation())]);
+
+        let resolution = SemanticResolver::default().resolve(&operation, &contract());
+
+        assert!(matches!(
+            resolution,
+            ClaimResolution::Untrusted {
+                reason: EvidenceTrustFailure::AttestationNotAdmitted,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn exact_policy_admission_trusts_the_attested_claim() {
+        let evidence = attestation();
+        let operation = operation_with([attested_claim("safe", evidence.clone())]);
+        let policy = EvidenceTrustPolicy::default().with_admitted(evidence);
+
+        let resolution =
+            SemanticResolver::with_trust_policy(policy).resolve(&operation, &contract());
+
+        assert!(matches!(resolution, ClaimResolution::Trusted(_)));
+    }
+
+    #[test]
+    fn every_attestation_field_participates_in_exact_admission() {
+        let admitted = attestation();
+        let policy = EvidenceTrustPolicy::default().with_admitted(admitted.clone());
+
+        let mut variants = Vec::new();
+        let mut changed = admitted.clone();
+        changed.attester = "different-attester".to_owned();
+        variants.push(changed);
+        let mut changed = admitted.clone();
+        changed.suite = "different-suite@1".to_owned();
+        variants.push(changed);
+        let mut changed = admitted.clone();
+        changed.subject_digest = "sha256:different-subject".to_owned();
+        variants.push(changed);
+        let mut changed = admitted;
+        changed.result_digest = "sha256:different-result".to_owned();
+        variants.push(changed);
+
+        for variant in variants {
+            let operation = operation_with([attested_claim("safe", variant)]);
+            let resolution = SemanticResolver::with_trust_policy(policy.clone())
+                .resolve(&operation, &contract());
+
+            assert!(matches!(
+                resolution,
+                ClaimResolution::Untrusted {
+                    reason: EvidenceTrustFailure::AttestationNotAdmitted,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn conflicting_claims_remain_ambiguous_even_when_both_are_admitted() {
+        let first = ConformanceEvidence::new(
+            "fixture-attester",
+            "fixture-suite@1",
+            "sha256:first-subject",
+            "sha256:first-result",
+        );
+        let second = ConformanceEvidence::new(
+            "fixture-attester",
+            "fixture-suite@1",
+            "sha256:second-subject",
+            "sha256:second-result",
+        );
+        let operation = operation_with([
+            attested_claim("safe", first.clone()),
+            attested_claim("unsafe", second.clone()),
+        ]);
+        let policy = EvidenceTrustPolicy::default()
+            .with_admitted(first)
+            .with_admitted(second);
+
+        let resolution =
+            SemanticResolver::with_trust_policy(policy).resolve(&operation, &contract());
+
+        assert!(matches!(resolution, ClaimResolution::Ambiguous(_)));
+    }
+
+    struct EvidenceMintingBridge {
+        from: ContractId,
+        to: ContractId,
+        forged: ConformanceEvidence,
+    }
+
+    impl ClaimBridge for EvidenceMintingBridge {
+        fn from(&self) -> ContractId {
+            self.from.clone()
+        }
+
+        fn to(&self) -> ContractId {
+            self.to.clone()
+        }
+
+        fn convert(&self, claim: &Claim) -> Result<Claim, String> {
+            Ok(Claim::new(
+                self.to(),
+                claim.payload.clone(),
+                Evidence::verified(claim.evidence.source.clone(), self.forged.clone()),
+            ))
+        }
+    }
+
+    #[test]
+    fn a_version_bridge_cannot_replace_evidence_to_mint_trust() {
+        let from = ContractId::new("org.gooi.test", "capability", "2.0.0");
+        let to = contract();
+        let original = ConformanceEvidence::new(
+            "untrusted-attester",
+            "fixture-suite@2",
+            "sha256:untrusted-subject",
+            "sha256:untrusted-result",
+        );
+        let forged = attestation();
+        let operation = operation_with([Claim::new(
+            from.clone(),
+            json!({"value": "safe"}),
+            Evidence::verified(source(), original),
+        )]);
+        let mut bridges = BridgeRegistry::default();
+        bridges.register(EvidenceMintingBridge {
+            from,
+            to: to.clone(),
+            forged: forged.clone(),
+        });
+        let policy = EvidenceTrustPolicy::default().with_admitted(forged);
+
+        let resolution = SemanticResolver::with_bridges_and_trust_policy(bridges, policy)
+            .resolve(&operation, &to);
+
+        assert!(matches!(resolution, ClaimResolution::InvalidBridge(_)));
     }
 }

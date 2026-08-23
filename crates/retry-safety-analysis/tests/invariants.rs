@@ -1,7 +1,8 @@
 use gooir_analysis::{
-    BridgeRegistry, ClaimBridge, ContractProjection, FindingLevel, SemanticResolver,
+    BridgeRegistry, ClaimBridge, ContractProjection, EvidenceTrustPolicy, FindingLevel,
+    SemanticResolver,
 };
-use gooir_core::{Claim, ContractId, Evidence, Operation, Program, SourceRef};
+use gooir_core::{Claim, ConformanceEvidence, ContractId, Evidence, Operation, Program, SourceRef};
 use payments_dialect::charge;
 use retry_safety_analysis::RetrySafetyAnalyzer;
 use semantics_effects_v1::{
@@ -15,8 +16,29 @@ fn source(artifact: &str) -> SourceRef {
     SourceRef::new("test-fixture", artifact, "fixture-revision")
 }
 
+fn attestation(artifact: &str) -> ConformanceEvidence {
+    ConformanceEvidence::new(
+        "fixture-attester",
+        "effects-v1-conformance@1",
+        format!("sha256:{artifact}-subject"),
+        format!("sha256:{artifact}-result"),
+    )
+}
+
 fn verified(artifact: &str) -> Evidence {
-    Evidence::verified(source(artifact), "effects-v1-conformance", "sha256:fixture")
+    Evidence::verified(source(artifact), attestation(artifact))
+}
+
+fn trust_policy(artifacts: &[&str]) -> EvidenceTrustPolicy {
+    artifacts
+        .iter()
+        .fold(EvidenceTrustPolicy::default(), |policy, artifact| {
+            policy.with_admitted(attestation(artifact))
+        })
+}
+
+fn analyzer_trusting(artifacts: &[&str]) -> RetrySafetyAnalyzer {
+    RetrySafetyAnalyzer::with_resolver(SemanticResolver::with_trust_policy(trust_policy(artifacts)))
 }
 
 #[test]
@@ -29,7 +51,8 @@ fn safe_composition_is_accepted_across_unrelated_dialects() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let report =
+        analyzer_trusting(&["payments", "workflow"]).analyze(&Program::new(vec![workflow]));
 
     assert!(report.is_clean());
 }
@@ -44,7 +67,8 @@ fn verified_duplicate_effect_risk_is_rejected() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let report =
+        analyzer_trusting(&["payments", "workflow"]).analyze(&Program::new(vec![workflow]));
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Error);
@@ -65,11 +89,32 @@ fn unverified_claim_degrades_to_unknown_instead_of_safe() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let report = analyzer_trusting(&["workflow"]).analyze(&Program::new(vec![workflow]));
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Unknown);
     assert_eq!(report.findings[0].code, "retry.effect_safety_unknown");
+}
+
+#[test]
+fn self_reported_verified_claim_is_unknown_without_policy_admission() {
+    let effect = charge("charge", Repeatability::NonIdempotent, verified("payments"));
+    let workflow = retrying_activity(
+        "activity",
+        Delivery::AtLeastOnce,
+        verified("workflow"),
+        vec![effect],
+    );
+
+    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+
+    assert!(!report.findings.is_empty());
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|finding| finding.level == FindingLevel::Unknown)
+    );
 }
 
 #[test]
@@ -91,7 +136,8 @@ fn changed_contract_version_requires_an_explicit_bridge() {
             verified("payments"),
         )]);
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let report =
+        analyzer_trusting(&["workflow-v2", "payments"]).analyze(&Program::new(vec![workflow]));
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Unknown);
@@ -120,7 +166,12 @@ fn explicit_bridge_makes_version_conversion_auditable() {
             verified("payments"),
         )]);
 
-    let report = RetrySafetyAnalyzer::with_bridges(bridges).analyze(&Program::new(vec![workflow]));
+    let resolver = SemanticResolver::with_bridges_and_trust_policy(
+        bridges,
+        trust_policy(&["workflow-v2", "payments"]),
+    );
+    let report =
+        RetrySafetyAnalyzer::with_resolver(resolver).analyze(&Program::new(vec![workflow]));
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Error);
@@ -138,9 +189,11 @@ fn open_world_projection_is_parametric_over_native_dialect_identity() {
             verified("canonical-payments"),
         )],
     )]);
-    let canonical_report = RetrySafetyAnalyzer::new().analyze(&canonical);
+    let canonical_report =
+        analyzer_trusting(&["canonical-workflow", "canonical-payments"]).analyze(&canonical);
 
-    let mut resolver = SemanticResolver::default();
+    let mut resolver =
+        SemanticResolver::with_trust_policy(trust_policy(&["alien-control", "alien-effect"]));
     resolver.register_projection(AlienRetryProjection);
     resolver.register_projection(AlienEffectProjection);
     let alien_report = RetrySafetyAnalyzer::with_resolver(resolver).analyze(&alien_program());

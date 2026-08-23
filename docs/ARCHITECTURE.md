@@ -45,7 +45,9 @@ Negative findings must name the closed-world scope that justifies them. Runtime 
 
 ## Contract compatibility
 
-Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that converts a claim and preserves provenance. A conformance declaration is evidence, not universal proof, and unverified declarations remain untrusted.
+Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that converts a claim and preserves provenance. A conformance declaration is evidence, not universal proof.
+
+Trust is contextual rather than intrinsic to serialized IR. The core transports an exact attester, suite identity/version, subject digest, and result digest. An analysis host validates and admits exact conformance attestations through a trust policy; the default policy admits nothing. Status labels, authority names, and unattested digests cannot make a claim safe. Multiple claims for the same exact contract remain ambiguous rather than being resolved by trust precedence. See [decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
 
 ## First product corpus
 
