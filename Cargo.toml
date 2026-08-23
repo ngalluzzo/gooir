@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/buzz-protocol-lifter",
+    "crates/buzz-cli-lifter",
     "crates/buzz-relay-lifter",
     "crates/buzz-surface-profile",
     "crates/gooir-analysis",
@@ -21,6 +22,7 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 
 [workspace.dependencies]
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
+buzz-cli-lifter = { path = "crates/buzz-cli-lifter" }
 buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 gooir-analysis = { path = "crates/gooir-analysis" }

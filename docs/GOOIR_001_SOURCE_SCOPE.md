@@ -74,3 +74,28 @@ native witness records the function at lines 342–455, fallback at line 453,
 and production gate call at line 2157. An unsupported constant or guard makes
 the affected decisions unknown and the coverage partial, so textual resemblance
 cannot be promoted into an exhaustive rejection.
+
+## Closed CLI command-tree lifter
+
+`buzz-cli-lifter` parses the Clap-derived surface beginning at
+`Cli.command: Cmd`, verifies the `Parser`/`Subcommand` wiring, and recursively
+follows direct `#[command(subcommand)]` enum edges. It preserves explicit names,
+aliases, exact spans, and every group/leaf path. Conditional variants, missing
+referenced enums, flattening, external subcommands, or unparsed alias shapes make
+coverage partial.
+
+The pinned run is checked in as
+`fixtures/buzz/desktop-v0.5.18/job-cli.lift.json`. It was produced with:
+
+```text
+cargo run -q -p buzz-cli-lifter -- \
+  <buzz-root>/crates/buzz-cli/src/lib.rs \
+  crates/buzz-cli/src/lib.rs \
+  github:block/buzz \
+  39f8b46935736334cdd7045a4e4b5d7eb1a33888
+```
+
+The source-derived tree contains 138 command groups/leaves and no `job`/`jobs`
+path or alias, with exhaustive coverage of this explicit Clap mechanism. This
+closes only the CLI command-surface mechanism; it does not claim arbitrary Rust
+code elsewhere cannot construct or publish a job event.
