@@ -8,7 +8,10 @@ use buzz_protocol_lifter::{ProtocolLift, SourceArtifact, SourceSpan};
 use proc_macro2::Span;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 use syn::{
     BinOp, Expr, ExprCall, ExprMacro, ExprMethodCall, Item, ItemFn, Pat, Stmt, Token,
     parse::{Parse, ParseStream, Parser},
@@ -135,7 +138,7 @@ pub fn lift_relay_ingest(
     let scope_match = direct_scope_match(scope_function).ok_or(LiftError::MissingScopeMatch)?;
 
     let ingest = find_function(&ingest_file, "ingest_event_inner");
-    let gate = prove_production_gate(ingest)?;
+    let gate = prove_production_gate(&ingest_file, ingest)?;
 
     let fallback_arm = scope_match
         .arms
@@ -640,7 +643,10 @@ struct GateProof {
     unresolved: Option<String>,
 }
 
-fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError> {
+fn prove_production_gate(
+    ingest_file: &syn::File,
+    ingest: Option<&ItemFn>,
+) -> Result<GateProof, LiftError> {
     let ingest = ingest.ok_or(LiftError::MissingGateCall)?;
     let mut calls = ScopeCallVisitor::default();
     calls.visit_item_fn(ingest);
@@ -668,7 +674,23 @@ fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError
                 ),
             });
         }
+        if let Some(helper) = shadowed_unqualified_helper(ingest, prior_statements) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(format!(
+                    "local binding, parameter, or import shadows modeled helper `{helper}`"
+                )),
+            });
+        }
         if let Err(reason) = gate_checks_incoming_kind(ingest, call, prior_statements) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
+        if let Some(reason) =
+            module_helper_resolution_reason(ingest_file, prior_statements, gate_match)
+        {
             return Ok(GateProof {
                 span,
                 unresolved: Some(reason),
@@ -739,11 +761,261 @@ fn direct_gate_statement(statement: &Stmt) -> Option<(&ExprCall, &syn::ExprMatch
 fn is_required_scope_call(call: &ExprCall) -> bool {
     matches!(
         strip_expression(&call.func),
-        Expr::Path(path)
-            if path.path.segments.last().is_some_and(|segment| {
-                segment.ident == "required_scope_for_kind"
-            })
+        Expr::Path(path) if path.path.is_ident("required_scope_for_kind")
     )
+}
+
+const MODELED_UNQUALIFIED_HELPERS: &[&str] = &[
+    "Err",
+    "event_kind_u32",
+    "map_serving_fence_state",
+    "required_scope_for_kind",
+    "verify_event",
+];
+const MODELED_QUALIFIED_ROOTS: &[&str] = &[
+    "IngestError",
+    "buzz_core",
+    "buzz_deletion",
+    "chrono",
+    "std",
+    "tokio",
+];
+const MODELED_MACROS: &[&str] = &["debug", "error", "format"];
+
+fn shadowed_unqualified_helper(ingest: &ItemFn, prior_statements: &[Stmt]) -> Option<&'static str> {
+    MODELED_UNQUALIFIED_HELPERS
+        .iter()
+        .chain(MODELED_QUALIFIED_ROOTS)
+        .chain(MODELED_MACROS)
+        .copied()
+        .find(|helper| {
+            ingest.sig.inputs.iter().any(|argument| match argument {
+                syn::FnArg::Typed(argument) => pattern_binds_name(&argument.pat, helper),
+                syn::FnArg::Receiver(_) => false,
+            }) || prior_statements
+                .iter()
+                .any(|statement| statement_introduces_name(statement, helper))
+        })
+}
+
+fn statement_introduces_name(statement: &Stmt, expected: &str) -> bool {
+    match statement {
+        Stmt::Local(local) => pattern_binds_name(&local.pat, expected),
+        Stmt::Item(item) => item_introduces_name(item, expected),
+        Stmt::Expr(_, _) | Stmt::Macro(_) => false,
+    }
+}
+
+fn item_introduces_name(item: &Item, expected: &str) -> bool {
+    match item {
+        Item::Const(item) => item.ident == expected,
+        Item::Enum(item) => item.ident == expected,
+        Item::ExternCrate(item) => item
+            .rename
+            .as_ref()
+            .map_or_else(|| item.ident == expected, |(_, rename)| rename == expected),
+        Item::Fn(item) => item.sig.ident == expected,
+        Item::Mod(item) => item.ident == expected,
+        Item::Macro(item) => item.ident.as_ref().is_some_and(|ident| ident == expected),
+        Item::Static(item) => item.ident == expected,
+        Item::Struct(item) => item.ident == expected,
+        Item::Trait(item) => item.ident == expected,
+        Item::TraitAlias(item) => item.ident == expected,
+        Item::Type(item) => item.ident == expected,
+        Item::Union(item) => item.ident == expected,
+        Item::Use(item) => use_tree_introduces_name(&item.tree, expected),
+        Item::Verbatim(_) => true,
+        _ => false,
+    }
+}
+
+fn use_tree_introduces_name(tree: &syn::UseTree, expected: &str) -> bool {
+    match tree {
+        syn::UseTree::Glob(_) => true,
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .any(|tree| use_tree_introduces_name(tree, expected)),
+        syn::UseTree::Name(name) => name.ident == expected,
+        syn::UseTree::Path(path) => use_tree_introduces_name(&path.tree, expected),
+        syn::UseTree::Rename(rename) => rename.rename == expected,
+    }
+}
+
+#[derive(Default)]
+struct UnqualifiedCallVisitor {
+    names: BTreeSet<String>,
+    qualified_roots: BTreeSet<String>,
+    macros: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for UnqualifiedCallVisitor {
+    fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
+        if let Expr::Path(path) = strip_expression(&expression.func) {
+            if let Some(name) = path.path.get_ident() {
+                self.names.insert(name.to_string());
+            } else if allowed_pre_gate_function(&path.path)
+                && let Some(root) = path.path.segments.first()
+            {
+                self.qualified_roots.insert(root.ident.to_string());
+            }
+        }
+        visit::visit_expr_call(self, expression);
+    }
+
+    fn visit_expr_macro(&mut self, expression: &'ast ExprMacro) {
+        if let Some(name) = expression.mac.path.get_ident() {
+            self.macros.insert(name.to_string());
+        }
+        visit::visit_expr_macro(self, expression);
+    }
+
+    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+        if let Some(name) = statement.mac.path.get_ident() {
+            self.macros.insert(name.to_string());
+        }
+        visit::visit_stmt_macro(self, statement);
+    }
+}
+
+fn module_helper_resolution_reason(
+    file: &syn::File,
+    prior_statements: &[Stmt],
+    gate_match: &syn::ExprMatch,
+) -> Option<String> {
+    let mut calls = UnqualifiedCallVisitor::default();
+    for statement in prior_statements {
+        calls.visit_stmt(statement);
+    }
+    calls.visit_expr_match(gate_match);
+
+    for helper in MODELED_UNQUALIFIED_HELPERS {
+        if !calls.names.contains(*helper) {
+            continue;
+        }
+        let expected_import = match *helper {
+            "event_kind_u32" => Some("buzz_core::kind::event_kind_u32"),
+            "verify_event" => Some("buzz_core::verification::verify_event"),
+            _ => None,
+        };
+        let imports = module_import_paths(file, helper);
+        let item_count = file
+            .items
+            .iter()
+            .filter(|item| !matches!(item, Item::Use(_)) && item_introduces_name(item, helper))
+            .count();
+        let resolved = match *helper {
+            "required_scope_for_kind" | "map_serving_fence_state" => {
+                item_count == 1 && imports.is_empty()
+            }
+            "event_kind_u32" | "verify_event" => {
+                item_count == 0
+                    && imports.len() == 1
+                    && imports.first().map(String::as_str) == expected_import
+            }
+            "Err" => item_count == 0 && imports.is_empty(),
+            _ => false,
+        };
+        if !resolved {
+            return Some(format!(
+                "modeled helper `{helper}` does not have the pinned module-level resolution"
+            ));
+        }
+    }
+    for root in &calls.qualified_roots {
+        if !MODELED_QUALIFIED_ROOTS.contains(&root.as_str()) {
+            continue;
+        }
+        let imports = module_import_paths(file, root);
+        let item_count = file
+            .items
+            .iter()
+            .filter(|item| !matches!(item, Item::Use(_)) && item_introduces_name(item, root))
+            .count();
+        let resolved = if root == "IngestError" {
+            item_count == 1 && imports.is_empty()
+        } else {
+            item_count == 0 && imports.is_empty()
+        };
+        if !resolved {
+            return Some(format!(
+                "modeled path root `{root}` does not have the pinned module-level resolution"
+            ));
+        }
+    }
+    for name in &calls.macros {
+        if !MODELED_MACROS.contains(&name.as_str()) {
+            continue;
+        }
+        let expected_import = match name.as_str() {
+            "debug" => Some("tracing::debug"),
+            "error" => Some("tracing::error"),
+            "format" => None,
+            _ => unreachable!(),
+        };
+        let imports = module_import_paths(file, name);
+        let macro_count = file
+            .items
+            .iter()
+            .filter(|item| matches!(item, Item::Macro(item) if item.ident.as_ref().is_some_and(|ident| ident == name)))
+            .count();
+        let resolved = match expected_import {
+            Some(expected) => {
+                macro_count == 0
+                    && imports.len() == 1
+                    && imports.first().map(String::as_str) == Some(expected)
+            }
+            None => macro_count == 0 && imports.is_empty(),
+        };
+        if !resolved {
+            return Some(format!(
+                "modeled macro `{name}!` does not have the pinned module-level resolution"
+            ));
+        }
+    }
+    None
+}
+
+fn module_import_paths(file: &syn::File, introduced_name: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    for item in &file.items {
+        let Item::Use(item) = item else { continue };
+        collect_use_tree_paths(&item.tree, &[], introduced_name, &mut imports);
+    }
+    imports
+}
+
+fn collect_use_tree_paths(
+    tree: &syn::UseTree,
+    prefix: &[String],
+    introduced_name: &str,
+    imports: &mut Vec<String>,
+) {
+    match tree {
+        syn::UseTree::Glob(_) => imports.push("*".to_owned()),
+        syn::UseTree::Group(group) => {
+            for tree in &group.items {
+                collect_use_tree_paths(tree, prefix, introduced_name, imports);
+            }
+        }
+        syn::UseTree::Name(name) if name.ident == introduced_name => {
+            let mut path = prefix.to_vec();
+            path.push(name.ident.to_string());
+            imports.push(path.join("::"));
+        }
+        syn::UseTree::Name(_) => {}
+        syn::UseTree::Path(path) => {
+            let mut prefix = prefix.to_vec();
+            prefix.push(path.ident.to_string());
+            collect_use_tree_paths(&path.tree, &prefix, introduced_name, imports);
+        }
+        syn::UseTree::Rename(rename) if rename.rename == introduced_name => {
+            let mut path = prefix.to_vec();
+            path.push(rename.ident.to_string());
+            imports.push(path.join("::"));
+        }
+        syn::UseTree::Rename(_) => {}
+    }
 }
 
 fn gate_checks_incoming_kind(
@@ -795,13 +1067,35 @@ fn gate_checks_incoming_kind(
             "required_scope_for_kind does not receive the canonical incoming event".to_owned(),
         );
     }
+    for local in prior_statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Stmt::Local(local) if pattern_binds_name(&local.pat, "event") => Some(local),
+            _ => None,
+        })
+    {
+        if !direct_pattern_binding(&local.pat, "event")
+            || !event_rebinding_preserves_identity(local)
+        {
+            return Err(
+                "required_scope_for_kind incoming event binding is shadowed by an unproven local"
+                    .to_owned(),
+            );
+        }
+    }
 
     if let Some(local) = prior_statements.iter().rev().find_map(|statement| {
         let Stmt::Local(local) = statement else {
             return None;
         };
-        matches!(&local.pat, Pat::Ident(binding) if binding.ident == kind_name).then_some(local)
+        pattern_binds_name(&local.pat, &kind_name).then_some(local)
     }) {
+        if !direct_pattern_binding(&local.pat, &kind_name) {
+            return Err(
+                "required_scope_for_kind kind binding is shadowed through an unproven pattern"
+                    .to_owned(),
+            );
+        }
         let Some(initializer) = &local.init else {
             return Err(
                 "required_scope_for_kind kind binding has no incoming-event initializer".to_owned(),
@@ -875,6 +1169,66 @@ fn gate_checks_incoming_kind(
     }
 
     Err("required_scope_for_kind kind argument is not derived from the incoming event".to_owned())
+}
+
+#[derive(Default)]
+struct PatternBindingVisitor {
+    names: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for PatternBindingVisitor {
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.names.push(pattern.ident.to_string());
+        visit::visit_pat_ident(self, pattern);
+    }
+}
+
+fn pattern_binds_name(pattern: &Pat, expected: &str) -> bool {
+    let mut bindings = PatternBindingVisitor::default();
+    bindings.visit_pat(pattern);
+    bindings.names.iter().any(|name| name == expected)
+}
+
+fn direct_pattern_binding(pattern: &Pat, expected: &str) -> bool {
+    matches!(pattern, Pat::Ident(binding) if binding.ident == expected && binding.subpat.is_none())
+}
+
+fn event_rebinding_preserves_identity(local: &syn::Local) -> bool {
+    let Some(initializer) = &local.init else {
+        return false;
+    };
+    match strip_expression(&initializer.expr) {
+        Expr::Call(call) => {
+            matches!(strip_expression(&call.func), Expr::Path(path) if path_name(&path.path) == "std::sync::Arc::new")
+                && call.args.len() == 1
+                && call
+                    .args
+                    .first()
+                    .is_some_and(|argument| expression_is_path(argument, "event"))
+        }
+        Expr::MethodCall(unwrap) if unwrap.method == "unwrap_or_else" => {
+            let Expr::Call(try_unwrap) = strip_expression(&unwrap.receiver) else {
+                return false;
+            };
+            if !matches!(strip_expression(&try_unwrap.func), Expr::Path(path) if path_name(&path.path) == "std::sync::Arc::try_unwrap")
+                || try_unwrap.args.len() != 1
+                || !try_unwrap
+                    .args
+                    .first()
+                    .is_some_and(|argument| expression_is_path(argument, "event"))
+                || unwrap.args.len() != 1
+            {
+                return false;
+            }
+            let Some(Expr::Closure(fallback)) = unwrap.args.first() else {
+                return false;
+            };
+            fallback.inputs.len() == 1
+                && matches!(fallback.inputs.first(), Some(Pat::Ident(binding)) if binding.ident == "arc")
+                && matches!(strip_expression(&fallback.body), Expr::MethodCall(clone) if allowed_pre_gate_method_call(clone))
+        }
+        _ => false,
+    }
 }
 
 fn expression_binding_name(expression: &Expr) -> Option<String> {
@@ -1471,6 +1825,166 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     }
 
     #[test]
+    fn destructured_kind_shadows_are_not_treated_as_the_incoming_kind() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let (kind_u32,) = (KIND_MESSAGE,);\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadowed through an unproven pattern");
+    }
+
+    #[test]
+    fn destructured_event_shadows_cannot_supply_the_gate_event() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let (event,) = (other_event,);\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "event binding is shadowed");
+    }
+
+    #[test]
+    fn arbitrary_direct_event_rebindings_cannot_supply_the_gate_event() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let event = other_event;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "event binding is shadowed");
+    }
+
+    #[test]
+    fn local_scope_helper_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let required_scope_for_kind = accepting;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn local_kind_helper_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let event_kind_u32 = spoofed_kind;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn local_validation_helper_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let verify_event = persist_before_gate;\n    verify_event(&event)?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn local_helper_imports_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "use spoofed::verify_event;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn helper_named_parameters_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+            "async fn ingest_event_inner(kind_u32: u32, event: Event, verify_event: VerifyFn) -> Result<(), Error> {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn module_kind_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use spoofed::event_kind_u32;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(event: Event) -> Result<(), Error> {\n    let kind_u32 = event_kind_u32(&event);",
+            );
+
+        assert_unproven_gate_is_partial(&source, "pinned module-level resolution");
+    }
+
+    #[test]
+    fn module_validation_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use spoofed::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "verify_event(&event)?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "pinned module-level resolution");
+    }
+
+    #[test]
+    fn local_qualified_path_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "use spoofed as tokio;\n    tokio::task::spawn_blocking(|| persist_before_gate()).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn module_qualified_path_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use spoofed as tokio;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "tokio::task::spawn_blocking(|| persist_before_gate()).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "pinned module-level resolution");
+    }
+
+    #[test]
+    fn local_macro_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "use spoofed::debug;\n    debug!(event_id = % event_id_hex, kind = kind_u32, \"ingest_event\");\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "shadows modeled helper");
+    }
+
+    #[test]
+    fn module_macro_aliases_make_resolution_unproven() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use spoofed::debug;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "debug!(event_id = % event_id_hex, kind = kind_u32, \"ingest_event\");\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "pinned module-level resolution");
+    }
+
+    #[test]
     fn gate_must_receive_the_canonical_incoming_event() {
         let source = INGEST_SOURCE
             .replace(
@@ -1483,6 +1997,16 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             );
 
         assert_unproven_gate_is_partial(&source, "does not receive the canonical incoming event");
+    }
+
+    #[test]
+    fn qualified_scope_helpers_are_not_the_proven_top_level_gate() {
+        let source = INGEST_SOURCE.replace(
+            "required_scope_for_kind(kind_u32, &event)",
+            "accepting::required_scope_for_kind(kind_u32, &event)",
+        );
+
+        assert_unproven_gate_is_partial(&source, "not a direct top-level terminating match gate");
     }
 
     #[test]

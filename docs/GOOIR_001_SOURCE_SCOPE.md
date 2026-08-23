@@ -59,10 +59,18 @@ latest incoming-event-derived kind binding, return an error through every
 `Err`-matching arm (including guarded or-pattern alternatives) with an
 unguarded catch-all, and follow only the explicitly modeled validation/read
 calls and awaited futures used by the pinned handler. A direct kind parameter
-is accepted only as the unique canonical `kind_u32` parameter. Wrong,
-ambiguous, or shadowed arguments, ignored results, conditional or dead calls,
-non-terminating rejection arms, mutation, divergence, and unrecognized
-pre-gate calls or futures all degrade the affected decisions to unknown.
+is accepted only as the unique canonical `kind_u32` parameter; nested pattern
+bindings cannot bypass latest-binding checks. The gate must call the exact
+unqualified top-level helper and receive the canonical event through only the
+two modeled identity-preserving `Arc` rebindings in the pinned handler. Wrong,
+ambiguous, qualified, or shadowed arguments, ignored results, conditional or
+dead calls, non-terminating rejection arms, mutation, divergence, and
+unrecognized pre-gate calls or futures all degrade the affected decisions to
+unknown. The accepted unqualified scope, kind, validation, and result helpers
+must also remain unshadowed by local bindings, parameters, or imports so a
+modeled name cannot redirect to an unrelated implementation. Module-level
+imports are checked against the pinned helper paths, and the roots of modeled
+qualified calls and modeled macro names must likewise remain unshadowed.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
