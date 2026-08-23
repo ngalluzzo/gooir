@@ -71,7 +71,7 @@
   "coverage": {
     "extractor_package": "org.gooi.lifter.buzz_relay",
     "extractor_version": "0.1.0",
-    "mechanism": "rust_closed_required_scope_match_and_production_call",
+    "mechanism": "rust_closed_required_scope_match_and_proven_ingest_gate",
     "completeness": "exhaustive",
     "included_artifacts": [
       "crates/buzz-relay/src/handlers/ingest.rs",

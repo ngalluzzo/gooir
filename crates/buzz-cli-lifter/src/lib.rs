@@ -6,6 +6,7 @@
 //! cannot parse make coverage partial rather than silently proving absence.
 
 use buzz_protocol_lifter::{SourceArtifact, SourceSpan};
+use heck::{ToKebabCase, ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
 use proc_macro2::Span;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -193,13 +194,23 @@ fn visit_command_enum(
     if !derive_contains(&command_enum.attrs, "Subcommand") {
         unresolved.push(format!("{enum_symbol} does not derive Subcommand"));
     }
+    let container_attributes = command_container_attr(&command_enum.attrs);
+    unresolved.extend(
+        container_attributes
+            .unresolved
+            .iter()
+            .map(|reason| format!("{enum_symbol}: {reason}")),
+    );
     stack.push(enum_symbol.clone());
 
     for variant in &command_enum.variants {
         let attributes = command_attr(&variant.attrs);
-        let command_name = attributes
-            .name
-            .unwrap_or_else(|| to_kebab_case(&variant.ident.to_string()));
+        let command_name = attributes.name.unwrap_or_else(|| {
+            container_attributes
+                .rename_all
+                .unwrap_or(CasingStyle::Kebab)
+                .apply(&variant.ident.to_string())
+        });
         let mut path = prefix.to_vec();
         path.push(command_name);
         let kind = if attributes.subcommand {
@@ -334,6 +345,92 @@ fn command_attr(attributes: &[Attribute]) -> CommandAttributes {
     result
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CasingStyle {
+    Camel,
+    Kebab,
+    Pascal,
+    ScreamingSnake,
+    Snake,
+    Lower,
+    Upper,
+    Verbatim,
+}
+
+impl CasingStyle {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_upper_camel_case().to_lowercase().as_str() {
+            "camel" | "camelcase" => Some(Self::Camel),
+            "kebab" | "kebabcase" => Some(Self::Kebab),
+            "pascal" | "pascalcase" => Some(Self::Pascal),
+            "screamingsnake" | "screamingsnakecase" => Some(Self::ScreamingSnake),
+            "snake" | "snakecase" => Some(Self::Snake),
+            "lower" | "lowercase" => Some(Self::Lower),
+            "upper" | "uppercase" => Some(Self::Upper),
+            "verbatim" | "verbatimcase" => Some(Self::Verbatim),
+            _ => None,
+        }
+    }
+
+    fn apply(self, symbol: &str) -> String {
+        match self {
+            Self::Camel => symbol.to_lower_camel_case(),
+            Self::Kebab => symbol.to_kebab_case(),
+            Self::Pascal => symbol.to_upper_camel_case(),
+            Self::ScreamingSnake => symbol.to_shouty_snake_case(),
+            Self::Snake => symbol.to_snake_case(),
+            Self::Lower => symbol.to_snake_case().replace('_', ""),
+            Self::Upper => symbol.to_shouty_snake_case().replace('_', ""),
+            Self::Verbatim => symbol.to_owned(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct CommandContainerAttributes {
+    rename_all: Option<CasingStyle>,
+    unresolved: Vec<String>,
+}
+
+fn command_container_attr(attributes: &[Attribute]) -> CommandContainerAttributes {
+    let mut result = CommandContainerAttributes::default();
+    for attribute in attributes {
+        if !attribute.path().is_ident("command") {
+            continue;
+        }
+        if let Err(error) = attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_all") {
+                let value = meta.value()?.parse::<syn::LitStr>()?.value();
+                match CasingStyle::parse(&value) {
+                    Some(style) => result.rename_all = Some(style),
+                    None => result
+                        .unresolved
+                        .push(format!("unsupported rename_all casing {value:?}")),
+                }
+            } else {
+                let name = meta
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned());
+                if meta.input.peek(Token![=]) {
+                    let _: Expr = meta.value()?.parse()?;
+                }
+                result
+                    .unresolved
+                    .push(format!("unhandled command container attribute {name}"));
+            }
+            Ok(())
+        }) {
+            result
+                .unresolved
+                .push(format!("unparsed command container attribute: {error}"));
+        }
+    }
+    result
+}
+
 fn has_cfg(attributes: &[Attribute]) -> bool {
     attributes
         .iter()
@@ -356,21 +453,6 @@ fn nested_enum_symbol(fields: &Fields) -> Option<String> {
         return None;
     }
     type_symbol(&fields.unnamed.first()?.ty)
-}
-
-fn to_kebab_case(symbol: &str) -> String {
-    let mut output = String::new();
-    for (index, character) in symbol.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if index > 0 {
-                output.push('-');
-            }
-            output.push(character.to_ascii_lowercase());
-        } else {
-            output.push(character);
-        }
-    }
-    output
 }
 
 fn source_span(source: &str, span: Span, construct: &str) -> Result<SourceSpan, LiftError> {
@@ -495,6 +577,49 @@ enum MessagesCmd {
             .expect_err("unwired root must fail");
 
         assert_eq!(error, LiftError::InvalidCommandField);
+    }
+
+    #[test]
+    fn enum_rename_all_uses_clap_casing_semantics() {
+        let source = FIXTURE.replace(
+            "#[derive(Subcommand)]\nenum Cmd",
+            "#[derive(Subcommand)]\n#[command(rename_all = \"snake_case\")]\nenum Cmd",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("renamed command tree lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(lift.commands.iter().any(|command| {
+            command.path == ["set-profile"] && command.kind == CommandNodeKind::Leaf
+        }));
+        assert!(lift.commands.iter().any(|command| {
+            command.path == ["messages"] && command.kind == CommandNodeKind::Group
+        }));
+
+        let source = source.replace(
+            "#[command(name = \"set-profile\")]\n    SetProfile,",
+            "SetProfile,",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("implicit renamed command tree lifts");
+        assert!(lift.commands.iter().any(|command| {
+            command.path == ["set_profile"] && command.kind == CommandNodeKind::Leaf
+        }));
+    }
+
+    #[test]
+    fn unhandled_enum_command_attribute_makes_coverage_partial() {
+        let source = FIXTURE.replace(
+            "#[derive(Subcommand)]\nenum Cmd",
+            "#[derive(Subcommand)]\n#[command(disable_help_flag = true)]\nenum Cmd",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("tree with unhandled container attribute still lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(lift.coverage.unresolved.iter().any(|reason| {
+            reason.contains("Cmd: unhandled command container attribute disable_help_flag")
+        }));
     }
 
     #[test]

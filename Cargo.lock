@@ -16,6 +16,7 @@ name = "buzz-cli-lifter"
 version = "0.1.0"
 dependencies = [
  "buzz-protocol-lifter",
+ "heck",
  "proc-macro2",
  "serde",
  "serde_json",
@@ -46,12 +47,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-surface-check"
+version = "0.1.0"
+dependencies = [
+ "buzz-cli-lifter",
+ "buzz-protocol-lifter",
+ "buzz-relay-lifter",
+ "buzz-surface-profile",
+ "buzz-surface-projection",
+ "gooir-analysis",
+ "serde",
+ "serde_json",
+ "surface-completeness-analysis",
+]
+
+[[package]]
 name = "buzz-surface-profile"
 version = "0.1.0"
 dependencies = [
  "semantics-software-surface-v1",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "buzz-surface-projection"
+version = "0.1.0"
+dependencies = [
+ "buzz-cli-lifter",
+ "buzz-protocol-lifter",
+ "buzz-relay-lifter",
+ "buzz-surface-profile",
+ "gooir-analysis",
+ "gooir-core",
+ "semantics-software-surface-v1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "surface-completeness-analysis",
 ]
 
 [[package]]
@@ -104,6 +137,7 @@ name = "gooir-analysis"
 version = "0.1.0"
 dependencies = [
  "gooir-core",
+ "serde_json",
 ]
 
 [[package]]
@@ -113,6 +147,12 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "itoa"
@@ -239,6 +279,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "surface-completeness-analysis"
+version = "0.1.0"
+dependencies = [
+ "gooir-analysis",
+ "gooir-core",
+ "semantics-software-surface-v1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

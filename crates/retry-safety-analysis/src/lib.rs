@@ -65,7 +65,7 @@ impl RetrySafetyAnalyzer {
             ClaimResolution::Trusted(claim) => parse_delivery(&claim.payload)
                 .map(RetryContext::Known)
                 .or_else(|| Some(RetryContext::Unknown("invalid retry payload".to_owned()))),
-            ClaimResolution::Untrusted(_) => Some(RetryContext::Unknown(
+            ClaimResolution::Untrusted { .. } => Some(RetryContext::Unknown(
                 "retry semantics are declared but unverified".to_owned(),
             )),
             ClaimResolution::VersionMismatch(_) => Some(RetryContext::Unknown(
@@ -103,7 +103,7 @@ impl RetrySafetyAnalyzer {
                 }
                 None => report_unknown(operation, "external-effect payload is invalid", report),
             },
-            ClaimResolution::Untrusted(_) => report_unknown(
+            ClaimResolution::Untrusted { .. } => report_unknown(
                 operation,
                 "external-effect semantics are declared but unverified",
                 report,

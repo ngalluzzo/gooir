@@ -3,13 +3,16 @@ members = [
     "crates/buzz-protocol-lifter",
     "crates/buzz-cli-lifter",
     "crates/buzz-relay-lifter",
+    "crates/buzz-surface-check",
     "crates/buzz-surface-profile",
+    "crates/buzz-surface-projection",
     "crates/gooir-analysis",
     "crates/gooir-core",
     "crates/payments-dialect",
     "crates/retry-safety-analysis",
     "crates/semantics-effects-v1",
     "crates/semantics-software-surface-v1",
+    "crates/surface-completeness-analysis",
     "crates/workflow-dialect",
 ]
 resolver = "3"
@@ -24,13 +27,17 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
 buzz-cli-lifter = { path = "crates/buzz-cli-lifter" }
 buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
+buzz-surface-check = { path = "crates/buzz-surface-check" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
+buzz-surface-projection = { path = "crates/buzz-surface-projection" }
 gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-core = { path = "crates/gooir-core" }
+heck = "0.5"
 payments-dialect = { path = "crates/payments-dialect" }
 retry-safety-analysis = { path = "crates/retry-safety-analysis" }
 semantics-effects-v1 = { path = "crates/semantics-effects-v1" }
 semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" }
+surface-completeness-analysis = { path = "crates/surface-completeness-analysis" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

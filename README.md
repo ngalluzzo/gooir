@@ -29,7 +29,7 @@ The microkernel does not know `page`, `entity`, `retry`, React, Postgres, or Buz
 - meaning-changing contract versions require an explicit bridge.
 - partial legality reports the exact pinned/unknown portability frontier.
 
-`GOOIR-001` is now lifting Buzz's pinned event surface. Its first staged input preserves separate production, test, mock, and documentation roles; exact source authority and byte-range provenance; and coverage witnesses that prevent incomplete searches from becoming universal negative claims. The staging snapshot is not trusted lifter output and cannot by itself close the milestone.
+`GOOIR-001` now has source-derived protocol, relay, and CLI lifts plus a generic contract-only completeness analyzer. Exact local admission produces six relay-ingest contradictions and one exhaustive CLI gap; SDK and runtime absences remain unknown until their coverage-witnessed lifters land. The hand-authored staging snapshot stays outside the trusted path.
 
 See the [project brief](docs/PROJECT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), and [milestones](docs/MILESTONES.md).
 

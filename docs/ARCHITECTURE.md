@@ -49,13 +49,17 @@ Provenance explains where a lifted fact came from. A separate coverage witness e
 
 ## Contract compatibility
 
-Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that converts a claim and preserves provenance. A conformance declaration is evidence, not universal proof, and unverified declarations remain untrusted.
+Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that changes only the contract identity while preserving the claim payload and evidence. A conformance declaration is evidence, not universal proof.
+
+Trust is contextual rather than intrinsic to serialized IR. The core transports an exact attester, suite identity/version, subject digest, and result digest. An analysis host validates a conformance result and admits it only when bound to an exact operation identity and semantic claim; the default policy admits nothing. Copying an admitted attestation onto a different operation, contract, payload, or source cannot make that claim safe. Multiple claims for the same exact contract remain ambiguous rather than being resolved by trust precedence. See [decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
 
 ## First product corpus
 
 Buzz is the first product proof. Its source dialects may model protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These are not kernel concepts.
 
 The first analyzer consumes generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps are acceptance cases, never hard-coded analyzer branches.
+
+`surface-completeness-analysis` receives only a generic `SurfaceProfile`, resolved relation claims, and resolved coverage-witness claims. A trusted opposite relation is an explicit contradiction. A missing relation becomes an error only when every coverage mechanism required by the profile has an admitted, exhaustive, gap-free witness in the exact scope; otherwise the result is unknown. Malformed, ambiguous, or unadmitted contract inputs also remain unknown. The Buzz projection and pinned local admission policy live in separate product-specific packages.
 
 ## Open-world contract parametricity
 

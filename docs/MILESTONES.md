@@ -20,6 +20,8 @@ Run a contract-based surface-completeness analysis. Findings identify the missin
 
 The checked-in relation snapshot is a staging oracle for contract and analyzer development. GOOIR-001 closes only after coverage-witnessed lifters reproduce it from the pinned source; hand-authored rows cannot establish trusted product findings.
 
+Current source-derived analysis projects the protocol, relay, and CLI native lifts through an exact, default-deny local admission policy. It reports six admitted relay-ingest contradictions and one exhaustive CLI command-surface gap. The six SDK-constructor requirements and runtime-dispatch requirement remain unknown until their own coverage-witnessed lifters land.
+
 ## GOOIR-002 — Lift Buzz workflow transitions
 
 Represent actions, suspension, approval, resumption, and terminal outcomes. Detect a path that can suspend but cannot reach a successful terminal outcome under the lifted scope.

@@ -45,7 +45,7 @@ cargo run -q -p buzz-protocol-lifter -- \
   39f8b46935736334cdd7045a4e4b5d7eb1a33888
 ```
 
-The native output remains separate from software-surface contracts. A later projection package will map its declarations and registry membership into `Declares` and `Registers` relations without teaching the lifter or kernel about analysis requirements.
+The native output remains separate from software-surface contracts. `buzz-surface-projection` maps its declarations and registry membership into `Declares` and `Registers` claims without teaching the lifter or kernel about analysis requirements.
 
 ## Closed relay-ingest lifter
 
@@ -53,8 +53,12 @@ The native output remains separate from software-surface contracts. A later proj
 exact `kind.rs` and `ingest.rs` bytes. It checks that the kind-source digest
 matches the upstream lift, resolves direct constants and named `matches!`
 predicates, evaluates every preceding match arm for each lifted job-kind value,
-and locates the production `required_scope_for_kind` call inside
-`ingest_event_inner`.
+and proves a direct top-level `required_scope_for_kind` match gate inside
+`ingest_event_inner`. Exhaustive coverage requires that the gate receive the
+incoming event kind, return on the rejection arm, and precede recognized
+persistence/dispatch sinks. Wrong arguments, ignored results, conditional or
+dead calls, non-terminating rejection arms, and calls after side effects all
+degrade the affected decisions to unknown.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
@@ -80,7 +84,9 @@ cannot be promoted into an exhaustive rejection.
 `buzz-cli-lifter` parses the Clap-derived surface beginning at
 `Cli.command: Cmd`, verifies the `Parser`/`Subcommand` wiring, and recursively
 follows direct `#[command(subcommand)]` enum edges. It preserves explicit names,
-aliases, exact spans, and every group/leaf path. Conditional variants, missing
+aliases, exact spans, and every group/leaf path. Implicit names and enum-level
+`rename_all` use Clap's `heck` casing rules rather than a local approximation.
+Conditional variants, missing
 referenced enums, flattening, external subcommands, or unparsed alias shapes make
 coverage partial.
 
@@ -99,3 +105,41 @@ The source-derived tree contains 138 command groups/leaves and no `job`/`jobs`
 path or alias, with exhaustive coverage of this explicit Clap mechanism. This
 closes only the CLI command-surface mechanism; it does not claim arbitrary Rust
 code elsewhere cannot construct or publish a job event.
+
+## Contract projection, admission, and analysis
+
+`buzz-surface-projection` consumes only the three checked native lift documents.
+Before projection it checks their exact reviewed document digests plus the Buzz
+authority, revision, artifact names, source digests, and the relay lift's
+upstream protocol binding. It emits generic
+relation and coverage-witness claims with exact source spans. Those claims carry
+a local claim-binding conformance reference, but remain untrusted until
+`admit_pinned_surface` first requires exact equality with the projection of the
+embedded reviewed lift documents, then revalidates the pinned authority and
+exact result digest and admits each operation-plus-claim tuple through
+`EvidenceTrustPolicy`.
+
+`surface-completeness-analysis` has no Buzz dependency. Given the admitted
+claims and `buzz-surface-profile`, the pinned result is:
+
+- six `surface.contradicted` errors for relay acceptance of kinds `43001–43006`,
+  each citing the kind declaration, closed allowlist, fallback, and production
+  gate;
+- one `surface.missing_relation` error for the absent CLI job surface, backed by
+  exhaustive `crates/buzz-cli/src` command-tree coverage;
+- seven `surface.coverage_incomplete` unknowns for SDK construction and runtime
+  dispatch, whose native coverage lifters have not landed.
+
+The deterministic report is checked in at
+`fixtures/buzz/desktop-v0.5.18/job-surface.analysis.json` and can be reproduced
+with:
+
+```text
+cargo run -q -p buzz-surface-check -- \
+  fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json \
+  fixtures/buzz/desktop-v0.5.18/job-relay.lift.json \
+  fixtures/buzz/desktop-v0.5.18/job-cli.lift.json
+```
+
+This is a checked local admission policy, not a claim of cryptographic proof.
+The staging snapshot remains outside the trusted execution path.

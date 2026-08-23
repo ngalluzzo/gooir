@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fmt};
 use syn::{
-    BinOp, Expr, ExprCall, ExprMacro, Item, ItemFn, Pat, Token,
+    BinOp, Expr, ExprCall, ExprMacro, ExprMethodCall, Item, ItemFn, Pat, Stmt, Token,
     parse::{Parse, ParseStream},
     spanned::Spanned,
     visit::{self, Visit},
@@ -134,15 +134,8 @@ pub fn lift_relay_ingest(
         .ok_or(LiftError::MissingScopeFunction)?;
     let scope_match = direct_scope_match(scope_function).ok_or(LiftError::MissingScopeMatch)?;
 
-    let mut calls = ScopeCallVisitor::default();
-    if let Some(ingest) = find_function(&ingest_file, "ingest_event_inner") {
-        calls.visit_item_fn(ingest);
-    }
-    let gate_call_span = calls
-        .gate_calls
-        .first()
-        .copied()
-        .ok_or(LiftError::MissingGateCall)?;
+    let ingest = find_function(&ingest_file, "ingest_event_inner");
+    let gate = prove_production_gate(ingest)?;
 
     let fallback_arm = scope_match
         .arms
@@ -152,12 +145,21 @@ pub fn lift_relay_ingest(
     let fallback_error = err_literal(&fallback_arm.body).ok_or(LiftError::MissingFallback)?;
 
     let mut unresolved = Vec::new();
+    if let Some(reason) = &gate.unresolved {
+        unresolved.push(reason.clone());
+    }
     let job_decisions = protocol
         .job_kinds
         .iter()
         .map(|job| {
-            let (decision, reason) =
-                evaluate_match(scope_match, job.value, &constants, &predicates);
+            let (decision, reason) = if let Some(reason) = &gate.unresolved {
+                (
+                    IngestDecisionKind::Unknown,
+                    format!("production ingest gate could not be proven: {reason}"),
+                )
+            } else {
+                evaluate_match(scope_match, job.value, &constants, &predicates)
+            };
             if decision == IngestDecisionKind::Unknown {
                 unresolved.push(format!("{} ({}) — {reason}", job.symbol, job.value));
             }
@@ -180,14 +182,14 @@ pub fn lift_relay_ingest(
         },
         protocol_source: protocol.source.clone(),
         scope_function: source_span(ingest_source, scope_function.span(), "scope function")?,
-        gate_call: source_span(ingest_source, gate_call_span, "gate call")?,
+        gate_call: source_span(ingest_source, gate.span, "gate call")?,
         fallback: source_span(ingest_source, fallback_arm.span(), "fallback")?,
         fallback_error,
         job_decisions,
         coverage: RelayCoverage {
             extractor_package: EXTRACTOR_PACKAGE.to_owned(),
             extractor_version: EXTRACTOR_VERSION.to_owned(),
-            mechanism: "rust_closed_required_scope_match_and_production_call".to_owned(),
+            mechanism: "rust_closed_required_scope_match_and_proven_ingest_gate".to_owned(),
             completeness: if unresolved.is_empty() {
                 NativeCompleteness::Exhaustive
             } else {
@@ -635,6 +637,303 @@ impl<'ast> Visit<'ast> for ScopeCallVisitor {
     }
 }
 
+struct GateProof {
+    span: Span,
+    unresolved: Option<String>,
+}
+
+fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError> {
+    let ingest = ingest.ok_or(LiftError::MissingGateCall)?;
+    let mut calls = ScopeCallVisitor::default();
+    calls.visit_item_fn(ingest);
+    let fallback_span = calls
+        .gate_calls
+        .first()
+        .copied()
+        .ok_or(LiftError::MissingGateCall)?;
+
+    for statement in &ingest.block.stmts {
+        let Some((call, gate_match)) = direct_gate_statement(statement) else {
+            continue;
+        };
+        let span = call.span();
+        if ingest.block.stmts.iter().any(|prior| {
+            span_precedes(prior.span(), span) && matches!(prior, Stmt::Expr(Expr::Return(_), _))
+        }) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(
+                    "required_scope_for_kind is unreachable after an unconditional return"
+                        .to_owned(),
+                ),
+            });
+        }
+        if let Err(reason) = gate_checks_incoming_kind(ingest, call, span) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
+        if !gate_rejection_returns(gate_match) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(
+                    "required_scope_for_kind rejection does not directly return from ingest_event_inner"
+                        .to_owned(),
+                ),
+            });
+        }
+
+        let mut mutations = MutationCallVisitor::default();
+        mutations.visit_item_fn(ingest);
+        if mutations
+            .calls
+            .iter()
+            .any(|mutation| span_precedes(*mutation, span))
+        {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(
+                    "a persistence or dispatch call can occur before required_scope_for_kind"
+                        .to_owned(),
+                ),
+            });
+        }
+
+        return Ok(GateProof {
+            span,
+            unresolved: None,
+        });
+    }
+
+    Ok(GateProof {
+        span: fallback_span,
+        unresolved: Some(
+            "required_scope_for_kind is not a direct top-level terminating match gate".to_owned(),
+        ),
+    })
+}
+
+fn direct_gate_statement(statement: &Stmt) -> Option<(&ExprCall, &syn::ExprMatch)> {
+    let Stmt::Local(local) = statement else {
+        return None;
+    };
+    let initializer = local.init.as_ref()?;
+    let Expr::Match(gate_match) = strip_expression(&initializer.expr) else {
+        return None;
+    };
+    let Expr::Call(call) = strip_expression(&gate_match.expr) else {
+        return None;
+    };
+    is_required_scope_call(call).then_some((call, gate_match))
+}
+
+fn is_required_scope_call(call: &ExprCall) -> bool {
+    matches!(
+        strip_expression(&call.func),
+        Expr::Path(path)
+            if path.path.segments.last().is_some_and(|segment| {
+                segment.ident == "required_scope_for_kind"
+            })
+    )
+}
+
+fn gate_checks_incoming_kind(
+    ingest: &ItemFn,
+    call: &ExprCall,
+    gate_span: Span,
+) -> Result<(), String> {
+    let Some(kind_argument) = call.args.first() else {
+        return Err("required_scope_for_kind has no kind argument".to_owned());
+    };
+    let Expr::Path(kind_path) = strip_expression(kind_argument) else {
+        return Err(
+            "required_scope_for_kind does not receive a direct incoming-kind binding".to_owned(),
+        );
+    };
+    let Some(kind_name) = kind_path.path.get_ident().map(ToString::to_string) else {
+        return Err(
+            "required_scope_for_kind does not receive a local incoming-kind binding".to_owned(),
+        );
+    };
+
+    if ingest.sig.inputs.iter().any(|argument| {
+        matches!(
+            argument,
+            syn::FnArg::Typed(argument)
+                if matches!(&*argument.pat, Pat::Ident(ident)
+                    if ident.ident == kind_name && kind_name.contains("kind"))
+        )
+    }) {
+        return Ok(());
+    }
+
+    let event_parameters = ingest
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|argument| match argument {
+            syn::FnArg::Typed(argument) => match &*argument.pat {
+                Pat::Ident(ident) if ident.ident.to_string().contains("event") => {
+                    Some(ident.ident.to_string())
+                }
+                _ => None,
+            },
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect::<Vec<_>>();
+
+    for statement in &ingest.block.stmts {
+        if !span_precedes(statement.span(), gate_span) {
+            continue;
+        }
+        let Stmt::Local(local) = statement else {
+            continue;
+        };
+        let Pat::Ident(binding) = &local.pat else {
+            continue;
+        };
+        if binding.ident != kind_name {
+            continue;
+        }
+        let Some(initializer) = &local.init else {
+            continue;
+        };
+        let Expr::Call(derived) = strip_expression(&initializer.expr) else {
+            continue;
+        };
+        let Expr::Path(function) = strip_expression(&derived.func) else {
+            continue;
+        };
+        if function
+            .path
+            .segments
+            .last()
+            .is_none_or(|segment| segment.ident != "event_kind_u32")
+            || derived.args.len() != 1
+        {
+            continue;
+        }
+        let Some(argument_name) = expression_binding_name(&derived.args[0]) else {
+            continue;
+        };
+        if event_parameters
+            .iter()
+            .any(|parameter| parameter == &argument_name)
+        {
+            return Ok(());
+        }
+    }
+
+    Err("required_scope_for_kind kind argument is not derived from the incoming event".to_owned())
+}
+
+fn expression_binding_name(expression: &Expr) -> Option<String> {
+    match strip_expression(expression) {
+        Expr::Reference(reference) => expression_binding_name(&reference.expr),
+        Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+        _ => None,
+    }
+}
+
+fn gate_rejection_returns(gate_match: &syn::ExprMatch) -> bool {
+    gate_match.arms.iter().any(|arm| {
+        pattern_constructor(&arm.pat).is_some_and(|constructor| constructor == "Err")
+            && expression_returns_err(&arm.body)
+    })
+}
+
+fn pattern_constructor(pattern: &Pat) -> Option<String> {
+    match pattern {
+        Pat::TupleStruct(pattern) => pattern
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string()),
+        Pat::Paren(pattern) => pattern_constructor(&pattern.pat),
+        _ => None,
+    }
+}
+
+fn expression_returns_err(expression: &Expr) -> bool {
+    match strip_expression(expression) {
+        Expr::Return(return_expression) => return_expression
+            .expr
+            .as_deref()
+            .is_some_and(expression_is_err),
+        Expr::Block(block) if block.block.stmts.len() == 1 => match &block.block.stmts[0] {
+            Stmt::Expr(expression, _) => expression_returns_err(expression),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn expression_is_err(expression: &Expr) -> bool {
+    matches!(
+        strip_expression(expression),
+        Expr::Call(call)
+            if matches!(strip_expression(&call.func), Expr::Path(path) if path.path.is_ident("Err"))
+    )
+}
+
+fn strip_expression(expression: &Expr) -> &Expr {
+    match expression {
+        Expr::Group(group) => strip_expression(&group.expr),
+        Expr::Paren(paren) => strip_expression(&paren.expr),
+        _ => expression,
+    }
+}
+
+fn span_precedes(left: Span, right: Span) -> bool {
+    let left = left.start();
+    let right = right.start();
+    (left.line, left.column) < (right.line, right.column)
+}
+
+#[derive(Default)]
+struct MutationCallVisitor {
+    calls: Vec<Span>,
+}
+
+impl<'ast> Visit<'ast> for MutationCallVisitor {
+    fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
+        if let Expr::Path(path) = strip_expression(&expression.func)
+            && path
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| is_persistence_or_dispatch_name(&segment.ident.to_string()))
+        {
+            self.calls.push(expression.span());
+        }
+        visit::visit_expr_call(self, expression);
+    }
+
+    fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
+        if is_persistence_or_dispatch_name(&expression.method.to_string()) {
+            self.calls.push(expression.span());
+        }
+        visit::visit_expr_method_call(self, expression);
+    }
+}
+
+fn is_persistence_or_dispatch_name(name: &str) -> bool {
+    matches!(
+        name,
+        "persist" | "insert" | "upsert" | "save" | "write" | "publish" | "broadcast" | "send"
+    ) || name.starts_with("persist_")
+        || name.starts_with("insert_")
+        || name.starts_with("upsert_")
+        || name.starts_with("save_")
+        || name.starts_with("write_")
+        || name.starts_with("dispatch")
+        || name.starts_with("publish_")
+        || name.starts_with("broadcast_")
+        || name.starts_with("send_")
+        || name.starts_with("handle_command")
+}
+
 fn source_span(source: &str, span: Span, construct: &str) -> Result<SourceSpan, LiftError> {
     let start = span.start();
     let end = span.end();
@@ -799,6 +1098,93 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 .all(|decision| decision.decision == IngestDecisionKind::Unknown)
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+    }
+
+    fn assert_unproven_gate_is_partial(source: &str, expected_reason: &str) {
+        let lift = lift_relay_ingest(
+            source,
+            KIND_SOURCE,
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "revision",
+        )
+        .expect("unproven gate remains visible as a partial lift");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(
+            lift.job_decisions
+                .iter()
+                .all(|decision| decision.decision == IngestDecisionKind::Unknown)
+        );
+        assert!(
+            lift.coverage
+                .unresolved
+                .iter()
+                .any(|reason| reason.contains(expected_reason)),
+            "{:?}",
+            lift.coverage.unresolved
+        );
+    }
+
+    #[test]
+    fn gate_must_check_the_incoming_kind() {
+        let source = INGEST_SOURCE.replace(
+            "required_scope_for_kind(kind_u32, &event)",
+            "required_scope_for_kind(KIND_MESSAGE, &event)",
+        );
+
+        assert_unproven_gate_is_partial(&source, "not derived from the incoming event");
+    }
+
+    #[test]
+    fn ignored_gate_result_is_not_a_production_gate() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {\n        Ok(scope) => scope,\n        Err(error) => return Err(error.into()),\n    };",
+            "let _ = required_scope_for_kind(kind_u32, &event);\n    let required = Scope::MessagesWrite;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "direct top-level terminating match gate");
+    }
+
+    #[test]
+    fn conditional_gate_is_not_a_production_gate() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {\n        Ok(scope) => scope,\n        Err(error) => return Err(error.into()),\n    };",
+            "if event.allowed {\n        let required = match required_scope_for_kind(kind_u32, &event) {\n            Ok(scope) => scope,\n            Err(error) => return Err(error.into()),\n        };\n        persist(required).await?;\n    }\n    let required = Scope::MessagesWrite;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "direct top-level terminating match gate");
+    }
+
+    #[test]
+    fn dead_gate_after_unconditional_return_is_not_exhaustive() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "return Ok(());\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unreachable after an unconditional return");
+    }
+
+    #[test]
+    fn gate_after_persistence_is_not_exhaustive() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "persist(Scope::MessagesWrite).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "before required_scope_for_kind");
+    }
+
+    #[test]
+    fn gate_rejection_must_terminate_ingest() {
+        let source = INGEST_SOURCE.replace(
+            "Err(error) => return Err(error.into()),",
+            "Err(_) => Scope::MessagesWrite,",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not directly return");
     }
 
     #[test]

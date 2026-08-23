@@ -1,7 +1,8 @@
 use gooir_analysis::{
-    BridgeRegistry, ClaimBridge, ContractProjection, FindingLevel, SemanticResolver,
+    BridgeRegistry, ClaimBridge, ContractProjection, EvidenceTrustPolicy, FindingLevel,
+    SemanticResolver,
 };
-use gooir_core::{Claim, ContractId, Evidence, Operation, Program, SourceRef};
+use gooir_core::{Claim, ConformanceEvidence, ContractId, Evidence, Operation, Program, SourceRef};
 use payments_dialect::charge;
 use retry_safety_analysis::RetrySafetyAnalyzer;
 use semantics_effects_v1::{
@@ -15,8 +16,44 @@ fn source(artifact: &str) -> SourceRef {
     SourceRef::new("test-fixture", artifact, "fixture-revision")
 }
 
+fn attestation(artifact: &str) -> ConformanceEvidence {
+    ConformanceEvidence::new(
+        "fixture-attester",
+        "effects-v1-conformance@1",
+        format!("sha256:{artifact}-subject"),
+        format!("sha256:{artifact}-result"),
+    )
+}
+
 fn verified(artifact: &str) -> Evidence {
-    Evidence::verified(source(artifact), "effects-v1-conformance", "sha256:fixture")
+    Evidence::verified(source(artifact), attestation(artifact))
+}
+
+fn trust_policy(program: &Program) -> EvidenceTrustPolicy {
+    let mut policy = EvidenceTrustPolicy::default();
+    for operation in &program.operations {
+        admit_operation_claims(&mut policy, operation);
+    }
+    policy
+}
+
+fn admit_operation_claims(policy: &mut EvidenceTrustPolicy, operation: &Operation) {
+    for claim in &operation.claims {
+        if claim.evidence.conformance.is_some() {
+            policy
+                .admit_claim(operation, claim)
+                .expect("fixture admission is valid");
+        }
+    }
+    for region in &operation.regions {
+        for child in region {
+            admit_operation_claims(policy, child);
+        }
+    }
+}
+
+fn analyzer_trusting(program: &Program) -> RetrySafetyAnalyzer {
+    RetrySafetyAnalyzer::with_resolver(SemanticResolver::with_trust_policy(trust_policy(program)))
 }
 
 #[test]
@@ -29,7 +66,8 @@ fn safe_composition_is_accepted_across_unrelated_dialects() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let program = Program::new(vec![workflow]);
+    let report = analyzer_trusting(&program).analyze(&program);
 
     assert!(report.is_clean());
 }
@@ -44,7 +82,8 @@ fn verified_duplicate_effect_risk_is_rejected() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let program = Program::new(vec![workflow]);
+    let report = analyzer_trusting(&program).analyze(&program);
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Error);
@@ -65,11 +104,40 @@ fn unverified_claim_degrades_to_unknown_instead_of_safe() {
         vec![effect],
     );
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let program = Program::new(vec![workflow]);
+    let mut policy = EvidenceTrustPolicy::default();
+    for claim in &program.operations[0].claims {
+        policy
+            .admit_claim(&program.operations[0], claim)
+            .expect("workflow fixture admission is valid");
+    }
+    let report = RetrySafetyAnalyzer::with_resolver(SemanticResolver::with_trust_policy(policy))
+        .analyze(&program);
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Unknown);
     assert_eq!(report.findings[0].code, "retry.effect_safety_unknown");
+}
+
+#[test]
+fn self_reported_verified_claim_is_unknown_without_policy_admission() {
+    let effect = charge("charge", Repeatability::NonIdempotent, verified("payments"));
+    let workflow = retrying_activity(
+        "activity",
+        Delivery::AtLeastOnce,
+        verified("workflow"),
+        vec![effect],
+    );
+
+    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+
+    assert!(!report.findings.is_empty());
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|finding| finding.level == FindingLevel::Unknown)
+    );
 }
 
 #[test]
@@ -91,7 +159,8 @@ fn changed_contract_version_requires_an_explicit_bridge() {
             verified("payments"),
         )]);
 
-    let report = RetrySafetyAnalyzer::new().analyze(&Program::new(vec![workflow]));
+    let program = Program::new(vec![workflow]);
+    let report = analyzer_trusting(&program).analyze(&program);
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Unknown);
@@ -120,7 +189,9 @@ fn explicit_bridge_makes_version_conversion_auditable() {
             verified("payments"),
         )]);
 
-    let report = RetrySafetyAnalyzer::with_bridges(bridges).analyze(&Program::new(vec![workflow]));
+    let program = Program::new(vec![workflow]);
+    let resolver = SemanticResolver::with_bridges_and_trust_policy(bridges, trust_policy(&program));
+    let report = RetrySafetyAnalyzer::with_resolver(resolver).analyze(&program);
 
     assert_eq!(report.findings.len(), 1);
     assert_eq!(report.findings[0].level, FindingLevel::Error);
@@ -138,12 +209,13 @@ fn open_world_projection_is_parametric_over_native_dialect_identity() {
             verified("canonical-payments"),
         )],
     )]);
-    let canonical_report = RetrySafetyAnalyzer::new().analyze(&canonical);
+    let canonical_report = analyzer_trusting(&canonical).analyze(&canonical);
 
-    let mut resolver = SemanticResolver::default();
+    let alien = alien_program();
+    let mut resolver = SemanticResolver::with_trust_policy(alien_trust_policy(&alien));
     resolver.register_projection(AlienRetryProjection);
     resolver.register_projection(AlienEffectProjection);
-    let alien_report = RetrySafetyAnalyzer::with_resolver(resolver).analyze(&alien_program());
+    let alien_report = RetrySafetyAnalyzer::with_resolver(resolver).analyze(&alien);
 
     assert_eq!(normalized(&alien_report), normalized(&canonical_report));
 }
@@ -197,6 +269,38 @@ fn alien_program() -> Program {
         .insert("control_blob".to_owned(), json!({"mode": 73}));
 
     Program::new(vec![alien_retry])
+}
+
+fn alien_trust_policy(program: &Program) -> EvidenceTrustPolicy {
+    let mut policy = EvidenceTrustPolicy::default();
+    for operation in &program.operations {
+        admit_alien_projection_claims(&mut policy, operation);
+    }
+    policy
+}
+
+fn admit_alien_projection_claims(policy: &mut EvidenceTrustPolicy, operation: &Operation) {
+    for claim in [
+        AlienRetryProjection
+            .project(operation)
+            .expect("retry projection succeeds"),
+        AlienEffectProjection
+            .project(operation)
+            .expect("effect projection succeeds"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        policy
+            .admit_claim(operation, &claim)
+            .expect("projected fixture admission is valid");
+    }
+
+    for region in &operation.regions {
+        for child in region {
+            admit_alien_projection_claims(policy, child);
+        }
+    }
 }
 
 fn normalized(report: &gooir_analysis::AnalysisReport) -> Vec<(String, FindingLevel, String)> {

@@ -1,0 +1,448 @@
+{
+  "analyzer": "org.gooi.analysis.surface_completeness@1.0.0",
+  "profile": "org.gooi.profile.buzz.agent_job_surface",
+  "profile_version": "1.0.0",
+  "findings": [
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43001",
+      "message": "requirement relay-accepts-43001 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43001) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43001",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43001",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43001",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43001",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:518-518 (bytes 25566-25606)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43001",
+      "message": "requirement sdk-constructs-43001 (Production Constructs buzz-sdk:builders -> nostr-kind:43001) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43001",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43001",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:518-518 (bytes 25566-25606)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43002",
+      "message": "requirement relay-accepts-43002 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43002) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43002",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43002",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43002",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43002",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:520-520 (bytes 25644-25685)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43002",
+      "message": "requirement sdk-constructs-43002 (Production Constructs buzz-sdk:builders -> nostr-kind:43002) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43002",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43002",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:520-520 (bytes 25644-25685)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43003",
+      "message": "requirement relay-accepts-43003 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43003) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43003",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43003",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43003",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43003",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:522-522 (bytes 25734-25775)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43003",
+      "message": "requirement sdk-constructs-43003 (Production Constructs buzz-sdk:builders -> nostr-kind:43003) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43003",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43003",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:522-522 (bytes 25734-25775)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43004",
+      "message": "requirement relay-accepts-43004 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43004) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43004",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43004",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43004",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43004",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:524-524 (bytes 25819-25858)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43004",
+      "message": "requirement sdk-constructs-43004 (Production Constructs buzz-sdk:builders -> nostr-kind:43004) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43004",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43004",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:524-524 (bytes 25819-25858)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43005",
+      "message": "requirement relay-accepts-43005 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43005) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43005",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43005",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43005",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43005",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:526-526 (bytes 25897-25936)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43005",
+      "message": "requirement sdk-constructs-43005 (Production Constructs buzz-sdk:builders -> nostr-kind:43005) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43005",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43005",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:526-526 (bytes 25897-25936)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.contradicted",
+      "level": "error",
+      "requirement_id": "relay-accepts-43006",
+      "message": "requirement relay-accepts-43006 (Production Accepts buzz-relay:client-ingest -> nostr-kind:43006) is contradicted by an admitted opposite relation in exact scope buzz:desktop-v0.5.18:source",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-relay:ingest:43006",
+          "relation": {
+            "subject": "buzz-relay:client-ingest",
+            "relation": "rejects",
+            "object": "nostr-kind:43006",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "scope_function=lines:342-455 (bytes 13126-18700); fallback=lines:453-453 (bytes 18649-18692); gate_call=lines:2157-2157 (bytes 84140-84181)"
+          }
+        },
+        {
+          "operation_id": "buzz-protocol:declares:43006",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43006",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:528-528 (bytes 25976-26014)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "sdk-constructs-43006",
+      "message": "requirement sdk-constructs-43006 (Production Constructs buzz-sdk:builders -> nostr-kind:43006) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [sdk_builder_inventory]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43006",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43006",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:528-528 (bytes 25976-26014)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.missing_relation",
+      "level": "error",
+      "requirement_id": "cli-exposes-job-protocol",
+      "message": "requirement cli-exposes-job-protocol (Production Exposes buzz-cli:command-tree -> protocol:buzz-agent-job) was not found in exact scope buzz:desktop-v0.5.18:source; exhaustive roots [crates/buzz-cli/src], included artifacts [crates/buzz-cli/src/lib.rs]",
+      "coverage_basis": [
+        {
+          "operation_id": "coverage:cli_command_tree",
+          "witness": {
+            "build_scope_id": "buzz:desktop-v0.5.18:source",
+            "extractor": {
+              "package": "org.gooi.lifter.buzz_cli",
+              "version": "0.1.0",
+              "config_digest": "sha256:d1d374a9dd7fa38a4a894d806b3f54bb47fef1ca33a8873abe8bbfe5bf147105"
+            },
+            "source_roots": [
+              "crates/buzz-cli/src"
+            ],
+            "mechanism": "cli_command_tree",
+            "completeness": "exhaustive",
+            "included_artifacts": [
+              "crates/buzz-cli/src/lib.rs"
+            ]
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-cli/src/lib.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "parser=lines:63-99 (bytes 2033-3440); command_field=lines:97-98 (bytes 3398-3437)"
+          }
+        }
+      ]
+    },
+    {
+      "code": "surface.coverage_incomplete",
+      "level": "unknown",
+      "requirement_id": "runtime-dispatches-job-request",
+      "message": "requirement runtime-dispatches-job-request (Production Dispatches buzz-agent-runtime:dispatcher -> nostr-kind:43001) remains unknown in exact scope buzz:desktop-v0.5.18:source: missing exhaustive mechanisms [agent_runtime_dispatch]; untrusted mechanisms []; observed partial coverage []; untrusted evidence []",
+      "relation_basis": [
+        {
+          "operation_id": "buzz-protocol:declares:43001",
+          "relation": {
+            "subject": "buzz-protocol:agent-job",
+            "relation": "declares",
+            "object": "nostr-kind:43001",
+            "role": "production",
+            "scope_id": "buzz:desktop-v0.5.18:source"
+          },
+          "source": {
+            "authority": "github:block/buzz",
+            "artifact": "crates/buzz-core/src/kind.rs",
+            "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+            "span": "declaration:518-518 (bytes 25566-25606)"
+          }
+        }
+      ]
+    }
+  ]
+}

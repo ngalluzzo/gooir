@@ -67,10 +67,38 @@ impl SourceRef {
     }
 }
 
+/// An exact conformance-result reference transported with a claim.
+///
+/// This record is an attestation, not an intrinsic proof. An analysis host must
+/// validate and explicitly admit the exact record before a resolver may treat
+/// the associated claim as trusted.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ConformanceEvidence {
+    /// Opaque identity of the authority that issued the result.
+    pub attester: String,
+    /// Exact identity and version of the conformance suite.
     pub suite: String,
+    /// Digest of the adapter, bridge, or implementation exercised by the suite.
+    pub subject_digest: String,
+    /// Digest of the immutable conformance-result document.
     pub result_digest: String,
+}
+
+impl ConformanceEvidence {
+    /// Creates an exact conformance-result reference.
+    pub fn new(
+        attester: impl Into<String>,
+        suite: impl Into<String>,
+        subject_digest: impl Into<String>,
+        result_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            attester: attester.into(),
+            suite: suite.into(),
+            subject_digest: subject_digest.into(),
+            result_digest: result_digest.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -81,6 +109,7 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// Records a declared claim with no conformance attestation.
     pub fn declared(source: SourceRef) -> Self {
         Self {
             status: EvidenceStatus::Declared,
@@ -89,23 +118,16 @@ impl Evidence {
         }
     }
 
-    pub fn verified(
-        source: SourceRef,
-        suite: impl Into<String>,
-        result_digest: impl Into<String>,
-    ) -> Self {
+    /// Records that an attester reported successful verification.
+    ///
+    /// The claim is not trusted until the active analysis policy admits the
+    /// exact conformance record.
+    pub fn verified(source: SourceRef, conformance: ConformanceEvidence) -> Self {
         Self {
             status: EvidenceStatus::Verified,
             source,
-            conformance: Some(ConformanceEvidence {
-                suite: suite.into(),
-                result_digest: result_digest.into(),
-            }),
+            conformance: Some(conformance),
         }
-    }
-
-    pub fn is_verified(&self) -> bool {
-        self.status == EvidenceStatus::Verified && self.conformance.is_some()
     }
 }
 

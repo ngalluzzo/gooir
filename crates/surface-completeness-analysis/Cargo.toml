@@ -1,15 +1,13 @@
 [package]
-name = "buzz-cli-lifter"
+name = "surface-completeness-analysis"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-buzz-protocol-lifter.workspace = true
-heck.workspace = true
-proc-macro2.workspace = true
+gooir-analysis.workspace = true
+gooir-core.workspace = true
+semantics-software-surface-v1.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-syn.workspace = true
