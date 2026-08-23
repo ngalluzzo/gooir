@@ -73,10 +73,15 @@ unrelated implementation. Module-level imports are checked against the pinned
 helper paths, and the roots of modeled qualified calls and modeled macro names
 must likewise remain unshadowed. Modeled macros must use their exact
 unqualified paths; matching only a qualified path's final segment is not
-evidence of the modeled macro. Modeled method receivers likewise require their
-canonical input binding or a pinned local origin. Receiver parameters, nested
-shadowing, and gate-pattern rebinding make coverage partial rather than letting
-a familiar method spelling stand in for binding resolution.
+evidence of the modeled macro. Every evaluated binding inside those macro
+tokens is also origin-checked: explicit format arguments and implicit debug or
+format captures must retain their canonical parameter/local origins, while the
+verification-error capture is accepted only in its exact pinned result-match
+arm. A nested token-level shadow makes coverage partial. Modeled method
+receivers likewise require their canonical input binding or a pinned local
+origin. Receiver parameters, nested shadowing, and gate-pattern rebinding make
+coverage partial rather than letting a familiar method spelling stand in for
+binding resolution.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:

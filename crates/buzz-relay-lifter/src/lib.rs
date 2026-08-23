@@ -729,6 +729,13 @@ fn prove_production_gate(
                 unresolved: Some(format!("{risk} can run before required_scope_for_kind")),
             });
         }
+        if let Some(reason) = macro_binding_resolution_reason(ingest, prior_statements, gate_match)
+        {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
         if let Some(reason) =
             receiver_binding_resolution_reason(ingest, prior_statements, gate_match)
         {
@@ -1042,6 +1049,344 @@ fn collect_use_tree_paths(
         }
         syn::UseTree::Rename(_) => {}
     }
+}
+
+const MODELED_MACRO_BINDINGS: &[&str] = &[
+    "MAX_EVENT_CONTENT_BYTES",
+    "event",
+    "event_id_hex",
+    "kind_u32",
+];
+
+#[derive(Default)]
+struct ModeledMacroUseVisitor {
+    bindings: BTreeSet<String>,
+    e_capture_count: usize,
+}
+
+impl ModeledMacroUseVisitor {
+    fn inspect_macro(&mut self, expression: &syn::Macro) {
+        let bindings = modeled_macro_bindings(expression);
+        self.e_capture_count += usize::from(bindings.contains("e"));
+        self.bindings.extend(bindings);
+    }
+}
+
+impl<'ast> Visit<'ast> for ModeledMacroUseVisitor {
+    fn visit_expr_macro(&mut self, expression: &'ast ExprMacro) {
+        self.inspect_macro(&expression.mac);
+        visit::visit_expr_macro(self, expression);
+    }
+
+    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+        self.inspect_macro(&statement.mac);
+        visit::visit_stmt_macro(self, statement);
+    }
+}
+
+fn modeled_macro_bindings(expression: &syn::Macro) -> BTreeSet<String> {
+    let mut bindings = BTreeSet::new();
+    if expression.path.is_ident("debug")
+        && expression.tokens.to_string()
+            == "event_id = % event_id_hex , kind = kind_u32 , \"ingest_event\""
+    {
+        bindings.insert("event_id_hex".to_owned());
+        bindings.insert("kind_u32".to_owned());
+        return bindings;
+    }
+    if expression.path.is_ident("error")
+        && syn::parse2::<syn::LitStr>(expression.tokens.clone())
+            .is_ok_and(|message| message.value() == "spawn_blocking panicked: {e}")
+    {
+        bindings.insert("e".to_owned());
+        return bindings;
+    }
+    if !expression.path.is_ident("format") {
+        return bindings;
+    }
+    let Some(arguments) = parse_format_arguments(expression.tokens.clone()) else {
+        return bindings;
+    };
+    let mut arguments = arguments.iter();
+    let Some(Expr::Lit(format)) = arguments.next() else {
+        return bindings;
+    };
+    let syn::Lit::Str(format) = &format.lit else {
+        return bindings;
+    };
+    match format.value().as_str() {
+        "invalid: kind {kind_u32} is only accepted via WebSocket" => {
+            bindings.insert("kind_u32".to_owned());
+        }
+        "invalid: {e}" => {
+            bindings.insert("e".to_owned());
+        }
+        "invalid: content exceeds maximum size of {} bytes (got {})" => {
+            bindings.insert("MAX_EVENT_CONTENT_BYTES".to_owned());
+            bindings.insert("event".to_owned());
+        }
+        _ => {}
+    }
+    bindings
+}
+
+fn macro_binding_resolution_reason(
+    ingest: &ItemFn,
+    prior_statements: &[Stmt],
+    gate_match: &syn::ExprMatch,
+) -> Option<String> {
+    let mut origins = BTreeMap::from([
+        (
+            "event",
+            ingest
+                .sig
+                .inputs
+                .iter()
+                .filter(|argument| match argument {
+                    syn::FnArg::Typed(argument) => direct_pattern_binding(&argument.pat, "event"),
+                    syn::FnArg::Receiver(_) => false,
+                })
+                .count()
+                == 1,
+        ),
+        (
+            "kind_u32",
+            ingest
+                .sig
+                .inputs
+                .iter()
+                .filter(|argument| match argument {
+                    syn::FnArg::Typed(argument) => {
+                        direct_pattern_binding(&argument.pat, "kind_u32")
+                    }
+                    syn::FnArg::Receiver(_) => false,
+                })
+                .count()
+                == 1,
+        ),
+        ("event_id_hex", false),
+        ("MAX_EVENT_CONTENT_BYTES", false),
+    ]);
+    let mut verification_result_origin = false;
+
+    for statement in prior_statements {
+        let mut uses = ModeledMacroUseVisitor::default();
+        uses.visit_stmt(statement);
+        if uses.e_capture_count > 0
+            && let Some(reason) = verification_capture_resolution_reason(
+                statement,
+                verification_result_origin,
+                uses.e_capture_count,
+            )
+        {
+            return Some(reason);
+        }
+        for name in uses.bindings.iter().filter(|name| name.as_str() != "e") {
+            if !origins.get(name.as_str()).copied().unwrap_or(false) {
+                return Some(format!(
+                    "modeled macro binding `{name}` has no pinned origin"
+                ));
+            }
+            if statement_introduces_name(statement, name) {
+                return Some(format!(
+                    "modeled macro binding `{name}` is shadowed in its containing statement"
+                ));
+            }
+        }
+
+        for name in MODELED_MACRO_BINDINGS {
+            if statement_introduces_name(statement, name) {
+                origins.insert(name, statement_establishes_macro_origin(statement, name));
+            }
+        }
+        if statement_introduces_name(statement, "verify_result") {
+            verification_result_origin = statement_establishes_verification_result(statement);
+        }
+    }
+
+    let mut gate_uses = ModeledMacroUseVisitor::default();
+    gate_uses.visit_expr_match(gate_match);
+    if !gate_uses.bindings.is_empty() {
+        return Some(
+            "modeled macro executes inside the scope gate without a pinned binding origin"
+                .to_owned(),
+        );
+    }
+    None
+}
+
+fn statement_establishes_macro_origin(statement: &Stmt, name: &str) -> bool {
+    match name {
+        "event" => matches!(statement, Stmt::Local(local)
+            if direct_pattern_binding(&local.pat, "event")
+                && event_rebinding_preserves_identity(local)),
+        "kind_u32" => matches!(statement, Stmt::Local(local)
+        if direct_pattern_binding(&local.pat, "kind_u32")
+            && local.init.as_ref().is_some_and(|initializer| {
+                matches!(strip_expression(&initializer.expr), Expr::Call(call)
+                    if matches!(strip_expression(&call.func), Expr::Path(path)
+                        if path.path.is_ident("event_kind_u32"))
+                        && call.args.len() == 1
+                        && call.args.first().is_some_and(|argument|
+                            expression_binding_name(argument).as_deref() == Some("event"))
+                )
+            })),
+        "event_id_hex" => matches!(statement, Stmt::Local(local)
+        if direct_pattern_binding(&local.pat, "event_id_hex")
+            && local.init.as_ref().is_some_and(|initializer| {
+                matches!(strip_expression(&initializer.expr), Expr::MethodCall(call)
+                    if call.method == "to_hex"
+                        && call.args.is_empty()
+                        && expression_is_field(&call.receiver, "event", "id"))
+            })),
+        "MAX_EVENT_CONTENT_BYTES" => matches!(statement, Stmt::Item(Item::Const(item))
+            if item.ident == "MAX_EVENT_CONTENT_BYTES"
+                && matches!(&*item.ty, syn::Type::Path(path) if path.path.is_ident("usize"))),
+        _ => false,
+    }
+}
+
+fn statement_establishes_verification_result(statement: &Stmt) -> bool {
+    let Stmt::Local(local) = statement else {
+        return false;
+    };
+    if !direct_pattern_binding(&local.pat, "verify_result") {
+        return false;
+    }
+    let Some(initializer) = &local.init else {
+        return false;
+    };
+    let Expr::Await(awaited) = strip_expression(&initializer.expr) else {
+        return false;
+    };
+    let Expr::Call(spawn) = strip_expression(&awaited.base) else {
+        return false;
+    };
+    if !matches!(strip_expression(&spawn.func), Expr::Path(path)
+        if path_name(&path.path) == "tokio::task::spawn_blocking")
+        || spawn.args.len() != 1
+    {
+        return false;
+    }
+    let Some(Expr::Closure(closure)) = spawn.args.first() else {
+        return false;
+    };
+    if !closure.inputs.is_empty() {
+        return false;
+    }
+    let Expr::Call(verify) = strip_expression(&closure.body) else {
+        return false;
+    };
+    matches!(strip_expression(&verify.func), Expr::Path(path)
+        if path.path.is_ident("verify_event"))
+        && verify.args.len() == 1
+        && verify.args.first().is_some_and(|argument| {
+            expression_binding_name(argument).as_deref() == Some("event_for_verify")
+        })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerificationCaptureKind {
+    Format,
+    Error,
+}
+
+struct VerificationCaptureVisitor {
+    allowed: Option<VerificationCaptureKind>,
+    seen: usize,
+    unresolved: Option<String>,
+}
+
+impl VerificationCaptureVisitor {
+    fn inspect_macro(&mut self, expression: &syn::Macro) {
+        let bindings = modeled_macro_bindings(expression);
+        if !bindings.contains("e") {
+            return;
+        }
+        self.seen += 1;
+        let actual = if expression.path.is_ident("format") {
+            VerificationCaptureKind::Format
+        } else {
+            VerificationCaptureKind::Error
+        };
+        if self.allowed != Some(actual) {
+            self.unresolved = Some(
+                "modeled macro capture `e` does not originate in its pinned verification-result arm"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for VerificationCaptureVisitor {
+    fn visit_expr_macro(&mut self, expression: &'ast ExprMacro) {
+        self.inspect_macro(&expression.mac);
+        visit::visit_expr_macro(self, expression);
+    }
+
+    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+        self.inspect_macro(&statement.mac);
+        visit::visit_stmt_macro(self, statement);
+    }
+
+    fn visit_expr_match(&mut self, expression: &'ast syn::ExprMatch) {
+        let allowed = self.allowed.take();
+        visit::visit_expr_match(self, expression);
+        self.allowed = allowed;
+    }
+}
+
+fn verification_capture_resolution_reason(
+    statement: &Stmt,
+    verification_result_origin: bool,
+    expected_captures: usize,
+) -> Option<String> {
+    let Stmt::Expr(Expr::Match(match_expression), _) = statement else {
+        return Some(
+            "modeled macro capture `e` is outside the pinned verification-result match".to_owned(),
+        );
+    };
+    if !verification_result_origin || !expression_is_path(&match_expression.expr, "verify_result") {
+        return Some(
+            "modeled macro capture `e` has no pinned verification-result origin".to_owned(),
+        );
+    }
+
+    let mut visitor = VerificationCaptureVisitor {
+        allowed: None,
+        seen: 0,
+        unresolved: None,
+    };
+    for arm in &match_expression.arms {
+        visitor.allowed = if expression_introduces_name(&arm.body, "e") {
+            None
+        } else if pattern_is_nested_verification_error_binding(&arm.pat) {
+            Some(VerificationCaptureKind::Format)
+        } else if pattern_is_direct_error_binding(&arm.pat, "e") {
+            Some(VerificationCaptureKind::Error)
+        } else {
+            None
+        };
+        visitor.visit_pat(&arm.pat);
+        visitor.visit_expr(&arm.body);
+    }
+    if visitor.seen != expected_captures {
+        return Some(
+            "modeled macro capture `e` appears outside a direct verification-result arm".to_owned(),
+        );
+    }
+    visitor.unresolved
+}
+
+fn pattern_is_nested_verification_error_binding(pattern: &Pat) -> bool {
+    matches!(pattern, Pat::TupleStruct(ok)
+        if ok.path.is_ident("Ok")
+            && ok.elems.len() == 1
+            && matches!(ok.elems.first(), Some(Pat::TupleStruct(error))
+                if error.path.is_ident("Err")
+                    && error.elems.len() == 1
+                    && matches!(error.elems.first(), Some(Pat::Ident(binding))
+                        if binding.ident == "e" && binding.subpat.is_none())))
 }
 
 #[derive(Default)]
@@ -1650,8 +1995,7 @@ impl PreGateRiskVisitor {
 }
 
 fn modeled_format_macro(tokens: proc_macro2::TokenStream) -> bool {
-    let parser = syn::punctuated::Punctuated::<Expr, Token![,]>::parse_terminated;
-    let Ok(arguments) = parser.parse2(tokens) else {
+    let Some(arguments) = parse_format_arguments(tokens) else {
         return false;
     };
     let mut arguments = arguments.iter();
@@ -1672,6 +2016,13 @@ fn modeled_format_macro(tokens: proc_macro2::TokenStream) -> bool {
         }
         _ => false,
     }
+}
+
+fn parse_format_arguments(
+    tokens: proc_macro2::TokenStream,
+) -> Option<syn::punctuated::Punctuated<Expr, Token![,]>> {
+    let parser = syn::punctuated::Punctuated::<Expr, Token![,]>::parse_terminated;
+    parser.parse2(tokens).ok()
 }
 
 fn allowed_pre_gate_function(path: &syn::Path) -> bool {
@@ -2217,6 +2568,85 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
 
         assert_unproven_gate_is_partial(&source, "macro `format!`");
+    }
+
+    #[test]
+    fn modeled_format_arguments_cannot_use_nested_shadowed_receivers() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, attacker: EvilEvent) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "const MAX_EVENT_CONTENT_BYTES: usize = 256 * 1024;\n    {\n        let event = attacker;\n        format!(\"invalid: content exceeds maximum size of {} bytes (got {})\", MAX_EVENT_CONTENT_BYTES, event.content.len());\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "macro binding `event` is shadowed");
+    }
+
+    #[test]
+    fn modeled_format_captures_require_verification_error_arms() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, attacker: EvilDisplay) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "{\n        let e = attacker;\n        format!(\"invalid: {e}\");\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "outside the pinned verification-result match");
+    }
+
+    #[test]
+    fn verification_pattern_spelling_does_not_prove_a_spoofed_result() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, attacker: EvilResult) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let verify_result = attacker;\n    match verify_result {\n        Ok(Err(e)) => { format!(\"invalid: {e}\"); },\n        _ => {},\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "no pinned verification-result origin");
+    }
+
+    #[test]
+    fn modeled_kind_captures_cannot_use_nested_shadows() {
+        let source = INGEST_SOURCE
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, attacker: EvilDisplay) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "{\n        let kind_u32 = attacker;\n        format!(\"invalid: kind {kind_u32} is only accepted via WebSocket\");\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "macro binding `kind_u32` is shadowed");
+    }
+
+    #[test]
+    fn modeled_debug_fields_cannot_use_nested_shadows() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use tracing::debug;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, attacker: EvilDisplay) -> Result<(), Error> {\n    let event_id_hex = event.id.to_hex();",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "{\n        let event_id_hex = attacker;\n        debug!(event_id = %event_id_hex, kind = kind_u32, \"ingest_event\");\n    }\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "macro binding `event_id_hex` is shadowed");
     }
 
     #[test]
