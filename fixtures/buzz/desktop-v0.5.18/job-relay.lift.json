@@ -11,6 +11,18 @@
     "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
     "sha256": "sha256:74533cfc1ac016dcb1a83279c2b06f93807f29489604cdccefc46b645acfce97"
   },
+  "push_lease_source": {
+    "authority": "github:block/buzz",
+    "artifact": "crates/buzz-relay/src/handlers/push_lease.rs",
+    "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+    "sha256": "sha256:297f7f59a7e141cdd5acf3a2ba6395ed4a34035050fab4d17d698d043b389ce0"
+  },
+  "push_lease_constant": {
+    "byte_start": 597,
+    "byte_end": 683,
+    "line_start": 18,
+    "line_end": 19
+  },
   "scope_function": {
     "byte_start": 13126,
     "byte_end": 18700,
@@ -75,7 +87,8 @@
     "completeness": "exhaustive",
     "included_artifacts": [
       "crates/buzz-relay/src/handlers/ingest.rs",
-      "crates/buzz-core/src/kind.rs"
+      "crates/buzz-core/src/kind.rs",
+      "crates/buzz-relay/src/handlers/push_lease.rs"
     ],
     "unresolved": []
   }

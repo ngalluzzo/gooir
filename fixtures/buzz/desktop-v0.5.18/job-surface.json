@@ -264,10 +264,14 @@
         "version": "0.1.0",
         "config_digest": "fixture-config:v1"
       },
-      "source_roots": ["crates/buzz-relay/src/handlers/ingest.rs"],
+      "source_roots": ["crates/buzz-core/src", "crates/buzz-relay/src/handlers"],
       "mechanism": "relay_ingest_allowlist",
       "completeness": "exhaustive",
-      "included_artifacts": ["crates/buzz-relay/src/handlers/ingest.rs"]
+      "included_artifacts": [
+        "crates/buzz-relay/src/handlers/ingest.rs",
+        "crates/buzz-core/src/kind.rs",
+        "crates/buzz-relay/src/handlers/push_lease.rs"
+      ]
     },
     {
       "build_scope_id": "buzz:desktop-v0.5.18:source",

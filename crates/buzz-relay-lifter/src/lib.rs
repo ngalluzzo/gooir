@@ -22,6 +22,23 @@ use syn::{
 pub const EXTRACTOR_PACKAGE: &str = "org.gooi.lifter.buzz_relay";
 pub const EXTRACTOR_VERSION: &str = "0.1.0";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelaySourceInputs<'a> {
+    pub ingest: &'a str,
+    pub kind: &'a str,
+    pub push_lease: &'a str,
+}
+
+impl<'a> RelaySourceInputs<'a> {
+    pub const fn new(ingest: &'a str, kind: &'a str, push_lease: &'a str) -> Self {
+        Self {
+            ingest,
+            kind,
+            push_lease,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IngestDecisionKind {
@@ -59,6 +76,8 @@ pub struct RelayCoverage {
 pub struct RelayIngestLift {
     pub source: SourceArtifact,
     pub protocol_source: SourceArtifact,
+    pub push_lease_source: SourceArtifact,
+    pub push_lease_constant: Option<SourceSpan>,
     pub scope_function: SourceSpan,
     pub gate_call: SourceSpan,
     pub fallback: SourceSpan,
@@ -71,6 +90,7 @@ pub struct RelayIngestLift {
 pub enum LiftError {
     InvalidIngestRust(String),
     InvalidKindRust(String),
+    InvalidPushLeaseRust(String),
     ProtocolSourceDigestMismatch { expected: String, actual: String },
     MissingScopeFunction,
     MissingScopeMatch,
@@ -87,6 +107,9 @@ impl fmt::Display for LiftError {
             }
             Self::InvalidKindRust(error) => {
                 write!(formatter, "kind source is not valid Rust: {error}")
+            }
+            Self::InvalidPushLeaseRust(error) => {
+                write!(formatter, "push lease source is not valid Rust: {error}")
             }
             Self::ProtocolSourceDigestMismatch { expected, actual } => write!(
                 formatter,
@@ -112,13 +135,18 @@ impl fmt::Display for LiftError {
 impl std::error::Error for LiftError {}
 
 pub fn lift_relay_ingest(
-    ingest_source: &str,
-    kind_source: &str,
+    sources: RelaySourceInputs<'_>,
     protocol: &ProtocolLift,
     authority: impl Into<String>,
     artifact: impl Into<String>,
+    push_lease_artifact: impl Into<String>,
     revision: impl Into<String>,
 ) -> Result<RelayIngestLift, LiftError> {
+    let RelaySourceInputs {
+        ingest: ingest_source,
+        kind: kind_source,
+        push_lease: push_lease_source,
+    } = sources;
     let actual_kind_digest = sha256(kind_source.as_bytes());
     if actual_kind_digest != protocol.source.sha256 {
         return Err(LiftError::ProtocolSourceDigestMismatch {
@@ -131,12 +159,32 @@ pub fn lift_relay_ingest(
         .map_err(|error| LiftError::InvalidIngestRust(error.to_string()))?;
     let kind_file = syn::parse_file(kind_source)
         .map_err(|error| LiftError::InvalidKindRust(error.to_string()))?;
-    let constants = direct_u32_constants(&kind_file);
-    let predicates = named_predicates(&kind_file, &constants);
+    let push_lease_file = syn::parse_file(push_lease_source)
+        .map_err(|error| LiftError::InvalidPushLeaseRust(error.to_string()))?;
+    let kind_constants = direct_u32_constants(&kind_file);
+    let push_lease_constant = exact_direct_u32_constant(&push_lease_file, "KIND_PUSH_LEASE");
+    let constants = resolved_constant_values(&kind_constants, push_lease_constant);
+    let kind_predicates = named_predicates(&kind_file, &kind_constants);
+    let predicates = resolved_predicate_values(&kind_predicates);
+    let authority = authority.into();
+    let artifact = artifact.into();
+    let push_lease_artifact = push_lease_artifact.into();
+    let revision = revision.into();
     let scope_function = find_function(&ingest_file, "required_scope_for_kind")
         .ok_or(LiftError::MissingScopeFunction)?;
     let scope_match = direct_scope_match(scope_function).ok_or(LiftError::MissingScopeMatch)?;
     let scope_attribute_reason = scope_attribute_resolution_reason(scope_function);
+    let scope_symbol_reason = scope_symbol_resolution_reason(
+        &ingest_file,
+        &kind_file,
+        scope_function,
+        scope_match,
+        &kind_constants,
+        &kind_predicates,
+        push_lease_constant,
+        &artifact,
+        &push_lease_artifact,
+    );
 
     let ingest = find_function(&ingest_file, "ingest_event_inner");
     let gate = prove_production_gate(&ingest_file, ingest)?;
@@ -162,6 +210,9 @@ pub fn lift_relay_ingest(
     if let Some(reason) = &scope_attribute_reason {
         unresolved.push(reason.clone());
     }
+    if let Some(reason) = &scope_symbol_reason {
+        unresolved.push(reason.clone());
+    }
     let job_decisions = protocol
         .job_kinds
         .iter()
@@ -176,6 +227,13 @@ pub fn lift_relay_ingest(
                     IngestDecisionKind::Unknown,
                     format!(
                         "required_scope_for_kind could not be evaluated exhaustively: {reason}"
+                    ),
+                )
+            } else if let Some(reason) = &scope_symbol_reason {
+                (
+                    IngestDecisionKind::Unknown,
+                    format!(
+                        "required_scope_for_kind symbols could not be resolved exactly: {reason}"
                     ),
                 )
             } else {
@@ -193,15 +251,29 @@ pub fn lift_relay_ingest(
         })
         .collect::<Vec<_>>();
 
-    let artifact = artifact.into();
+    let push_lease_constant = match push_lease_constant {
+        Some((constant, _)) => Some(source_span(
+            push_lease_source,
+            constant.span(),
+            "push lease constant",
+        )?),
+        None => None,
+    };
     Ok(RelayIngestLift {
         source: SourceArtifact {
-            authority: authority.into(),
+            authority: authority.clone(),
             artifact: artifact.clone(),
-            revision: revision.into(),
+            revision: revision.clone(),
             sha256: sha256(ingest_source.as_bytes()),
         },
         protocol_source: protocol.source.clone(),
+        push_lease_source: SourceArtifact {
+            authority,
+            artifact: push_lease_artifact.clone(),
+            revision,
+            sha256: sha256(push_lease_source.as_bytes()),
+        },
+        push_lease_constant,
         scope_function: source_span(ingest_source, scope_function.span(), "scope function")?,
         gate_call: source_span(ingest_source, gate.span, "gate call")?,
         fallback: source_span(ingest_source, fallback_arm.span(), "fallback")?,
@@ -216,7 +288,11 @@ pub fn lift_relay_ingest(
             } else {
                 NativeCompleteness::Partial
             },
-            included_artifacts: vec![artifact, protocol.source.artifact.clone()],
+            included_artifacts: vec![
+                artifact,
+                protocol.source.artifact.clone(),
+                push_lease_artifact,
+            ],
             unresolved,
         },
     })
@@ -253,10 +329,321 @@ struct ScopeAttributeVisitor {
 
 impl Visit<'_> for ScopeAttributeVisitor {
     fn visit_attribute(&mut self, attribute: &syn::Attribute) {
-        if !attribute.path().is_ident("doc") {
+        if !attribute_is_modeled_inert(attribute) {
             self.unmodeled = true;
         }
     }
+}
+
+fn attribute_is_modeled_inert(attribute: &syn::Attribute) -> bool {
+    attribute.path().is_ident("doc")
+}
+
+const PUSH_LEASE_CONSTANT_PATH: &str = "super::push_lease::KIND_PUSH_LEASE";
+
+fn resolved_constant_values(
+    kind_constants: &BTreeMap<String, u32>,
+    push_lease_constant: Option<(&syn::ItemConst, u32)>,
+) -> BTreeMap<String, u32> {
+    let mut resolved = kind_constants.clone();
+    for (name, value) in kind_constants {
+        resolved.insert(format!("buzz_core::kind::{name}"), *value);
+    }
+    if let Some((_, value)) = push_lease_constant {
+        resolved.insert(PUSH_LEASE_CONSTANT_PATH.to_owned(), value);
+    }
+    resolved
+}
+
+fn resolved_predicate_values(
+    kind_predicates: &BTreeMap<String, PredicateValues>,
+) -> BTreeMap<String, PredicateValues> {
+    let mut resolved = kind_predicates.clone();
+    for (name, values) in kind_predicates {
+        resolved.insert(format!("buzz_core::kind::{name}"), values.clone());
+    }
+    resolved
+}
+
+fn exact_direct_u32_constant<'a>(
+    file: &'a syn::File,
+    name: &str,
+) -> Option<(&'a syn::ItemConst, u32)> {
+    if file.items.iter().any(|item| matches!(item, Item::Macro(_))) {
+        return None;
+    }
+    let mut introducing = file
+        .items
+        .iter()
+        .filter(|item| item_introduces_name(item, name));
+    let Item::Const(constant) = introducing.next()? else {
+        return None;
+    };
+    if introducing.next().is_some()
+        || constant
+            .attrs
+            .iter()
+            .any(|attribute| !attribute_is_modeled_inert(attribute))
+        || !matches!(&*constant.ty, syn::Type::Path(path)
+            if path.qself.is_none() && path.path.is_ident("u32"))
+    {
+        return None;
+    }
+    let Expr::Lit(literal) = &*constant.expr else {
+        return None;
+    };
+    let syn::Lit::Int(value) = &literal.lit else {
+        return None;
+    };
+    Some((constant, value.base10_parse().ok()?))
+}
+
+struct ScopeDecisionSymbolVisitor<'a> {
+    kind_constants: &'a BTreeSet<String>,
+    kind_predicates: &'a BTreeSet<String>,
+    constant_paths: BTreeSet<String>,
+    predicate_paths: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for ScopeDecisionSymbolVisitor<'_> {
+    fn visit_pat(&mut self, pattern: &'ast Pat) {
+        match pattern {
+            Pat::Ident(pattern) => {
+                let name = pattern.ident.to_string();
+                if self.kind_constants.contains(&name) {
+                    self.constant_paths.insert(name);
+                }
+            }
+            Pat::Path(pattern) => {
+                let path = path_name(&pattern.path);
+                let known_kind = pattern.path.segments.last().is_some_and(|segment| {
+                    self.kind_constants.contains(&segment.ident.to_string())
+                });
+                if known_kind || path == PUSH_LEASE_CONSTANT_PATH {
+                    self.constant_paths.insert(path);
+                }
+            }
+            _ => {}
+        }
+        visit::visit_pat(self, pattern);
+    }
+
+    fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
+        if let Expr::Path(function) = strip_expression(&expression.func)
+            && function
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| self.kind_predicates.contains(&segment.ident.to_string()))
+        {
+            self.predicate_paths.insert(path_name(&function.path));
+        }
+        for argument in &expression.args {
+            self.visit_expr(argument);
+        }
+    }
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        let path = path_name(&expression.path);
+        let known_kind = expression
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| self.kind_constants.contains(&segment.ident.to_string()));
+        if known_kind || path == PUSH_LEASE_CONSTANT_PATH {
+            self.constant_paths.insert(path);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scope_symbol_resolution_reason(
+    ingest_file: &syn::File,
+    kind_file: &syn::File,
+    scope_function: &ItemFn,
+    scope_match: &syn::ExprMatch,
+    kind_constants: &BTreeMap<String, u32>,
+    kind_predicates: &BTreeMap<String, PredicateValues>,
+    push_lease_constant: Option<(&syn::ItemConst, u32)>,
+    ingest_artifact: &str,
+    push_lease_artifact: &str,
+) -> Option<String> {
+    let constant_names = kind_constants.keys().cloned().collect::<BTreeSet<_>>();
+    let predicate_names = kind_predicates.keys().cloned().collect::<BTreeSet<_>>();
+    let mut visitor = ScopeDecisionSymbolVisitor {
+        kind_constants: &constant_names,
+        kind_predicates: &predicate_names,
+        constant_paths: BTreeSet::new(),
+        predicate_paths: BTreeSet::new(),
+    };
+    for arm in &scope_match.arms {
+        visitor.visit_pat(&arm.pat);
+        if matches!(arm.pat, Pat::Wild(_)) {
+            break;
+        }
+    }
+
+    for path in visitor.constant_paths {
+        if !scope_constant_path_resolves(
+            ingest_file,
+            kind_file,
+            scope_function,
+            &path,
+            kind_constants,
+            push_lease_constant,
+            ingest_artifact,
+            push_lease_artifact,
+        ) {
+            return Some(format!(
+                "decision constant `{path}` does not resolve to its consumed declaration"
+            ));
+        }
+    }
+    for path in visitor.predicate_paths {
+        if !scope_predicate_path_resolves(
+            ingest_file,
+            kind_file,
+            scope_function,
+            &path,
+            kind_constants,
+            kind_predicates,
+        ) {
+            return Some(format!(
+                "decision predicate `{path}` does not resolve to its consumed declaration"
+            ));
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scope_constant_path_resolves(
+    ingest_file: &syn::File,
+    kind_file: &syn::File,
+    scope_function: &ItemFn,
+    path: &str,
+    kind_constants: &BTreeMap<String, u32>,
+    push_lease_constant: Option<(&syn::ItemConst, u32)>,
+    ingest_artifact: &str,
+    push_lease_artifact: &str,
+) -> bool {
+    if path == PUSH_LEASE_CONSTANT_PATH {
+        return push_lease_constant.is_some()
+            && push_lease_artifact == sibling_artifact(ingest_artifact, "push_lease.rs");
+    }
+    let name = path.rsplit("::").next().unwrap_or(path);
+    if !kind_constants.contains_key(name) || exact_direct_u32_constant(kind_file, name).is_none() {
+        return false;
+    }
+    if path == name {
+        return !function_generic_shadows(scope_function, name)
+            && module_name_is_unshadowed(ingest_file, "buzz_core")
+            && exact_unconditional_import(ingest_file, name, &format!("buzz_core::kind::{name}"));
+    }
+    path == format!("buzz_core::kind::{name}")
+        && !function_generic_shadows(scope_function, "buzz_core")
+        && module_name_is_unshadowed(ingest_file, "buzz_core")
+}
+
+fn scope_predicate_path_resolves(
+    ingest_file: &syn::File,
+    kind_file: &syn::File,
+    scope_function: &ItemFn,
+    path: &str,
+    kind_constants: &BTreeMap<String, u32>,
+    kind_predicates: &BTreeMap<String, PredicateValues>,
+) -> bool {
+    let name = path.rsplit("::").next().unwrap_or(path);
+    if !kind_predicates.contains_key(name)
+        || !exact_named_predicate(kind_file, name, kind_constants)
+    {
+        return false;
+    }
+    if path == name {
+        return !function_generic_shadows(scope_function, name)
+            && module_name_is_unshadowed(ingest_file, "buzz_core")
+            && exact_unconditional_import(ingest_file, name, &format!("buzz_core::kind::{name}"));
+    }
+    path == format!("buzz_core::kind::{name}")
+        && !function_generic_shadows(scope_function, "buzz_core")
+        && module_name_is_unshadowed(ingest_file, "buzz_core")
+}
+
+fn exact_named_predicate(file: &syn::File, name: &str, constants: &BTreeMap<String, u32>) -> bool {
+    if file.items.iter().any(|item| matches!(item, Item::Macro(_)))
+        || file
+            .items
+            .iter()
+            .any(|item| item_introduces_name(item, "matches"))
+    {
+        return false;
+    }
+    let mut introducing = file
+        .items
+        .iter()
+        .filter(|item| item_introduces_name(item, name));
+    let Some(Item::Fn(function)) = introducing.next() else {
+        return false;
+    };
+    if introducing.next().is_some()
+        || function
+            .attrs
+            .iter()
+            .any(|attribute| !attribute_is_modeled_inert(attribute))
+        || function.sig.constness.is_none()
+        || function.sig.asyncness.is_some()
+        || function.sig.abi.is_some()
+        || !function.sig.generics.params.is_empty()
+        || function.sig.generics.where_clause.is_some()
+        || !matches!(&function.sig.output, syn::ReturnType::Type(_, ty)
+            if matches!(&**ty, syn::Type::Path(path)
+                if path.qself.is_none() && path.path.is_ident("bool")))
+    {
+        return false;
+    }
+    if function.sig.inputs.len() != 1 {
+        return false;
+    }
+    let Some(syn::FnArg::Typed(argument)) = function.sig.inputs.first() else {
+        return false;
+    };
+    let Pat::Ident(parameter) = &*argument.pat else {
+        return false;
+    };
+    if !matches!(&*argument.ty, syn::Type::Path(path)
+        if path.qself.is_none() && path.path.is_ident("u32"))
+    {
+        return false;
+    }
+    let [Stmt::Expr(Expr::Macro(expression), _)] = function.block.stmts.as_slice() else {
+        return false;
+    };
+    let Some(matches) = parse_matches_macro(expression) else {
+        return false;
+    };
+    if !matches_expression_is_parameter(&matches.expression, &parameter.ident.to_string()) {
+        return false;
+    }
+    let constant_names = constants.keys().cloned().collect::<BTreeSet<_>>();
+    let predicate_names = BTreeSet::new();
+    let mut visitor = ScopeDecisionSymbolVisitor {
+        kind_constants: &constant_names,
+        kind_predicates: &predicate_names,
+        constant_paths: BTreeSet::new(),
+        predicate_paths: BTreeSet::new(),
+    };
+    visitor.visit_pat(&matches.pattern);
+    visitor
+        .constant_paths
+        .into_iter()
+        .all(|path| !path.contains("::") && exact_direct_u32_constant(file, &path).is_some())
+}
+
+fn sibling_artifact(artifact: &str, sibling: &str) -> String {
+    artifact.rsplit_once('/').map_or_else(
+        || sibling.to_owned(),
+        |(directory, _)| format!("{directory}/{sibling}"),
+    )
 }
 
 fn direct_u32_constants(file: &syn::File) -> BTreeMap<String, u32> {
@@ -370,17 +757,10 @@ fn pattern_values(pattern: &Pat, constants: &BTreeMap<String, u32>) -> (Vec<u32>
             }
             (values, complete)
         }
-        Pat::Path(path) => {
-            let symbol = path
-                .path
-                .segments
-                .last()
-                .map(|segment| segment.ident.to_string());
-            match symbol.and_then(|symbol| constants.get(&symbol).copied()) {
-                Some(value) => (vec![value], true),
-                None => (Vec::new(), false),
-            }
-        }
+        Pat::Path(path) => match constants.get(&path_name(&path.path)).copied() {
+            Some(value) => (vec![value], true),
+            None => (Vec::new(), false),
+        },
         Pat::Ident(ident) => {
             let symbol = ident.ident.to_string();
             match constants.get(&symbol).copied() {
@@ -475,11 +855,8 @@ fn pattern_truth(pattern: &Pat, candidate: u32, constants: &BTreeMap<String, u32
         Pat::Or(pattern) => pattern.cases.iter().fold(Truth::False, |result, case| {
             or(result, pattern_truth(case, candidate, constants))
         }),
-        Pat::Path(path) => path
-            .path
-            .segments
-            .last()
-            .and_then(|segment| constants.get(&segment.ident.to_string()))
+        Pat::Path(path) => constants
+            .get(&path_name(&path.path))
             .map_or(Truth::Unknown, |value| {
                 if *value == candidate {
                     Truth::True
@@ -572,7 +949,7 @@ fn expression_value(
 ) -> Option<u32> {
     match expression {
         Expr::Path(path) => {
-            let symbol = path.path.segments.last()?.ident.to_string();
+            let symbol = path_name(&path.path);
             if symbol == "k" || symbol == "kind" {
                 Some(candidate)
             } else {
@@ -598,14 +975,7 @@ fn predicate_truth(
     let Expr::Path(path) = &*call.func else {
         return Truth::Unknown;
     };
-    let Some(name) = path
-        .path
-        .segments
-        .last()
-        .map(|segment| segment.ident.to_string())
-    else {
-        return Truth::Unknown;
-    };
+    let name = path_name(&path.path);
     let Some(predicate) = predicates.get(&name) else {
         return Truth::Unknown;
     };
@@ -2586,7 +2956,10 @@ fn sha256(bytes: &[u8]) -> String {
 mod tests {
     use buzz_protocol_lifter::lift_job_protocol;
 
-    use super::{IngestDecisionKind, LiftError, NativeCompleteness, lift_relay_ingest};
+    use super::{
+        IngestDecisionKind, LiftError, NativeCompleteness, PUSH_LEASE_CONSTANT_PATH,
+        RelaySourceInputs, lift_relay_ingest,
+    };
 
     const KIND_SOURCE: &str = r#"
 pub const KIND_MESSAGE: u32 = 1;
@@ -2600,7 +2973,13 @@ pub const fn is_moderation_command_kind(kind: u32) -> bool {
 }
 "#;
 
+    const PUSH_LEASE_SOURCE: &str = r#"
+/// NIP-PL addressable push-lease event kind.
+pub const KIND_PUSH_LEASE: u32 = 30_350;
+"#;
+
     const INGEST_SOURCE: &str = r#"
+use buzz_core::kind::{is_moderation_command_kind, KIND_MESSAGE, KIND_SPECIAL};
 use nostr::Event;
 fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {
     match kind {
@@ -2628,11 +3007,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     #[test]
     fn closed_fallback_rejects_job_kinds_after_resolving_named_guard() {
         let lift = lift_relay_ingest(
-            INGEST_SOURCE,
-            KIND_SOURCE,
+            RelaySourceInputs::new(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("relay fixture lifts");
@@ -2646,7 +3025,7 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift.job_decisions
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
-        assert_eq!(lift.gate_call.line_start, 13);
+        assert_eq!(lift.gate_call.line_start, 14);
     }
 
     #[test]
@@ -2656,11 +3035,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "k if third_party_guard(k)",
         );
         let lift = lift_relay_ingest(
-            &source,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("unresolved relay fixture still lifts");
@@ -2718,11 +3097,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "/// Select the required scope.\nfn required_scope_for_kind",
         );
         let lift = lift_relay_ingest(
-            &documented,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&documented, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("documented scope function lifts");
@@ -2739,11 +3118,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         let protocol = lift_job_protocol(&kind_source, "fixture", "kind.rs", "revision")
             .expect("modified protocol fixture lifts");
         let lift = lift_relay_ingest(
-            INGEST_SOURCE,
-            &kind_source,
+            RelaySourceInputs::new(INGEST_SOURCE, &kind_source, PUSH_LEASE_SOURCE),
             &protocol,
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("unresolved predicate fixture still lifts");
@@ -2756,13 +3135,182 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
     }
 
-    fn assert_unproven_gate_is_partial(source: &str, expected_reason: &str) {
+    #[test]
+    fn scope_constants_require_exact_kind_imports() {
+        let source = INGEST_SOURCE.replace(
+            "use buzz_core::kind::{is_moderation_command_kind, KIND_MESSAGE, KIND_SPECIAL};",
+            "use buzz_core::kind::{is_moderation_command_kind, KIND_SPECIAL};\nconst KIND_MESSAGE: u32 = 43_001;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "decision constant `KIND_MESSAGE`");
+    }
+
+    #[test]
+    fn qualified_scope_predicates_require_the_unshadowed_kind_root() {
+        let source = INGEST_SOURCE
+            .replace(
+                "use buzz_core::kind::{is_moderation_command_kind, KIND_MESSAGE, KIND_SPECIAL};\n",
+                "mod buzz_core { pub mod kind { pub fn is_moderation_command_kind(kind: u32) -> bool { kind == 43_001 } } }\n",
+            )
+            .replace("KIND_MESSAGE", "1")
+            .replace("KIND_SPECIAL", "2")
+            .replace(
+                "is_moderation_command_kind(k)",
+                "buzz_core::kind::is_moderation_command_kind(k)",
+            );
+
+        assert_unproven_gate_is_partial(
+            &source,
+            "decision predicate `buzz_core::kind::is_moderation_command_kind`",
+        );
+    }
+
+    #[test]
+    fn unqualified_scope_predicates_require_the_exact_kind_import() {
+        let source = INGEST_SOURCE.replace(
+            "use buzz_core::kind::{is_moderation_command_kind, KIND_MESSAGE, KIND_SPECIAL};",
+            "use buzz_core::kind::{KIND_MESSAGE, KIND_SPECIAL};\nconst fn is_moderation_command_kind(kind: u32) -> bool { kind == 43_001 }",
+        );
+
+        assert_unproven_gate_is_partial(&source, "decision predicate `is_moderation_command_kind`");
+    }
+
+    #[test]
+    fn exact_qualified_kind_predicates_remain_exhaustive() {
+        let source = INGEST_SOURCE
+            .replace(
+                "use buzz_core::kind::{is_moderation_command_kind, KIND_MESSAGE, KIND_SPECIAL};",
+                "use buzz_core::kind::{KIND_MESSAGE, KIND_SPECIAL};",
+            )
+            .replace(
+                "is_moderation_command_kind(k)",
+                "buzz_core::kind::is_moderation_command_kind(k)",
+            );
         let lift = lift_relay_ingest(
-            source,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
+            "revision",
+        )
+        .expect("qualified predicate fixture lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(lift.coverage.unresolved.is_empty());
+    }
+
+    #[test]
+    fn qualified_push_lease_constants_use_their_own_consumed_source() {
+        let source = INGEST_SOURCE.replace(
+            "        _ => Err(\"restricted: unknown event kind\"),",
+            "        super::push_lease::KIND_PUSH_LEASE => Ok(Scope::MessagesWrite),\n        _ => Err(\"restricted: unknown event kind\"),",
+        );
+        let push_source = PUSH_LEASE_SOURCE.replace("30_350", "43_001");
+        let lift = lift_relay_ingest(
+            RelaySourceInputs::new(&source, KIND_SOURCE, &push_source),
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "push_lease.rs",
+            "revision",
+        )
+        .expect("qualified push lease fixture lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert_eq!(lift.job_decisions[0].decision, IngestDecisionKind::Accepted);
+        assert_eq!(lift.job_decisions[1].decision, IngestDecisionKind::Rejected);
+        assert!(lift.push_lease_constant.is_some());
+    }
+
+    #[test]
+    fn missing_or_misidentified_push_lease_declarations_make_scope_partial() {
+        let source = INGEST_SOURCE.replace(
+            "        _ => Err(\"restricted: unknown event kind\"),",
+            "        super::push_lease::KIND_PUSH_LEASE => Ok(Scope::MessagesWrite),\n        _ => Err(\"restricted: unknown event kind\"),",
+        );
+        let missing = lift_relay_ingest(
+            RelaySourceInputs::new(&source, KIND_SOURCE, "pub const OTHER_KIND: u32 = 30_350;"),
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "push_lease.rs",
+            "revision",
+        )
+        .expect("missing push declaration remains visible");
+        assert_eq!(missing.coverage.completeness, NativeCompleteness::Partial);
+        assert!(
+            missing
+                .coverage
+                .unresolved
+                .iter()
+                .any(|reason| reason.contains(PUSH_LEASE_CONSTANT_PATH))
+        );
+
+        let misidentified = lift_relay_ingest(
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "other.rs",
+            "revision",
+        )
+        .expect("misidentified push source remains visible");
+        assert_eq!(
+            misidentified.coverage.completeness,
+            NativeCompleteness::Partial
+        );
+    }
+
+    #[test]
+    fn attributed_or_effectful_kind_predicates_make_scope_partial() {
+        let attributed_kind = KIND_SOURCE.replace(
+            "pub const fn is_moderation_command_kind",
+            "#[cfg(feature = \"moderation\")]\npub const fn is_moderation_command_kind",
+        );
+        let attributed_protocol =
+            lift_job_protocol(&attributed_kind, "fixture", "kind.rs", "revision")
+                .expect("attributed protocol fixture lifts");
+        let attributed = lift_relay_ingest(
+            RelaySourceInputs::new(INGEST_SOURCE, &attributed_kind, PUSH_LEASE_SOURCE),
+            &attributed_protocol,
+            "fixture",
+            "ingest.rs",
+            "push_lease.rs",
+            "revision",
+        )
+        .expect("attributed predicate remains visible");
+        assert_eq!(
+            attributed.coverage.completeness,
+            NativeCompleteness::Partial
+        );
+
+        let effectful_kind = KIND_SOURCE.replace(
+            "    matches!(kind, KIND_MODERATION_BAN)",
+            "    observe(kind);\n    matches!(kind, KIND_MODERATION_BAN)",
+        );
+        let effectful_protocol =
+            lift_job_protocol(&effectful_kind, "fixture", "kind.rs", "revision")
+                .expect("effectful protocol fixture lifts");
+        let effectful = lift_relay_ingest(
+            RelaySourceInputs::new(INGEST_SOURCE, &effectful_kind, PUSH_LEASE_SOURCE),
+            &effectful_protocol,
+            "fixture",
+            "ingest.rs",
+            "push_lease.rs",
+            "revision",
+        )
+        .expect("effectful predicate remains visible");
+        assert_eq!(effectful.coverage.completeness, NativeCompleteness::Partial);
+    }
+
+    fn assert_unproven_gate_is_partial(source: &str, expected_reason: &str) {
+        let lift = lift_relay_ingest(
+            RelaySourceInputs::new(source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("unproven gate remains visible as a partial lift");
@@ -2897,11 +3445,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             .replace("event: &Event", "event: &nostr::Event")
             .replace("event: Event", "event: nostr::Event");
         let lift = lift_relay_ingest(
-            &source,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("qualified nostr::Event fixture lifts");
@@ -3531,11 +4079,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
             );
         let lift = lift_relay_ingest(
-            &source,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect("pinned verification callback still lifts");
@@ -3631,11 +4179,11 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {\n    store_event(event);",
         );
         let error = lift_relay_ingest(
-            &source,
-            KIND_SOURCE,
+            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect_err("scope helper effects outside the match must fail closed");
@@ -3646,11 +4194,15 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     #[test]
     fn mismatched_protocol_source_is_rejected() {
         let error = lift_relay_ingest(
-            INGEST_SOURCE,
-            &KIND_SOURCE.replace("43001", "43002"),
+            RelaySourceInputs::new(
+                INGEST_SOURCE,
+                &KIND_SOURCE.replace("43001", "43002"),
+                PUSH_LEASE_SOURCE,
+            ),
             &fixture_protocol(),
             "fixture",
             "ingest.rs",
+            "push_lease.rs",
             "revision",
         )
         .expect_err("source mismatch must not be laundered");
@@ -3672,6 +4224,17 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift.source.sha256,
             "sha256:6f5ecbac1056c64ce161e72bc9d4b0fabc2c8d8648fb41b3812a655121f194a5"
         );
+        assert_eq!(
+            lift.push_lease_source.sha256,
+            "sha256:297f7f59a7e141cdd5acf3a2ba6395ed4a34035050fab4d17d698d043b389ce0"
+        );
+        assert_eq!(
+            lift.push_lease_constant
+                .as_ref()
+                .expect("push lease declaration is pinned")
+                .line_start,
+            18
+        );
         assert_eq!(lift.gate_call.line_start, 2157);
         assert_eq!(lift.fallback.line_start, 453);
         assert_eq!(lift.job_decisions.len(), 6);
@@ -3681,5 +4244,6 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 .all(|decision| decision.decision == IngestDecisionKind::Rejected)
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert_eq!(lift.coverage.included_artifacts.len(), 3);
     }
 }

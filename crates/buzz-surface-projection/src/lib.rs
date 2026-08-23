@@ -29,17 +29,20 @@ pub const CONFORMANCE_SUITE: &str =
     "org.gooi.conformance.buzz_surface_projection.claim_binding@1.0.0";
 pub const KIND_ARTIFACT: &str = "crates/buzz-core/src/kind.rs";
 pub const RELAY_ARTIFACT: &str = "crates/buzz-relay/src/handlers/ingest.rs";
+pub const PUSH_LEASE_ARTIFACT: &str = "crates/buzz-relay/src/handlers/push_lease.rs";
 pub const CLI_ARTIFACT: &str = "crates/buzz-cli/src/lib.rs";
 pub const KIND_SHA256: &str =
     "sha256:74533cfc1ac016dcb1a83279c2b06f93807f29489604cdccefc46b645acfce97";
 pub const RELAY_SHA256: &str =
     "sha256:6f5ecbac1056c64ce161e72bc9d4b0fabc2c8d8648fb41b3812a655121f194a5";
+pub const PUSH_LEASE_SHA256: &str =
+    "sha256:297f7f59a7e141cdd5acf3a2ba6395ed4a34035050fab4d17d698d043b389ce0";
 pub const CLI_SHA256: &str =
     "sha256:a4a6829515e23851822ce5b1c3e7b341c32e2997b17b3b4f74f8aad994ab6310";
 pub const PROTOCOL_LIFT_DOCUMENT_SHA256: &str =
     "sha256:b6e82cee8d19e6eff421cd38a85f1d240a1f483c7ce40ea87bba5ed7f0c9d290";
 pub const RELAY_LIFT_DOCUMENT_SHA256: &str =
-    "sha256:1bc4dd0a32b9a0a01cfd15fe211debebaf5e9447f2a45fcd23948500c4993634";
+    "sha256:ace236222ab94cccf1c70e384883b51e3d2df9506c9c4cdd49524058b9ebf5b7";
 pub const CLI_LIFT_DOCUMENT_SHA256: &str =
     "sha256:053f343a9cd354487cd1a945f5ca94f69483030ad6bc9ef0f2443631f0fb6a91";
 
@@ -146,6 +149,20 @@ fn project_reviewed_job_surface(
 ) -> Result<PinnedSurface, ProjectionError> {
     validate_source("protocol", &protocol.source, KIND_ARTIFACT, KIND_SHA256)?;
     validate_source("relay", &relay.source, RELAY_ARTIFACT, RELAY_SHA256)?;
+    validate_source(
+        "relay push lease",
+        &relay.push_lease_source,
+        PUSH_LEASE_ARTIFACT,
+        PUSH_LEASE_SHA256,
+    )?;
+    if relay.push_lease_constant.is_none() {
+        return Err(ProjectionError::SourceMismatch {
+            component: "relay push lease".to_owned(),
+            field: "constant".to_owned(),
+            expected: "direct KIND_PUSH_LEASE declaration".to_owned(),
+            actual: "missing".to_owned(),
+        });
+    }
     validate_source("cli", &cli.source, CLI_ARTIFACT, CLI_SHA256)?;
     if relay.protocol_source != protocol.source {
         return Err(ProjectionError::ProtocolSourceMismatch);
@@ -552,10 +569,19 @@ fn relay_coverage(relay: &RelayIngestLift) -> CoverageWitness {
             package: relay.coverage.extractor_package.clone(),
             version: relay.coverage.extractor_version.clone(),
             config_digest: sha256(
-                format!("{}\n{}", relay.source.sha256, relay.protocol_source.sha256).as_bytes(),
+                format!(
+                    "{}\n{}\n{}",
+                    relay.source.sha256,
+                    relay.protocol_source.sha256,
+                    relay.push_lease_source.sha256
+                )
+                .as_bytes(),
             ),
         },
-        source_roots: vec!["crates/buzz-relay/src/handlers".to_owned()],
+        source_roots: vec![
+            "crates/buzz-core/src".to_owned(),
+            "crates/buzz-relay/src/handlers".to_owned(),
+        ],
         mechanism: "relay_ingest_allowlist".to_owned(),
         completeness: map_relay_completeness(relay.coverage.completeness),
         included_artifacts: relay.coverage.included_artifacts.clone(),
@@ -872,6 +898,36 @@ mod tests {
             error
                 .to_string()
                 .contains("cli native lift document mismatch")
+        );
+    }
+
+    #[test]
+    fn typed_relay_projection_requires_the_pinned_push_lease_declaration() {
+        let (protocol, relay, cli) = pinned_documents();
+        let protocol: buzz_protocol_lifter::ProtocolLift =
+            serde_json::from_slice(protocol).expect("protocol fixture is valid");
+        let mut relay: buzz_relay_lifter::RelayIngestLift =
+            serde_json::from_slice(relay).expect("relay fixture is valid");
+        let cli: buzz_cli_lifter::CommandTreeLift =
+            serde_json::from_slice(cli).expect("CLI fixture is valid");
+
+        relay.push_lease_source.sha256 = "sha256:changed".to_owned();
+        let source_error = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect_err("alternate push source must not project");
+        assert!(
+            source_error
+                .to_string()
+                .contains("relay push lease sha256 mismatch")
+        );
+
+        relay.push_lease_source.sha256 = super::PUSH_LEASE_SHA256.to_owned();
+        relay.push_lease_constant = None;
+        let declaration_error = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect_err("missing push declaration must not project");
+        assert!(
+            declaration_error
+                .to_string()
+                .contains("relay push lease constant mismatch")
         );
     }
 
