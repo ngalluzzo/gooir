@@ -72,7 +72,7 @@ impl SourceRef {
 /// This record is an attestation, not an intrinsic proof. An analysis host must
 /// validate and explicitly admit the exact record before a resolver may treat
 /// the associated claim as trusted.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ConformanceEvidence {
     /// Opaque identity of the authority that issued the result.
     pub attester: String,

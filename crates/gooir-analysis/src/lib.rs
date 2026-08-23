@@ -1,7 +1,4 @@
-use gooir_core::{
-    Claim, ConformanceEvidence, ContractId, Evidence, EvidenceStatus, Operation, Program,
-};
-use std::collections::BTreeSet;
+use gooir_core::{Claim, ContractId, EvidenceStatus, Operation, Program};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FindingLevel {
@@ -65,43 +62,77 @@ impl ProjectionRegistry {
     }
 }
 
-/// Contextual admission policy for conformance attestations.
+/// Contextual admission policy for conformance-backed semantic claims.
 ///
-/// The default policy denies all attestations. The host constructing a policy
-/// is responsible for validating attestation authenticity, authority, and the
-/// referenced result artifact before admission.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// The default policy denies all claim bindings. The host constructing a policy
+/// is responsible for validating attestation authenticity, authority, source
+/// provenance, and the referenced result artifact before admission.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct EvidenceTrustPolicy {
-    admitted: BTreeSet<ConformanceEvidence>,
+    admitted: Vec<AdmittedClaim>,
 }
 
 impl EvidenceTrustPolicy {
-    /// Admits one exact attestation after the host validates it.
-    pub fn admit(&mut self, attestation: ConformanceEvidence) {
-        self.admitted.insert(attestation);
+    /// Admits an attestation bound to one exact operation and semantic claim.
+    ///
+    /// The host must validate the claim's conformance result and provenance
+    /// before calling this method.
+    pub fn admit_claim(
+        &mut self,
+        operation: &Operation,
+        claim: &Claim,
+    ) -> Result<(), EvidenceAdmissionFailure> {
+        if claim.evidence.status != EvidenceStatus::Verified {
+            return Err(EvidenceAdmissionFailure::StatusNotVerified);
+        }
+        if claim.evidence.conformance.is_none() {
+            return Err(EvidenceAdmissionFailure::MissingAttestation);
+        }
+
+        let admission = AdmittedClaim {
+            operation_id: operation.id.clone(),
+            claim: claim.clone(),
+        };
+        if !self.admitted.contains(&admission) {
+            self.admitted.push(admission);
+        }
+        Ok(())
     }
 
-    /// Returns this policy with one exact attestation admitted.
-    pub fn with_admitted(mut self, attestation: ConformanceEvidence) -> Self {
-        self.admit(attestation);
-        self
-    }
-
-    fn evaluate(&self, evidence: &Evidence) -> EvidenceTrustDecision {
-        if evidence.status != EvidenceStatus::Verified {
+    fn evaluate(&self, operation_id: &str, claim: &Claim) -> EvidenceTrustDecision {
+        if claim.evidence.status != EvidenceStatus::Verified {
             return EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::StatusNotVerified);
         }
 
-        let Some(attestation) = &evidence.conformance else {
+        let Some(_) = &claim.evidence.conformance else {
             return EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::MissingAttestation);
         };
 
-        if self.admitted.contains(attestation) {
+        let admission = AdmittedClaim {
+            operation_id: operation_id.to_owned(),
+            claim: claim.clone(),
+        };
+        if self.admitted.contains(&admission) {
             EvidenceTrustDecision::Trusted
         } else {
-            EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::AttestationNotAdmitted)
+            EvidenceTrustDecision::Untrusted(EvidenceTrustFailure::ClaimNotAdmitted)
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct AdmittedClaim {
+    operation_id: String,
+    claim: Claim,
+}
+
+/// Reason an exact claim could not be admitted into a trust policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvidenceAdmissionFailure {
+    /// The evidence does not report verified status.
+    StatusNotVerified,
+    /// Verified status was reported without a conformance attestation.
+    MissingAttestation,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,8 +148,8 @@ pub enum EvidenceTrustFailure {
     StatusNotVerified,
     /// Verified status was reported without a conformance attestation.
     MissingAttestation,
-    /// The host did not admit the exact conformance attestation.
-    AttestationNotAdmitted,
+    /// The host did not admit the exact operation and semantic claim binding.
+    ClaimNotAdmitted,
 }
 
 #[derive(Default)]
@@ -197,7 +228,7 @@ impl SemanticResolver {
             .collect::<Vec<_>>();
 
         match exact.as_slice() {
-            [claim] => return self.classify(claim.clone()),
+            [claim] => return self.classify(&operation.id, claim.clone(), claim),
             claims if claims.len() > 1 => {
                 return ClaimResolution::Ambiguous(
                     claims.iter().map(|claim| claim.contract.clone()).collect(),
@@ -220,7 +251,7 @@ impl SemanticResolver {
                             if converted_claim.contract == *expected
                                 && converted_claim.evidence == claim.evidence =>
                         {
-                            converted.push(converted_claim);
+                            converted.push((converted_claim, (*claim).clone()));
                         }
                         Ok(converted_claim) if converted_claim.contract == *expected => {
                             return ClaimResolution::InvalidBridge(
@@ -243,9 +274,12 @@ impl SemanticResolver {
         }
 
         match converted.as_slice() {
-            [claim] => self.classify(claim.clone()),
+            [(claim, source_claim)] => self.classify(&operation.id, claim.clone(), source_claim),
             claims if claims.len() > 1 => ClaimResolution::Ambiguous(
-                claims.iter().map(|claim| claim.contract.clone()).collect(),
+                claims
+                    .iter()
+                    .map(|(claim, _)| claim.contract.clone())
+                    .collect(),
             ),
             _ if !related.is_empty() => ClaimResolution::VersionMismatch(
                 related.iter().map(|claim| claim.contract.clone()).collect(),
@@ -254,8 +288,13 @@ impl SemanticResolver {
         }
     }
 
-    fn classify(&self, claim: Claim) -> ClaimResolution {
-        match self.trust_policy.evaluate(&claim.evidence) {
+    fn classify(
+        &self,
+        operation_id: &str,
+        claim: Claim,
+        admission_claim: &Claim,
+    ) -> ClaimResolution {
+        match self.trust_policy.evaluate(operation_id, admission_claim) {
             EvidenceTrustDecision::Trusted => ClaimResolution::Trusted(claim),
             EvidenceTrustDecision::Untrusted(reason) => {
                 ClaimResolution::Untrusted { claim, reason }
@@ -352,11 +391,13 @@ fn visit_legality(
 #[cfg(test)]
 mod tests {
     use super::{
-        BridgeRegistry, ClaimBridge, ClaimResolution, EvidenceTrustFailure, EvidenceTrustPolicy,
-        Legality, LegalityOracle, SemanticResolver, portability_frontier,
+        BridgeRegistry, ClaimBridge, ClaimResolution, EvidenceAdmissionFailure,
+        EvidenceTrustFailure, EvidenceTrustPolicy, Legality, LegalityOracle, SemanticResolver,
+        portability_frontier,
     };
     use gooir_core::{
-        Claim, ConformanceEvidence, ContractId, Evidence, Operation, Program, SourceRef,
+        Claim, ConformanceEvidence, ContractId, Evidence, EvidenceStatus, Operation, Program,
+        SourceRef,
     };
     use serde_json::json;
 
@@ -441,7 +482,7 @@ mod tests {
         assert!(matches!(
             resolution,
             ClaimResolution::Untrusted {
-                reason: EvidenceTrustFailure::AttestationNotAdmitted,
+                reason: EvidenceTrustFailure::ClaimNotAdmitted,
                 ..
             }
         ));
@@ -451,7 +492,10 @@ mod tests {
     fn exact_policy_admission_trusts_the_attested_claim() {
         let evidence = attestation();
         let operation = operation_with([attested_claim("safe", evidence.clone())]);
-        let policy = EvidenceTrustPolicy::default().with_admitted(evidence);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&operation, &operation.claims[0])
+            .expect("fixture admission is valid");
 
         let resolution =
             SemanticResolver::with_trust_policy(policy).resolve(&operation, &contract());
@@ -460,9 +504,37 @@ mod tests {
     }
 
     #[test]
+    fn policy_refuses_to_admit_claims_without_verified_attestations() {
+        let declared = Claim::new(
+            contract(),
+            json!({"value": "safe"}),
+            Evidence::declared(source()),
+        );
+        let declared_operation = operation_with([declared]);
+        let mut policy = EvidenceTrustPolicy::default();
+
+        assert_eq!(
+            policy.admit_claim(&declared_operation, &declared_operation.claims[0]),
+            Err(EvidenceAdmissionFailure::StatusNotVerified)
+        );
+
+        let mut missing = attested_claim("safe", attestation());
+        missing.evidence.conformance = None;
+        let missing_operation = operation_with([missing]);
+        assert_eq!(
+            policy.admit_claim(&missing_operation, &missing_operation.claims[0]),
+            Err(EvidenceAdmissionFailure::MissingAttestation)
+        );
+    }
+
+    #[test]
     fn every_attestation_field_participates_in_exact_admission() {
         let admitted = attestation();
-        let policy = EvidenceTrustPolicy::default().with_admitted(admitted.clone());
+        let admitted_operation = operation_with([attested_claim("safe", admitted.clone())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
 
         let mut variants = Vec::new();
         let mut changed = admitted.clone();
@@ -486,11 +558,112 @@ mod tests {
             assert!(matches!(
                 resolution,
                 ClaimResolution::Untrusted {
-                    reason: EvidenceTrustFailure::AttestationNotAdmitted,
+                    reason: EvidenceTrustFailure::ClaimNotAdmitted,
                     ..
                 }
             ));
         }
+    }
+
+    #[test]
+    fn admitted_evidence_copied_to_another_payload_is_untrusted() {
+        let admitted_operation = operation_with([attested_claim("safe", attestation())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
+        let copied = operation_with([attested_claim("unsafe", attestation())]);
+
+        let resolution = SemanticResolver::with_trust_policy(policy).resolve(&copied, &contract());
+
+        assert!(matches!(
+            resolution,
+            ClaimResolution::Untrusted {
+                reason: EvidenceTrustFailure::ClaimNotAdmitted,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn admitted_evidence_copied_to_another_operation_is_untrusted() {
+        let admitted_operation = operation_with([attested_claim("safe", attestation())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
+        let mut copied = operation_with([attested_claim("safe", attestation())]);
+        copied.id = "different-operation".to_owned();
+
+        let resolution = SemanticResolver::with_trust_policy(policy).resolve(&copied, &contract());
+
+        assert!(matches!(
+            resolution,
+            ClaimResolution::Untrusted {
+                reason: EvidenceTrustFailure::ClaimNotAdmitted,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn admitted_evidence_copied_to_another_source_is_untrusted() {
+        let admitted_operation = operation_with([attested_claim("safe", attestation())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
+        let mut copied_claim = attested_claim("safe", attestation());
+        copied_claim.evidence.source.revision = "different-revision".to_owned();
+        let copied = operation_with([copied_claim]);
+
+        let resolution = SemanticResolver::with_trust_policy(policy).resolve(&copied, &contract());
+
+        assert!(matches!(
+            resolution,
+            ClaimResolution::Untrusted {
+                reason: EvidenceTrustFailure::ClaimNotAdmitted,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn admitted_evidence_with_changed_status_is_untrusted() {
+        let admitted_operation = operation_with([attested_claim("safe", attestation())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
+        let mut copied_claim = admitted_operation.claims[0].clone();
+        copied_claim.evidence.status = EvidenceStatus::Declared;
+        let copied = operation_with([copied_claim]);
+
+        let resolution = SemanticResolver::with_trust_policy(policy).resolve(&copied, &contract());
+
+        assert!(matches!(
+            resolution,
+            ClaimResolution::Untrusted {
+                reason: EvidenceTrustFailure::StatusNotVerified,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn admitted_evidence_copied_to_another_contract_needs_a_bridge() {
+        let admitted_operation = operation_with([attested_claim("safe", attestation())]);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&admitted_operation, &admitted_operation.claims[0])
+            .expect("fixture admission is valid");
+        let mut copied_claim = admitted_operation.claims[0].clone();
+        copied_claim.contract = ContractId::new("org.gooi.test", "capability", "2.0.0");
+        let copied = operation_with([copied_claim]);
+
+        let resolution = SemanticResolver::with_trust_policy(policy).resolve(&copied, &contract());
+
+        assert!(matches!(resolution, ClaimResolution::VersionMismatch(_)));
     }
 
     #[test]
@@ -511,9 +684,13 @@ mod tests {
             attested_claim("safe", first.clone()),
             attested_claim("unsafe", second.clone()),
         ]);
-        let policy = EvidenceTrustPolicy::default()
-            .with_admitted(first)
-            .with_admitted(second);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&operation, &operation.claims[0])
+            .expect("first fixture admission is valid");
+        policy
+            .admit_claim(&operation, &operation.claims[1])
+            .expect("second fixture admission is valid");
 
         let resolution =
             SemanticResolver::with_trust_policy(policy).resolve(&operation, &contract());
@@ -567,7 +744,10 @@ mod tests {
             to: to.clone(),
             forged: forged.clone(),
         });
-        let policy = EvidenceTrustPolicy::default().with_admitted(forged);
+        let mut policy = EvidenceTrustPolicy::default();
+        policy
+            .admit_claim(&operation, &operation.claims[0])
+            .expect("source fixture admission is valid");
 
         let resolution = SemanticResolver::with_bridges_and_trust_policy(bridges, policy)
             .resolve(&operation, &to);
