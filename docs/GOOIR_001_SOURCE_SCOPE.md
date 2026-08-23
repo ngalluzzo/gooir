@@ -93,6 +93,10 @@ from the canonical event binding. `unwrap_or_else` accepts only the inspected
 `Arc` clone closure in the canonical event-identity rebinding. A function
 pointer, alternate callback body or capture origin, repeated or nested capture
 binding, or matching call outside those contexts makes coverage partial.
+Attributes on the scope function or any decision-bearing syntax inside it are
+also conservative boundaries: documentation attributes are treated as inert,
+while every other attribute makes coverage partial unless its configuration
+semantics are explicitly modeled.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:

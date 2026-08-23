@@ -136,19 +136,30 @@ pub fn lift_relay_ingest(
     let scope_function = find_function(&ingest_file, "required_scope_for_kind")
         .ok_or(LiftError::MissingScopeFunction)?;
     let scope_match = direct_scope_match(scope_function).ok_or(LiftError::MissingScopeMatch)?;
+    let scope_attribute_reason = scope_attribute_resolution_reason(scope_function);
 
     let ingest = find_function(&ingest_file, "ingest_event_inner");
     let gate = prove_production_gate(&ingest_file, ingest)?;
 
-    let fallback_arm = scope_match
-        .arms
-        .iter()
-        .find(|arm| matches!(arm.pat, Pat::Wild(_)))
-        .ok_or(LiftError::MissingFallback)?;
+    let fallback_arm = if scope_attribute_reason.is_some() {
+        scope_match
+            .arms
+            .iter()
+            .find(|arm| matches!(arm.pat, Pat::Wild(_)) && err_literal(&arm.body).is_some())
+    } else {
+        scope_match
+            .arms
+            .iter()
+            .find(|arm| matches!(arm.pat, Pat::Wild(_)))
+    }
+    .ok_or(LiftError::MissingFallback)?;
     let fallback_error = err_literal(&fallback_arm.body).ok_or(LiftError::MissingFallback)?;
 
     let mut unresolved = Vec::new();
     if let Some(reason) = &gate.unresolved {
+        unresolved.push(reason.clone());
+    }
+    if let Some(reason) = &scope_attribute_reason {
         unresolved.push(reason.clone());
     }
     let job_decisions = protocol
@@ -159,6 +170,13 @@ pub fn lift_relay_ingest(
                 (
                     IngestDecisionKind::Unknown,
                     format!("production ingest gate could not be proven: {reason}"),
+                )
+            } else if let Some(reason) = &scope_attribute_reason {
+                (
+                    IngestDecisionKind::Unknown,
+                    format!(
+                        "required_scope_for_kind could not be evaluated exhaustively: {reason}"
+                    ),
                 )
             } else {
                 evaluate_match(scope_match, job.value, &constants, &predicates)
@@ -217,6 +235,28 @@ fn direct_scope_match(function: &ItemFn) -> Option<&syn::ExprMatch> {
     };
     matches!(&*expression.expr, Expr::Path(path) if path.path.is_ident("kind"))
         .then_some(expression)
+}
+
+fn scope_attribute_resolution_reason(function: &ItemFn) -> Option<String> {
+    let mut visitor = ScopeAttributeVisitor::default();
+    visitor.visit_item_fn(function);
+    visitor.unmodeled.then(|| {
+        "required_scope_for_kind contains an unmodeled attribute on decision-bearing syntax"
+            .to_owned()
+    })
+}
+
+#[derive(Default)]
+struct ScopeAttributeVisitor {
+    unmodeled: bool,
+}
+
+impl Visit<'_> for ScopeAttributeVisitor {
+    fn visit_attribute(&mut self, attribute: &syn::Attribute) {
+        if !attribute.path().is_ident("doc") {
+            self.unmodeled = true;
+        }
+    }
 }
 
 fn direct_u32_constants(file: &syn::File) -> BTreeMap<String, u32> {
@@ -2633,6 +2673,61 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift.job_decisions
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+    }
+
+    #[test]
+    fn conditional_scope_arms_degrade_to_partial_unknown() {
+        let source = INGEST_SOURCE.replace(
+            "        _ => Err(\"restricted: unknown event kind\"),",
+            "        #[cfg(feature = \"reject_jobs\")]\n        _ => Err(\"restricted: unknown event kind\"),\n        #[cfg(not(feature = \"reject_jobs\"))]\n        _ => Ok(Scope::MessagesWrite),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unmodeled attribute");
+    }
+
+    #[test]
+    fn conditional_accepting_arm_before_rejecting_fallback_remains_partial() {
+        let source = INGEST_SOURCE.replace(
+            "        _ => Err(\"restricted: unknown event kind\"),",
+            "        #[cfg(not(feature = \"reject_jobs\"))]\n        _ => Ok(Scope::MessagesWrite),\n        #[cfg(feature = \"reject_jobs\")]\n        _ => Err(\"restricted: unknown event kind\"),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unmodeled attribute");
+    }
+
+    #[test]
+    fn non_configuration_scope_arm_attributes_also_degrade_to_partial() {
+        let source = INGEST_SOURCE.replace(
+            "        KIND_MESSAGE => Ok(Scope::MessagesWrite),",
+            "        #[allow(unreachable_patterns)]\n        KIND_MESSAGE => Ok(Scope::MessagesWrite),",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unmodeled attribute");
+    }
+
+    #[test]
+    fn scope_function_attributes_are_conservative_but_docs_are_inert() {
+        let attributed = INGEST_SOURCE.replace(
+            "fn required_scope_for_kind",
+            "#[cfg(feature = \"scope_v2\")]\nfn required_scope_for_kind",
+        );
+        assert_unproven_gate_is_partial(&attributed, "unmodeled attribute");
+
+        let documented = INGEST_SOURCE.replace(
+            "fn required_scope_for_kind",
+            "/// Select the required scope.\nfn required_scope_for_kind",
+        );
+        let lift = lift_relay_ingest(
+            &documented,
+            KIND_SOURCE,
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "revision",
+        )
+        .expect("documented scope function lifts");
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(lift.coverage.unresolved.is_empty());
     }
 
     #[test]
