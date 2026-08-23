@@ -22,6 +22,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-relay-lifter"
+version = "0.1.0"
+dependencies = [
+ "buzz-protocol-lifter",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn",
+]
+
+[[package]]
 name = "buzz-surface-profile"
 version = "0.1.0"
 dependencies = [

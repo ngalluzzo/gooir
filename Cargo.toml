@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/buzz-protocol-lifter",
+    "crates/buzz-relay-lifter",
     "crates/buzz-surface-profile",
     "crates/gooir-analysis",
     "crates/gooir-core",
@@ -20,6 +21,7 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 
 [workspace.dependencies]
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
+buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-core = { path = "crates/gooir-core" }
@@ -30,5 +32,6 @@ semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-syn = { version = "3", features = ["full"] }
+syn = { version = "3", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 workflow-dialect = { path = "crates/workflow-dialect" }

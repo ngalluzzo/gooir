@@ -1,0 +1,82 @@
+{
+  "source": {
+    "authority": "github:block/buzz",
+    "artifact": "crates/buzz-relay/src/handlers/ingest.rs",
+    "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+    "sha256": "sha256:6f5ecbac1056c64ce161e72bc9d4b0fabc2c8d8648fb41b3812a655121f194a5"
+  },
+  "protocol_source": {
+    "authority": "github:block/buzz",
+    "artifact": "crates/buzz-core/src/kind.rs",
+    "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+    "sha256": "sha256:74533cfc1ac016dcb1a83279c2b06f93807f29489604cdccefc46b645acfce97"
+  },
+  "scope_function": {
+    "byte_start": 13126,
+    "byte_end": 18700,
+    "line_start": 342,
+    "line_end": 455
+  },
+  "gate_call": {
+    "byte_start": 84140,
+    "byte_end": 84181,
+    "line_start": 2157,
+    "line_end": 2157
+  },
+  "fallback": {
+    "byte_start": 18649,
+    "byte_end": 18692,
+    "line_start": 453,
+    "line_end": 453
+  },
+  "fallback_error": "restricted: unknown event kind",
+  "job_decisions": [
+    {
+      "symbol": "KIND_JOB_REQUEST",
+      "value": 43001,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    },
+    {
+      "symbol": "KIND_JOB_ACCEPTED",
+      "value": 43002,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    },
+    {
+      "symbol": "KIND_JOB_PROGRESS",
+      "value": 43003,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    },
+    {
+      "symbol": "KIND_JOB_RESULT",
+      "value": 43004,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    },
+    {
+      "symbol": "KIND_JOB_CANCEL",
+      "value": 43005,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    },
+    {
+      "symbol": "KIND_JOB_ERROR",
+      "value": 43006,
+      "decision": "rejected",
+      "reason": "restricted: unknown event kind"
+    }
+  ],
+  "coverage": {
+    "extractor_package": "org.gooi.lifter.buzz_relay",
+    "extractor_version": "0.1.0",
+    "mechanism": "rust_closed_required_scope_match_and_production_call",
+    "completeness": "exhaustive",
+    "included_artifacts": [
+      "crates/buzz-relay/src/handlers/ingest.rs",
+      "crates/buzz-core/src/kind.rs"
+    ],
+    "unresolved": []
+  }
+}

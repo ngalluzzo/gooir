@@ -46,3 +46,31 @@ cargo run -q -p buzz-protocol-lifter -- \
 ```
 
 The native output remains separate from software-surface contracts. A later projection package will map its declarations and registry membership into `Declares` and `Registers` relations without teaching the lifter or kernel about analysis requirements.
+
+## Closed relay-ingest lifter
+
+`buzz-relay-lifter` consumes the pinned `buzz-protocol-lifter` output plus the
+exact `kind.rs` and `ingest.rs` bytes. It checks that the kind-source digest
+matches the upstream lift, resolves direct constants and named `matches!`
+predicates, evaluates every preceding match arm for each lifted job-kind value,
+and locates the production `required_scope_for_kind` call inside
+`ingest_event_inner`.
+
+The pinned run is checked in as
+`fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
+
+```text
+cargo run -q -p buzz-relay-lifter -- \
+  <buzz-root>/crates/buzz-relay/src/handlers/ingest.rs \
+  <buzz-root>/crates/buzz-core/src/kind.rs \
+  fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json \
+  crates/buzz-relay/src/handlers/ingest.rs \
+  github:block/buzz \
+  39f8b46935736334cdd7045a4e4b5d7eb1a33888
+```
+
+All six values reach the wildcard error `restricted: unknown event kind`; the
+native witness records the function at lines 342–455, fallback at line 453,
+and production gate call at line 2157. An unsupported constant or guard makes
+the affected decisions unknown and the coverage partial, so textual resemblance
+cannot be promoted into an exhaustive rejection.
