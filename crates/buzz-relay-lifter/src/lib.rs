@@ -729,6 +729,12 @@ fn prove_production_gate(
                 unresolved: Some(format!("{risk} can run before required_scope_for_kind")),
             });
         }
+        if let Some(reason) = callback_boundary_resolution_reason(prior_statements, gate_match) {
+            return Ok(GateProof {
+                span,
+                unresolved: Some(reason),
+            });
+        }
         if let Some(reason) = macro_binding_resolution_reason(ingest, prior_statements, gate_match)
         {
             return Ok(GateProof {
@@ -887,7 +893,8 @@ impl<'ast> Visit<'ast> for UnqualifiedCallVisitor {
         if let Expr::Path(path) = strip_expression(&expression.func) {
             if let Some(name) = path.path.get_ident() {
                 self.names.insert(name.to_string());
-            } else if allowed_pre_gate_function(&path.path)
+            } else if (allowed_pre_gate_function(&path.path)
+                || path_name(&path.path) == "tokio::task::spawn_blocking")
                 && let Some(root) = path.path.segments.first()
             {
                 self.qualified_roots.insert(root.ident.to_string());
@@ -1049,6 +1056,67 @@ fn collect_use_tree_paths(
         }
         syn::UseTree::Rename(_) => {}
     }
+}
+
+#[derive(Default)]
+struct CallbackBoundaryVisitor {
+    spawn_blocking_calls: usize,
+    unwrap_or_else_calls: usize,
+}
+
+impl<'ast> Visit<'ast> for CallbackBoundaryVisitor {
+    fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
+        if matches!(strip_expression(&expression.func), Expr::Path(path)
+            if path_name(&path.path) == "tokio::task::spawn_blocking")
+        {
+            self.spawn_blocking_calls += 1;
+        }
+        visit::visit_expr_call(self, expression);
+    }
+
+    fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
+        if expression.method == "unwrap_or_else" {
+            self.unwrap_or_else_calls += 1;
+        }
+        visit::visit_expr_method_call(self, expression);
+    }
+}
+
+fn callback_boundary_resolution_reason(
+    prior_statements: &[Stmt],
+    gate_match: &syn::ExprMatch,
+) -> Option<String> {
+    for statement in prior_statements {
+        let mut callbacks = CallbackBoundaryVisitor::default();
+        callbacks.visit_stmt(statement);
+        if callbacks.spawn_blocking_calls > 0
+            && (callbacks.spawn_blocking_calls != 1
+                || !statement_establishes_verification_result(statement))
+        {
+            return Some(
+                "spawn_blocking callback is outside the pinned verification-result statement"
+                    .to_owned(),
+            );
+        }
+        if callbacks.unwrap_or_else_calls > 0
+            && (callbacks.unwrap_or_else_calls != 1
+                || !matches!(statement, Stmt::Local(local)
+                    if direct_pattern_binding(&local.pat, "event")
+                        && event_rebinding_has_arc_origin(local)))
+        {
+            return Some(
+                "unwrap_or_else callback is outside the pinned event-rebinding statement"
+                    .to_owned(),
+            );
+        }
+    }
+
+    let mut gate_callbacks = CallbackBoundaryVisitor::default();
+    gate_callbacks.visit_expr_match(gate_match);
+    if gate_callbacks.spawn_blocking_calls > 0 || gate_callbacks.unwrap_or_else_calls > 0 {
+        return Some("callback-taking API executes inside the scope gate".to_owned());
+    }
+    None
 }
 
 const MODELED_MACRO_BINDINGS: &[&str] = &[
@@ -1262,6 +1330,10 @@ fn statement_establishes_verification_result(statement: &Stmt) -> bool {
     let Expr::Call(spawn) = strip_expression(&awaited.base) else {
         return false;
     };
+    modeled_spawn_blocking_verification(spawn)
+}
+
+fn modeled_spawn_blocking_verification(spawn: &ExprCall) -> bool {
     if !matches!(strip_expression(&spawn.func), Expr::Path(path)
         if path_name(&path.path) == "tokio::task::spawn_blocking")
         || spawn.args.len() != 1
@@ -1766,29 +1838,36 @@ fn event_rebinding_preserves_identity(local: &syn::Local) -> bool {
                     .first()
                     .is_some_and(|argument| expression_is_path(argument, "event"))
         }
-        Expr::MethodCall(unwrap) if unwrap.method == "unwrap_or_else" => {
-            let Expr::Call(try_unwrap) = strip_expression(&unwrap.receiver) else {
-                return false;
-            };
-            if !matches!(strip_expression(&try_unwrap.func), Expr::Path(path) if path_name(&path.path) == "std::sync::Arc::try_unwrap")
-                || try_unwrap.args.len() != 1
-                || !try_unwrap
-                    .args
-                    .first()
-                    .is_some_and(|argument| expression_is_path(argument, "event"))
-                || unwrap.args.len() != 1
-            {
-                return false;
-            }
-            let Some(Expr::Closure(fallback)) = unwrap.args.first() else {
-                return false;
-            };
-            fallback.inputs.len() == 1
-                && matches!(fallback.inputs.first(), Some(Pat::Ident(binding)) if binding.ident == "arc")
-                && matches!(strip_expression(&fallback.body), Expr::MethodCall(clone) if allowed_pre_gate_method_call(clone))
-        }
+        Expr::MethodCall(unwrap) => modeled_event_unwrap_fallback(unwrap),
         _ => false,
     }
+}
+
+fn modeled_event_unwrap_fallback(unwrap: &ExprMethodCall) -> bool {
+    if unwrap.method != "unwrap_or_else" || unwrap.args.len() != 1 {
+        return false;
+    }
+    let Expr::Call(try_unwrap) = strip_expression(&unwrap.receiver) else {
+        return false;
+    };
+    if !matches!(strip_expression(&try_unwrap.func), Expr::Path(path)
+        if path_name(&path.path) == "std::sync::Arc::try_unwrap")
+        || try_unwrap.args.len() != 1
+        || !try_unwrap
+            .args
+            .first()
+            .is_some_and(|argument| expression_is_path(argument, "event"))
+    {
+        return false;
+    }
+    let Some(Expr::Closure(fallback)) = unwrap.args.first() else {
+        return false;
+    };
+    fallback.inputs.len() == 1
+        && matches!(fallback.inputs.first(), Some(Pat::Ident(binding))
+            if binding.ident == "arc" && binding.subpat.is_none())
+        && matches!(strip_expression(&fallback.body), Expr::MethodCall(clone)
+            if allowed_pre_gate_method_call(clone))
 }
 
 fn event_rebinding_has_arc_origin(local: &syn::Local) -> bool {
@@ -1925,6 +2004,9 @@ impl<'ast> Visit<'ast> for PreGateRiskVisitor {
 
     fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
         match strip_expression(&expression.func) {
+            Expr::Path(path)
+                if path_name(&path.path) == "tokio::task::spawn_blocking"
+                    && modeled_spawn_blocking_verification(expression) => {}
             Expr::Path(path) if allowed_pre_gate_function(&path.path) => {}
             Expr::Path(path) => self.risks.push(format!(
                 "unrecognized call `{}` with unproven effects",
@@ -2040,17 +2122,13 @@ fn allowed_pre_gate_function(path: &syn::Path) -> bool {
             | "std::sync::Arc::clone"
             | "std::sync::Arc::new"
             | "std::sync::Arc::try_unwrap"
-            | "tokio::task::spawn_blocking"
             | "verify_event"
     )
 }
 
 fn allowed_awaited_expression(expression: &Expr) -> bool {
     match strip_expression(expression) {
-        Expr::Call(call) => matches!(
-            strip_expression(&call.func),
-            Expr::Path(path) if path_name(&path.path) == "tokio::task::spawn_blocking"
-        ),
+        Expr::Call(call) => modeled_spawn_blocking_verification(call),
         Expr::MethodCall(call) => modeled_serving_state_read(call),
         _ => false,
     }
@@ -2131,12 +2209,7 @@ fn allowed_pre_gate_method_call(call: &ExprMethodCall) -> bool {
                     if matches!(unary.op, syn::UnOp::Deref(_))
                         && expression_is_path(&unary.expr, "arc"))
         }
-        "unwrap_or_else" => {
-            call.args.len() == 1
-                && matches!(receiver, Expr::Call(inner)
-                    if matches!(strip_expression(&inner.func), Expr::Path(path)
-                        if path_name(&path.path) == "std::sync::Arc::try_unwrap"))
-        }
+        "unwrap_or_else" => modeled_event_unwrap_fallback(call),
         "timestamp" => {
             call.args.is_empty()
                 && matches!(receiver, Expr::Call(inner)
@@ -2862,6 +2935,44 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
 
         assert_unproven_gate_is_partial(&source, "unmodeled awaited future");
+    }
+
+    #[test]
+    fn spawn_blocking_function_pointers_are_not_modeled_callbacks() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "tokio::task::spawn_blocking(persist_before_gate).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "call `tokio::task::spawn_blocking`");
+    }
+
+    #[test]
+    fn exact_spawn_closures_require_the_pinned_result_statement() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let other = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(
+            &source,
+            "outside the pinned verification-result statement",
+        );
+    }
+
+    #[test]
+    fn unwrap_or_else_function_pointers_are_not_modeled_callbacks() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "let _ = std::sync::Arc::try_unwrap(attacker_arc).unwrap_or_else(persist_before_gate);\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "method call `unwrap_or_else`");
     }
 
     #[test]
