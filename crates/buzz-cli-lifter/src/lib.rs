@@ -115,9 +115,13 @@ pub fn lift_command_tree(
         .iter()
         .find(|field| field.ident.as_ref().is_some_and(|ident| ident == "command"))
         .ok_or(LiftError::MissingCommandField)?;
-    let command_attr = command_attr(&command_field.attrs);
+    let command_attributes = command_attr(&command_field.attrs);
     let root_enum = type_symbol(&command_field.ty).ok_or(LiftError::InvalidCommandField)?;
-    if !command_attr.subcommand || command_attr.external_subcommand || command_attr.flatten {
+    if !command_attributes.subcommand
+        || command_attributes.external_subcommand
+        || command_attributes.flatten
+        || command_attributes.skip
+    {
         return Err(LiftError::InvalidCommandField);
     }
 
@@ -135,7 +139,11 @@ pub fn lift_command_tree(
     }
 
     let mut commands = Vec::new();
-    let mut unresolved = Vec::new();
+    let mut unresolved = command_attributes
+        .unresolved
+        .into_iter()
+        .map(|reason| format!("Cli.command: {reason}"))
+        .collect::<Vec<_>>();
     let mut stack = Vec::new();
     visit_command_enum(
         source,
@@ -205,6 +213,9 @@ fn visit_command_enum(
 
     for variant in &command_enum.variants {
         let attributes = command_attr(&variant.attrs);
+        if attributes.skip {
+            continue;
+        }
         let command_name = attributes.name.unwrap_or_else(|| {
             container_attributes
                 .rename_all
@@ -287,6 +298,7 @@ struct CommandAttributes {
     subcommand: bool,
     external_subcommand: bool,
     flatten: bool,
+    skip: bool,
     name: Option<String>,
     aliases: Vec<String>,
     unresolved: Vec<String>,
@@ -305,6 +317,17 @@ fn command_attr(attributes: &[Attribute]) -> CommandAttributes {
                 result.external_subcommand = true;
             } else if meta.path.is_ident("flatten") {
                 result.flatten = true;
+            } else if meta.path.is_ident("skip") {
+                if meta.input.is_empty() {
+                    result.skip = true;
+                } else {
+                    if meta.input.peek(Token![=]) {
+                        let _: Expr = meta.value()?.parse()?;
+                    }
+                    result
+                        .unresolved
+                        .push("unsupported skip attribute form".to_owned());
+                }
             } else if meta.path.is_ident("name") {
                 result.name = Some(meta.value()?.parse::<syn::LitStr>()?.value());
             } else if meta.path.is_ident("alias") || meta.path.is_ident("visible_alias") {
@@ -332,8 +355,23 @@ fn command_attr(attributes: &[Attribute]) -> CommandAttributes {
                             .push("non-literal command alias".to_owned()),
                     }
                 }
-            } else if meta.input.peek(Token![=]) {
+            } else if meta.path.is_ident("after_help") || meta.path.is_ident("group") {
+                // These affect help text or argument validation inside an
+                // already identified command, not its path or aliases.
                 let _: Expr = meta.value()?.parse()?;
+            } else {
+                let name = meta
+                    .path
+                    .segments
+                    .last()
+                    .map(|segment| segment.ident.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned());
+                if meta.input.peek(Token![=]) {
+                    let _: Expr = meta.value()?.parse()?;
+                }
+                result
+                    .unresolved
+                    .push(format!("unhandled command variant attribute {name}"));
             }
             Ok(())
         }) {
@@ -620,6 +658,55 @@ enum MessagesCmd {
         assert!(lift.coverage.unresolved.iter().any(|reason| {
             reason.contains("Cmd: unhandled command container attribute disable_help_flag")
         }));
+    }
+
+    #[test]
+    fn skipped_variants_are_not_commands() {
+        let source = FIXTURE.replace(
+            "#[command(name = \"set-profile\")]\n    SetProfile,",
+            "#[command(skip)]\n    SetProfile,",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("tree with a skipped variant still lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(
+            lift.commands
+                .iter()
+                .all(|command| command.variant_symbol != "SetProfile")
+        );
+    }
+
+    #[test]
+    fn unhandled_variant_invocation_attributes_make_coverage_partial() {
+        let source = FIXTURE.replace(
+            "#[command(name = \"set-profile\")]\n    SetProfile,",
+            "#[command(long_flag = \"profile\")]\n    SetProfile,",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("tree with an unhandled invocation attribute still lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(lift.coverage.unresolved.iter().any(|reason| {
+            reason.contains("set-profile: unhandled command variant attribute long_flag")
+        }));
+    }
+
+    #[test]
+    fn argument_groups_do_not_change_the_command_path_surface() {
+        let source = FIXTURE.replace(
+            "#[command(name = \"set-profile\")]",
+            "#[command(name = \"set-profile\", group = clap::ArgGroup::new(\"edit\").required(true))]",
+        );
+        let lift = lift_command_tree(&source, "fixture", "lib.rs", "revision")
+            .expect("path-neutral command metadata still lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(
+            lift.commands
+                .iter()
+                .any(|command| command.path == ["set-profile"])
+        );
     }
 
     #[test]

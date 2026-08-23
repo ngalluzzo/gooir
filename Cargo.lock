@@ -50,13 +50,9 @@ dependencies = [
 name = "buzz-surface-check"
 version = "0.1.0"
 dependencies = [
- "buzz-cli-lifter",
- "buzz-protocol-lifter",
- "buzz-relay-lifter",
  "buzz-surface-profile",
  "buzz-surface-projection",
  "gooir-analysis",
- "serde",
  "serde_json",
  "surface-completeness-analysis",
 ]

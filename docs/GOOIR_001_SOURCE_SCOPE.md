@@ -55,9 +55,11 @@ matches the upstream lift, resolves direct constants and named `matches!`
 predicates, evaluates every preceding match arm for each lifted job-kind value,
 and proves a direct top-level `required_scope_for_kind` match gate inside
 `ingest_event_inner`. Exhaustive coverage requires that the gate receive the
-incoming event kind, return on the rejection arm, and precede recognized
-persistence/dispatch sinks. Wrong arguments, ignored results, conditional or
-dead calls, non-terminating rejection arms, and calls after side effects all
+latest incoming-event-derived kind binding, return an error through every
+`Err` arm including an unguarded catch-all, and follow only the explicitly
+modeled validation/read calls used by the pinned handler. Wrong or shadowed
+arguments, ignored results, conditional or dead calls, non-terminating
+rejection arms, mutation, divergence, and unrecognized pre-gate calls all
 degrade the affected decisions to unknown.
 
 The pinned run is checked in as
@@ -86,9 +88,10 @@ cannot be promoted into an exhaustive rejection.
 follows direct `#[command(subcommand)]` enum edges. It preserves explicit names,
 aliases, exact spans, and every group/leaf path. Implicit names and enum-level
 `rename_all` use Clap's `heck` casing rules rather than a local approximation.
-Conditional variants, missing
-referenced enums, flattening, external subcommands, or unparsed alias shapes make
-coverage partial.
+`#[command(skip)]` variants are omitted. Conditional variants, missing
+referenced enums, flattening, external subcommands, unparsed alias shapes, or
+any other unhandled variant-level invocation attribute make coverage partial;
+partial trees cannot project positive command-surface relations.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-cli.lift.json`. It was produced with:
@@ -109,7 +112,8 @@ code elsewhere cannot construct or publish a job event.
 ## Contract projection, admission, and analysis
 
 `buzz-surface-projection` consumes only the three checked native lift documents.
-Before projection it checks their exact reviewed document digests plus the Buzz
+Before deserialization or projection it hashes the raw bytes and checks their
+exact reviewed document digests plus the Buzz
 authority, revision, artifact names, source digests, and the relay lift's
 upstream protocol binding. It emits generic
 relation and coverage-witness claims with exact source spans. Those claims carry

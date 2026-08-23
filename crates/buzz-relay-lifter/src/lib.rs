@@ -652,14 +652,16 @@ fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError
         .copied()
         .ok_or(LiftError::MissingGateCall)?;
 
-    for statement in &ingest.block.stmts {
+    for (gate_index, statement) in ingest.block.stmts.iter().enumerate() {
         let Some((call, gate_match)) = direct_gate_statement(statement) else {
             continue;
         };
         let span = call.span();
-        if ingest.block.stmts.iter().any(|prior| {
-            span_precedes(prior.span(), span) && matches!(prior, Stmt::Expr(Expr::Return(_), _))
-        }) {
+        let prior_statements = &ingest.block.stmts[..gate_index];
+        if prior_statements
+            .iter()
+            .any(|prior| matches!(prior, Stmt::Expr(Expr::Return(_), _)))
+        {
             return Ok(GateProof {
                 span,
                 unresolved: Some(
@@ -668,7 +670,7 @@ fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError
                 ),
             });
         }
-        if let Err(reason) = gate_checks_incoming_kind(ingest, call, span) {
+        if let Err(reason) = gate_checks_incoming_kind(ingest, call, prior_statements) {
             return Ok(GateProof {
                 span,
                 unresolved: Some(reason),
@@ -684,19 +686,14 @@ fn prove_production_gate(ingest: Option<&ItemFn>) -> Result<GateProof, LiftError
             });
         }
 
-        let mut mutations = MutationCallVisitor::default();
-        mutations.visit_item_fn(ingest);
-        if mutations
-            .calls
-            .iter()
-            .any(|mutation| span_precedes(*mutation, span))
-        {
+        let mut risks = PreGateRiskVisitor::default();
+        for statement in prior_statements {
+            risks.visit_stmt(statement);
+        }
+        if let Some(risk) = risks.risks.first() {
             return Ok(GateProof {
                 span,
-                unresolved: Some(
-                    "a persistence or dispatch call can occur before required_scope_for_kind"
-                        .to_owned(),
-                ),
+                unresolved: Some(format!("{risk} can run before required_scope_for_kind")),
             });
         }
 
@@ -741,7 +738,7 @@ fn is_required_scope_call(call: &ExprCall) -> bool {
 fn gate_checks_incoming_kind(
     ingest: &ItemFn,
     call: &ExprCall,
-    gate_span: Span,
+    prior_statements: &[Stmt],
 ) -> Result<(), String> {
     let Some(kind_argument) = call.args.first() else {
         return Err("required_scope_for_kind has no kind argument".to_owned());
@@ -756,17 +753,6 @@ fn gate_checks_incoming_kind(
             "required_scope_for_kind does not receive a local incoming-kind binding".to_owned(),
         );
     };
-
-    if ingest.sig.inputs.iter().any(|argument| {
-        matches!(
-            argument,
-            syn::FnArg::Typed(argument)
-                if matches!(&*argument.pat, Pat::Ident(ident)
-                    if ident.ident == kind_name && kind_name.contains("kind"))
-        )
-    }) {
-        return Ok(());
-    }
 
     let event_parameters = ingest
         .sig
@@ -783,27 +769,28 @@ fn gate_checks_incoming_kind(
         })
         .collect::<Vec<_>>();
 
-    for statement in &ingest.block.stmts {
-        if !span_precedes(statement.span(), gate_span) {
-            continue;
-        }
+    if let Some(local) = prior_statements.iter().rev().find_map(|statement| {
         let Stmt::Local(local) = statement else {
-            continue;
+            return None;
         };
-        let Pat::Ident(binding) = &local.pat else {
-            continue;
-        };
-        if binding.ident != kind_name {
-            continue;
-        }
+        matches!(&local.pat, Pat::Ident(binding) if binding.ident == kind_name).then_some(local)
+    }) {
         let Some(initializer) = &local.init else {
-            continue;
+            return Err(
+                "required_scope_for_kind kind binding has no incoming-event initializer".to_owned(),
+            );
         };
         let Expr::Call(derived) = strip_expression(&initializer.expr) else {
-            continue;
+            return Err(
+                "required_scope_for_kind kind binding is not derived from the incoming event"
+                    .to_owned(),
+            );
         };
         let Expr::Path(function) = strip_expression(&derived.func) else {
-            continue;
+            return Err(
+                "required_scope_for_kind kind binding is not derived from the incoming event"
+                    .to_owned(),
+            );
         };
         if function
             .path
@@ -812,10 +799,16 @@ fn gate_checks_incoming_kind(
             .is_none_or(|segment| segment.ident != "event_kind_u32")
             || derived.args.len() != 1
         {
-            continue;
+            return Err(
+                "required_scope_for_kind kind binding is not derived from the incoming event"
+                    .to_owned(),
+            );
         }
         let Some(argument_name) = expression_binding_name(&derived.args[0]) else {
-            continue;
+            return Err(
+                "required_scope_for_kind kind binding is not derived from the incoming event"
+                    .to_owned(),
+            );
         };
         if event_parameters
             .iter()
@@ -823,6 +816,21 @@ fn gate_checks_incoming_kind(
         {
             return Ok(());
         }
+        return Err(
+            "required_scope_for_kind kind binding is not derived from the incoming event"
+                .to_owned(),
+        );
+    }
+
+    if ingest.sig.inputs.iter().any(|argument| {
+        matches!(
+            argument,
+            syn::FnArg::Typed(argument)
+                if matches!(&*argument.pat, Pat::Ident(ident)
+                    if ident.ident == kind_name && kind_name.contains("kind"))
+        )
+    }) {
+        return Ok(());
     }
 
     Err("required_scope_for_kind kind argument is not derived from the incoming event".to_owned())
@@ -837,10 +845,36 @@ fn expression_binding_name(expression: &Expr) -> Option<String> {
 }
 
 fn gate_rejection_returns(gate_match: &syn::ExprMatch) -> bool {
-    gate_match.arms.iter().any(|arm| {
-        pattern_constructor(&arm.pat).is_some_and(|constructor| constructor == "Err")
-            && expression_returns_err(&arm.body)
-    })
+    let mut saw_error_arm = false;
+    let mut saw_catch_all_error_arm = false;
+    for arm in &gate_match.arms {
+        if pattern_constructor(&arm.pat).is_none_or(|constructor| constructor != "Err") {
+            continue;
+        }
+        saw_error_arm = true;
+        if !expression_returns_err(&arm.body) {
+            return false;
+        }
+        saw_catch_all_error_arm |= pattern_is_catch_all_error(&arm.pat);
+    }
+    saw_error_arm && saw_catch_all_error_arm
+}
+
+fn pattern_is_catch_all_error(pattern: &Pat) -> bool {
+    match pattern {
+        Pat::TupleStruct(pattern)
+            if pattern
+                .path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident == "Err")
+                && pattern.elems.len() == 1 =>
+        {
+            matches!(pattern.elems.first(), Some(Pat::Ident(_) | Pat::Wild(_)))
+        }
+        Pat::Paren(pattern) => pattern_is_catch_all_error(&pattern.pat),
+        _ => false,
+    }
 }
 
 fn pattern_constructor(pattern: &Pat) -> Option<String> {
@@ -850,6 +884,7 @@ fn pattern_constructor(pattern: &Pat) -> Option<String> {
             .segments
             .last()
             .map(|segment| segment.ident.to_string()),
+        Pat::Guard(pattern) => pattern_constructor(&pattern.pat),
         Pat::Paren(pattern) => pattern_constructor(&pattern.pat),
         _ => None,
     }
@@ -885,53 +920,150 @@ fn strip_expression(expression: &Expr) -> &Expr {
     }
 }
 
-fn span_precedes(left: Span, right: Span) -> bool {
-    let left = left.start();
-    let right = right.start();
-    (left.line, left.column) < (right.line, right.column)
-}
-
 #[derive(Default)]
-struct MutationCallVisitor {
-    calls: Vec<Span>,
+struct PreGateRiskVisitor {
+    risks: Vec<String>,
 }
 
-impl<'ast> Visit<'ast> for MutationCallVisitor {
+impl<'ast> Visit<'ast> for PreGateRiskVisitor {
+    fn visit_expr(&mut self, expression: &'ast Expr) {
+        match expression {
+            Expr::Assign(_) => self
+                .risks
+                .push("an assignment with unproven effects".to_owned()),
+            Expr::Binary(binary) if assignment_operator(&binary.op) => self
+                .risks
+                .push("an assignment with unproven effects".to_owned()),
+            Expr::ForLoop(_) | Expr::Loop(_) | Expr::While(_) => {
+                self.risks.push("a potentially diverging loop".to_owned())
+            }
+            Expr::Return(expression)
+                if expression
+                    .expr
+                    .as_deref()
+                    .is_none_or(|value| !expression_is_err(value)) =>
+            {
+                self.risks
+                    .push("a non-error return that bypasses the gate".to_owned());
+            }
+            Expr::Unsafe(_) => self
+                .risks
+                .push("an unsafe block with unproven effects".to_owned()),
+            _ => {}
+        }
+        visit::visit_expr(self, expression);
+    }
+
     fn visit_expr_call(&mut self, expression: &'ast ExprCall) {
-        if let Expr::Path(path) = strip_expression(&expression.func)
-            && path
-                .path
-                .segments
-                .last()
-                .is_some_and(|segment| is_persistence_or_dispatch_name(&segment.ident.to_string()))
-        {
-            self.calls.push(expression.span());
+        match strip_expression(&expression.func) {
+            Expr::Path(path) if allowed_pre_gate_function(&path.path) => {}
+            Expr::Path(path) => self.risks.push(format!(
+                "unrecognized call `{}` with unproven effects",
+                path_name(&path.path)
+            )),
+            _ => self
+                .risks
+                .push("a dynamic call with unproven effects".to_owned()),
         }
         visit::visit_expr_call(self, expression);
     }
 
     fn visit_expr_method_call(&mut self, expression: &'ast ExprMethodCall) {
-        if is_persistence_or_dispatch_name(&expression.method.to_string()) {
-            self.calls.push(expression.span());
+        let method = expression.method.to_string();
+        if !allowed_pre_gate_method(&method) {
+            self.risks.push(format!(
+                "unrecognized method call `{method}` with unproven effects"
+            ));
         }
         visit::visit_expr_method_call(self, expression);
     }
+
+    fn visit_expr_macro(&mut self, expression: &'ast ExprMacro) {
+        self.inspect_macro(&expression.mac);
+        visit::visit_expr_macro(self, expression);
+    }
+
+    fn visit_stmt_macro(&mut self, statement: &'ast syn::StmtMacro) {
+        self.inspect_macro(&statement.mac);
+        visit::visit_stmt_macro(self, statement);
+    }
 }
 
-fn is_persistence_or_dispatch_name(name: &str) -> bool {
+impl PreGateRiskVisitor {
+    fn inspect_macro(&mut self, expression: &syn::Macro) {
+        let name = expression
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .unwrap_or_else(|| "<unknown>".to_owned());
+        if !matches!(name.as_str(), "debug" | "error" | "format") {
+            self.risks
+                .push(format!("unrecognized macro `{name}!` that may diverge"));
+        }
+    }
+}
+
+fn allowed_pre_gate_function(path: &syn::Path) -> bool {
+    matches!(
+        path_name(path).as_str(),
+        "Err"
+            | "IngestError::AuthFailed"
+            | "IngestError::Internal"
+            | "IngestError::Rejected"
+            | "buzz_core::kind::is_relay_only_kind"
+            | "buzz_deletion::store"
+            | "chrono::Utc::now"
+            | "event_kind_u32"
+            | "map_serving_fence_state"
+            | "std::sync::Arc::clone"
+            | "std::sync::Arc::new"
+            | "std::sync::Arc::try_unwrap"
+            | "tokio::task::spawn_blocking"
+            | "verify_event"
+    )
+}
+
+fn assignment_operator(operator: &BinOp) -> bool {
+    matches!(
+        operator,
+        BinOp::AddAssign(_)
+            | BinOp::SubAssign(_)
+            | BinOp::MulAssign(_)
+            | BinOp::DivAssign(_)
+            | BinOp::RemAssign(_)
+            | BinOp::BitXorAssign(_)
+            | BinOp::BitAndAssign(_)
+            | BinOp::BitOrAssign(_)
+            | BinOp::ShlAssign(_)
+            | BinOp::ShrAssign(_)
+    )
+}
+
+fn allowed_pre_gate_method(name: &str) -> bool {
     matches!(
         name,
-        "persist" | "insert" | "upsert" | "save" | "write" | "publish" | "broadcast" | "send"
-    ) || name.starts_with("persist_")
-        || name.starts_with("insert_")
-        || name.starts_with("upsert_")
-        || name.starts_with("save_")
-        || name.starts_with("write_")
-        || name.starts_with("dispatch")
-        || name.starts_with("publish_")
-        || name.starts_with("broadcast_")
-        || name.starts_with("send_")
-        || name.starts_with("handle_command")
+        "abs"
+            | "as_secs"
+            | "clone"
+            | "community"
+            | "into"
+            | "is_http"
+            | "is_serving_active"
+            | "len"
+            | "pubkey"
+            | "timestamp"
+            | "to_hex"
+            | "unwrap_or_else"
+    )
+}
+
+fn path_name(path: &syn::Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
 }
 
 fn source_span(source: &str, span: Span, construct: &str) -> Result<SourceSpan, LiftError> {
@@ -1168,6 +1300,36 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     }
 
     #[test]
+    fn gate_after_a_panicking_path_is_not_exhaustive() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "panic!(\"gate is unreachable\");\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "macro `panic!`");
+    }
+
+    #[test]
+    fn gate_must_use_the_latest_kind_binding() {
+        let source = INGEST_SOURCE.replace(
+            "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+            "async fn ingest_event_inner(event: Event) -> Result<(), Error> {\n    let kind_u32 = event_kind_u32(&event);\n    let kind_u32 = KIND_MESSAGE;",
+        );
+
+        assert_unproven_gate_is_partial(&source, "not derived from the incoming event");
+    }
+
+    #[test]
+    fn reassigned_kind_bindings_make_dataflow_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "kind_u32 = KIND_MESSAGE;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "assignment with unproven effects");
+    }
+
+    #[test]
     fn gate_after_persistence_is_not_exhaustive() {
         let source = INGEST_SOURCE.replace(
             "let required = match required_scope_for_kind(kind_u32, &event) {",
@@ -1185,6 +1347,26 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
 
         assert_unproven_gate_is_partial(&source, "does not directly return");
+    }
+
+    #[test]
+    fn every_error_path_through_the_gate_must_terminate_ingest() {
+        let source = INGEST_SOURCE.replace(
+            "Err(error) => return Err(error.into()),",
+            "Err(\"different error\") => return Err(\"different error\".into()),\n        Err(_) => Scope::MessagesWrite,",
+        );
+
+        assert_unproven_gate_is_partial(&source, "does not directly return");
+    }
+
+    #[test]
+    fn unrecognized_pre_gate_calls_make_ordering_unproven() {
+        let source = INGEST_SOURCE.replace(
+            "let required = match required_scope_for_kind(kind_u32, &event) {",
+            "store_event(&event).await?;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+        );
+
+        assert_unproven_gate_is_partial(&source, "unrecognized call `store_event`");
     }
 
     #[test]

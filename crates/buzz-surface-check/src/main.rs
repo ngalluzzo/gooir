@@ -21,9 +21,9 @@ fn run() -> Result<(), String> {
         return Err(usage());
     }
 
-    let protocol: buzz_protocol_lifter::ProtocolLift = read_json(&protocol_path)?;
-    let relay: buzz_relay_lifter::RelayIngestLift = read_json(&relay_path)?;
-    let cli: buzz_cli_lifter::CommandTreeLift = read_json(&cli_path)?;
+    let protocol = read_document(&protocol_path)?;
+    let relay = read_document(&relay_path)?;
+    let cli = read_document(&cli_path)?;
     let surface = project_pinned_job_surface(&protocol, &relay, &cli)
         .map_err(|error| format!("failed to project pinned surface: {error}"))?;
     let policy = admit_pinned_surface(&surface)
@@ -36,9 +36,8 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, String> {
-    let bytes = fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("failed to parse {path}: {error}"))
+fn read_document(path: &str) -> Result<Vec<u8>, String> {
+    fs::read(path).map_err(|error| format!("failed to read {path}: {error}"))
 }
 
 fn usage() -> String {

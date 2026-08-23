@@ -6,12 +6,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-buzz-cli-lifter.workspace = true
-buzz-protocol-lifter.workspace = true
-buzz-relay-lifter.workspace = true
 buzz-surface-profile.workspace = true
 buzz-surface-projection.workspace = true
 gooir-analysis.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 surface-completeness-analysis.workspace = true

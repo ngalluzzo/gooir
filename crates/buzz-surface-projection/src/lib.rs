@@ -36,12 +36,12 @@ pub const RELAY_SHA256: &str =
     "sha256:6f5ecbac1056c64ce161e72bc9d4b0fabc2c8d8648fb41b3812a655121f194a5";
 pub const CLI_SHA256: &str =
     "sha256:a4a6829515e23851822ce5b1c3e7b341c32e2997b17b3b4f74f8aad994ab6310";
-pub const PROTOCOL_LIFT_SHA256: &str =
-    "sha256:fa8a3756180d8b09d5309772b8a0cdaf481999a186d81cc0f6d403b99365bb91";
-pub const RELAY_LIFT_SHA256: &str =
-    "sha256:511fc2b6a14487a29433caa6bce70141b8fbd29ad208f4a2d93dae42d478b784";
-pub const CLI_LIFT_SHA256: &str =
-    "sha256:2e2c208b427bcc8a9a50aaba8932c4ef84b779cde4735266b393a5238fa52ad7";
+pub const PROTOCOL_LIFT_DOCUMENT_SHA256: &str =
+    "sha256:b6e82cee8d19e6eff421cd38a85f1d240a1f483c7ce40ea87bba5ed7f0c9d290";
+pub const RELAY_LIFT_DOCUMENT_SHA256: &str =
+    "sha256:1bc4dd0a32b9a0a01cfd15fe211debebaf5e9447f2a45fcd23948500c4993634";
+pub const CLI_LIFT_DOCUMENT_SHA256: &str =
+    "sha256:053f343a9cd354487cd1a945f5ca94f69483030ad6bc9ef0f2443631f0fb6a91";
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PinnedSurface {
@@ -57,7 +57,7 @@ pub enum ProjectionError {
         actual: String,
     },
     ProtocolSourceMismatch,
-    NativeResultMismatch {
+    NativeDocumentMismatch {
         component: String,
         expected: String,
         actual: String,
@@ -88,13 +88,13 @@ impl fmt::Display for ProjectionError {
             Self::ProtocolSourceMismatch => formatter.write_str(
                 "relay lift does not reference the exact protocol source used by the protocol lift",
             ),
-            Self::NativeResultMismatch {
+            Self::NativeDocumentMismatch {
                 component,
                 expected,
                 actual,
             } => write!(
                 formatter,
-                "{component} native lift mismatch: expected {expected}, got {actual}"
+                "{component} native lift document mismatch: expected {expected}, got {actual}"
             ),
             Self::Serialization(error) => {
                 write!(formatter, "projection serialization failed: {error}")
@@ -119,8 +119,27 @@ impl fmt::Display for ProjectionError {
 
 impl std::error::Error for ProjectionError {}
 
-/// Projects exact pinned native lifts without implicitly trusting them.
+/// Pins exact reviewed native-lift document bytes before deserialization, then
+/// projects them without implicitly trusting the resulting claims.
 pub fn project_pinned_job_surface(
+    protocol_document: &[u8],
+    relay_document: &[u8],
+    cli_document: &[u8],
+) -> Result<PinnedSurface, ProjectionError> {
+    validate_native_document("protocol", protocol_document, PROTOCOL_LIFT_DOCUMENT_SHA256)?;
+    validate_native_document("relay", relay_document, RELAY_LIFT_DOCUMENT_SHA256)?;
+    validate_native_document("cli", cli_document, CLI_LIFT_DOCUMENT_SHA256)?;
+
+    let protocol: ProtocolLift = serde_json::from_slice(protocol_document)
+        .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
+    let relay: RelayIngestLift = serde_json::from_slice(relay_document)
+        .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
+    let cli: CommandTreeLift = serde_json::from_slice(cli_document)
+        .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
+    project_reviewed_job_surface(&protocol, &relay, &cli)
+}
+
+fn project_reviewed_job_surface(
     protocol: &ProtocolLift,
     relay: &RelayIngestLift,
     cli: &CommandTreeLift,
@@ -128,9 +147,6 @@ pub fn project_pinned_job_surface(
     validate_source("protocol", &protocol.source, KIND_ARTIFACT, KIND_SHA256)?;
     validate_source("relay", &relay.source, RELAY_ARTIFACT, RELAY_SHA256)?;
     validate_source("cli", &cli.source, CLI_ARTIFACT, CLI_SHA256)?;
-    validate_native_result("protocol", protocol, PROTOCOL_LIFT_SHA256)?;
-    validate_native_result("relay", relay, RELAY_LIFT_SHA256)?;
-    validate_native_result("cli", cli, CLI_LIFT_SHA256)?;
     if relay.protocol_source != protocol.source {
         return Err(ProjectionError::ProtocolSourceMismatch);
     }
@@ -198,31 +214,33 @@ pub fn project_pinned_job_surface(
         }
     }
 
-    for (index, command) in cli
-        .commands
-        .iter()
-        .filter(|command| command_mentions_job_protocol(command))
-        .enumerate()
-    {
-        operations.push(relation_operation(
-            format!("buzz-cli:exposes-job-protocol:{index}"),
-            "cli_command",
-            SurfaceRelation {
-                subject: "buzz-cli:command-tree".to_owned(),
-                relation: RelationKind::Exposes,
-                object: "protocol:buzz-agent-job".to_owned(),
-                role: ArtifactRole::Production,
-                scope_id: SOURCE_SCOPE_ID.to_owned(),
-            },
-            source_ref(
-                &cli.source,
-                format!(
-                    "command={}; {}",
-                    command.path.join(" "),
-                    format_span("declaration", &command.declaration)
+    if cli.coverage.completeness == CliCompleteness::Exhaustive {
+        for (index, command) in cli
+            .commands
+            .iter()
+            .filter(|command| command_mentions_job_protocol(command))
+            .enumerate()
+        {
+            operations.push(relation_operation(
+                format!("buzz-cli:exposes-job-protocol:{index}"),
+                "cli_command",
+                SurfaceRelation {
+                    subject: "buzz-cli:command-tree".to_owned(),
+                    relation: RelationKind::Exposes,
+                    object: "protocol:buzz-agent-job".to_owned(),
+                    role: ArtifactRole::Production,
+                    scope_id: SOURCE_SCOPE_ID.to_owned(),
+                },
+                source_ref(
+                    &cli.source,
+                    format!(
+                        "command={}; {}",
+                        command.path.join(" "),
+                        format_span("declaration", &command.declaration)
+                    ),
                 ),
-            ),
-        )?);
+            )?);
+        }
     }
 
     operations.push(coverage_operation(
@@ -321,19 +339,11 @@ pub fn admit_pinned_surface(
 }
 
 fn embedded_pinned_surface() -> Result<PinnedSurface, ProjectionError> {
-    let protocol: ProtocolLift = serde_json::from_str(include_str!(
-        "../../../fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json"
-    ))
-    .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
-    let relay: RelayIngestLift = serde_json::from_str(include_str!(
-        "../../../fixtures/buzz/desktop-v0.5.18/job-relay.lift.json"
-    ))
-    .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
-    let cli: CommandTreeLift = serde_json::from_str(include_str!(
-        "../../../fixtures/buzz/desktop-v0.5.18/job-cli.lift.json"
-    ))
-    .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
-    project_pinned_job_surface(&protocol, &relay, &cli)
+    project_pinned_job_surface(
+        include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json"),
+        include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-relay.lift.json"),
+        include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-cli.lift.json"),
+    )
 }
 
 fn validate_source(
@@ -360,18 +370,16 @@ fn validate_source(
     Ok(())
 }
 
-fn validate_native_result<T: Serialize>(
+fn validate_native_document(
     component: &str,
-    lift: &T,
+    bytes: &[u8],
     expected: &str,
 ) -> Result<(), ProjectionError> {
-    let bytes = serde_json::to_vec(lift)
-        .map_err(|error| ProjectionError::Serialization(error.to_string()))?;
-    let actual = sha256(&bytes);
+    let actual = sha256(bytes);
     if actual == expected {
         Ok(())
     } else {
-        Err(ProjectionError::NativeResultMismatch {
+        Err(ProjectionError::NativeDocumentMismatch {
             component: component.to_owned(),
             expected: expected.to_owned(),
             actual,
@@ -649,34 +657,21 @@ mod tests {
     use semantics_software_surface_v1::{CoverageCompleteness, RelationKind};
     use surface_completeness_analysis::{SurfaceCompletenessAnalyzer, SurfaceFindingLevel};
 
-    use super::{admit_pinned_surface, project_pinned_job_surface};
+    use super::{admit_pinned_surface, project_pinned_job_surface, project_reviewed_job_surface};
 
-    fn pinned_inputs() -> (
-        buzz_protocol_lifter::ProtocolLift,
-        buzz_relay_lifter::RelayIngestLift,
-        buzz_cli_lifter::CommandTreeLift,
-    ) {
+    fn pinned_documents() -> (&'static [u8], &'static [u8], &'static [u8]) {
         (
-            serde_json::from_str(include_str!(
-                "../../../fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json"
-            ))
-            .expect("protocol lift fixture is valid"),
-            serde_json::from_str(include_str!(
-                "../../../fixtures/buzz/desktop-v0.5.18/job-relay.lift.json"
-            ))
-            .expect("relay lift fixture is valid"),
-            serde_json::from_str(include_str!(
-                "../../../fixtures/buzz/desktop-v0.5.18/job-cli.lift.json"
-            ))
-            .expect("CLI lift fixture is valid"),
+            include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json"),
+            include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-relay.lift.json"),
+            include_bytes!("../../../fixtures/buzz/desktop-v0.5.18/job-cli.lift.json"),
         )
     }
 
     #[test]
     fn pinned_native_lifts_project_without_trusting_the_staging_snapshot() {
-        let (protocol, relay, cli) = pinned_inputs();
-        let surface = project_pinned_job_surface(&protocol, &relay, &cli)
-            .expect("pinned native lifts project");
+        let (protocol, relay, cli) = pinned_documents();
+        let surface =
+            project_pinned_job_surface(protocol, relay, cli).expect("pinned native lifts project");
 
         let relations = surface
             .program
@@ -715,9 +710,9 @@ mod tests {
 
     #[test]
     fn default_deny_keeps_all_projected_results_unknown() {
-        let (protocol, relay, cli) = pinned_inputs();
-        let surface = project_pinned_job_surface(&protocol, &relay, &cli)
-            .expect("pinned native lifts project");
+        let (protocol, relay, cli) = pinned_documents();
+        let surface =
+            project_pinned_job_surface(protocol, relay, cli).expect("pinned native lifts project");
         let report = SurfaceCompletenessAnalyzer::new(SemanticResolver::default())
             .analyze(&surface.program, &job_surface_profile());
 
@@ -732,9 +727,9 @@ mod tests {
 
     #[test]
     fn pinned_policy_yields_six_rejections_one_cli_gap_and_scoped_unknowns() {
-        let (protocol, relay, cli) = pinned_inputs();
-        let surface = project_pinned_job_surface(&protocol, &relay, &cli)
-            .expect("pinned native lifts project");
+        let (protocol, relay, cli) = pinned_documents();
+        let surface =
+            project_pinned_job_surface(protocol, relay, cli).expect("pinned native lifts project");
         let policy = admit_pinned_surface(&surface).expect("pinned claims are locally admitted");
         let report = SurfaceCompletenessAnalyzer::new(SemanticResolver::with_trust_policy(policy))
             .analyze(&surface.program, &job_surface_profile());
@@ -806,9 +801,9 @@ mod tests {
 
     #[test]
     fn mutating_a_projected_payload_invalidates_local_admission() {
-        let (protocol, relay, cli) = pinned_inputs();
-        let mut surface = project_pinned_job_surface(&protocol, &relay, &cli)
-            .expect("pinned native lifts project");
+        let (protocol, relay, cli) = pinned_documents();
+        let mut surface =
+            project_pinned_job_surface(protocol, relay, cli).expect("pinned native lifts project");
         surface.program.operations[0].claims[0].payload["subject"] =
             serde_json::json!("forged-subject");
 
@@ -819,12 +814,92 @@ mod tests {
 
     #[test]
     fn changing_a_native_result_without_changing_its_source_digest_is_rejected() {
-        let (protocol, mut relay, cli) = pinned_inputs();
-        relay.job_decisions[0].decision = buzz_relay_lifter::IngestDecisionKind::Accepted;
+        let (protocol, relay, cli) = pinned_documents();
+        let relay = String::from_utf8(relay.to_vec())
+            .expect("relay fixture is UTF-8")
+            .replacen(
+                "\"decision\": \"rejected\"",
+                "\"decision\": \"accepted\"",
+                1,
+            );
 
-        let error = project_pinned_job_surface(&protocol, &relay, &cli)
+        let error = project_pinned_job_surface(protocol, relay.as_bytes(), cli)
             .expect_err("mutated native result must not project under the pinned policy");
 
-        assert!(error.to_string().contains("relay native lift mismatch"));
+        assert!(
+            error
+                .to_string()
+                .contains("relay native lift document mismatch")
+        );
+    }
+
+    #[test]
+    fn unknown_top_level_native_document_fields_are_rejected_before_parsing() {
+        let (protocol, relay, cli) = pinned_documents();
+        let cli = String::from_utf8(cli.to_vec())
+            .expect("CLI fixture is UTF-8")
+            .replacen(
+                "  \"root_enum\":",
+                "  \"future_metadata\": {},\n  \"root_enum\":",
+                1,
+            );
+
+        let error = project_pinned_job_surface(protocol, relay, cli.as_bytes())
+            .expect_err("an unknown top-level field changes the reviewed document");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cli native lift document mismatch")
+        );
+    }
+
+    #[test]
+    fn unknown_nested_coverage_fields_are_rejected_before_parsing() {
+        let (protocol, relay, cli) = pinned_documents();
+        let cli = String::from_utf8(cli.to_vec())
+            .expect("CLI fixture is UTF-8")
+            .replacen(
+                "    \"unresolved\": []\n",
+                "    \"unresolved\": [],\n    \"future_failed_artifacts\": [{\"artifact\": \"generated.rs\", \"reason\": \"unreadable\"}]\n",
+                1,
+            );
+
+        let error = project_pinned_job_surface(protocol, relay, cli.as_bytes())
+            .expect_err("an unknown nested field changes the reviewed document");
+
+        assert!(
+            error
+                .to_string()
+                .contains("cli native lift document mismatch")
+        );
+    }
+
+    #[test]
+    fn partial_cli_lifts_cannot_emit_positive_command_relations() {
+        let (protocol, relay, cli) = pinned_documents();
+        let protocol: buzz_protocol_lifter::ProtocolLift =
+            serde_json::from_slice(protocol).expect("protocol fixture is valid");
+        let relay: buzz_relay_lifter::RelayIngestLift =
+            serde_json::from_slice(relay).expect("relay fixture is valid");
+        let mut cli: buzz_cli_lifter::CommandTreeLift =
+            serde_json::from_slice(cli).expect("CLI fixture is valid");
+        cli.commands[0].path = vec!["job".to_owned()];
+        cli.coverage.completeness = buzz_cli_lifter::NativeCompleteness::Partial;
+
+        let surface = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect("typed reviewed inputs remain projectable in this unit test");
+
+        assert!(surface.program.operations.iter().all(|operation| {
+            operation.claims.iter().all(|claim| {
+                claim.contract != semantics_software_surface_v1::relation_contract()
+                    || serde_json::from_value::<semantics_software_surface_v1::SurfaceRelation>(
+                        claim.payload.clone(),
+                    )
+                    .expect("relation payload is valid")
+                    .relation
+                        != RelationKind::Exposes
+            })
+        }));
     }
 }
