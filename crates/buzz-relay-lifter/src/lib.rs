@@ -729,7 +729,9 @@ fn prove_production_gate(
                 unresolved: Some(format!("{risk} can run before required_scope_for_kind")),
             });
         }
-        if let Some(reason) = callback_boundary_resolution_reason(prior_statements, gate_match) {
+        if let Some(reason) =
+            callback_boundary_resolution_reason(ingest, prior_statements, gate_match)
+        {
             return Ok(GateProof {
                 span,
                 unresolved: Some(reason),
@@ -1083,10 +1085,42 @@ impl<'ast> Visit<'ast> for CallbackBoundaryVisitor {
 }
 
 fn callback_boundary_resolution_reason(
+    ingest: &ItemFn,
     prior_statements: &[Stmt],
     gate_match: &syn::ExprMatch,
 ) -> Option<String> {
+    let mut event_origin = ingest
+        .sig
+        .inputs
+        .iter()
+        .filter(|argument| match argument {
+            syn::FnArg::Typed(argument) => direct_pattern_binding(&argument.pat, "event"),
+            syn::FnArg::Receiver(_) => false,
+        })
+        .count()
+        == 1;
+    let mut verify_capture_bindings = ingest
+        .sig
+        .inputs
+        .iter()
+        .filter(|argument| match argument {
+            syn::FnArg::Typed(argument) => pattern_binds_name(&argument.pat, "event_for_verify"),
+            syn::FnArg::Receiver(_) => false,
+        })
+        .count();
+    let mut verify_capture_origin = false;
+    let mut saw_verification_spawn = false;
+    let mut spawn_had_capture_origin = true;
+
     for statement in prior_statements {
+        let capture_bindings = statement_binding_count(statement, "event_for_verify");
+        if capture_bindings > 0 {
+            verify_capture_bindings += capture_bindings;
+            verify_capture_origin = verify_capture_bindings == 1
+                && event_origin
+                && statement_establishes_verification_capture_origin(statement);
+        }
+
         let mut callbacks = CallbackBoundaryVisitor::default();
         callbacks.visit_stmt(statement);
         if callbacks.spawn_blocking_calls > 0
@@ -1097,6 +1131,10 @@ fn callback_boundary_resolution_reason(
                 "spawn_blocking callback is outside the pinned verification-result statement"
                     .to_owned(),
             );
+        }
+        if callbacks.spawn_blocking_calls == 1 {
+            saw_verification_spawn = true;
+            spawn_had_capture_origin &= verify_capture_bindings == 1 && verify_capture_origin;
         }
         if callbacks.unwrap_or_else_calls > 0
             && (callbacks.unwrap_or_else_calls != 1
@@ -1109,6 +1147,22 @@ fn callback_boundary_resolution_reason(
                     .to_owned(),
             );
         }
+
+        if statement_introduces_name(statement, "event") {
+            event_origin = event_origin
+                && matches!(statement, Stmt::Local(local)
+                    if direct_pattern_binding(&local.pat, "event")
+                        && event_rebinding_preserves_identity(local));
+        }
+    }
+
+    if saw_verification_spawn
+        && (!spawn_had_capture_origin || verify_capture_bindings != 1 || !verify_capture_origin)
+    {
+        return Some(
+            "verification callback capture `event_for_verify` does not have one preceding pinned `Arc::clone(&event)` origin"
+                .to_owned(),
+        );
     }
 
     let mut gate_callbacks = CallbackBoundaryVisitor::default();
@@ -1117,6 +1171,57 @@ fn callback_boundary_resolution_reason(
         return Some("callback-taking API executes inside the scope gate".to_owned());
     }
     None
+}
+
+fn statement_binding_count(statement: &Stmt, expected: &str) -> usize {
+    let mut bindings = BindingCountVisitor { expected, count: 0 };
+    bindings.visit_stmt(statement);
+    bindings.count
+}
+
+struct BindingCountVisitor<'a> {
+    expected: &'a str,
+    count: usize,
+}
+
+impl<'ast> Visit<'ast> for BindingCountVisitor<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        self.count += usize::from(item_introduces_name(item, self.expected));
+        visit::visit_item(self, item);
+    }
+
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.count += usize::from(pattern.ident == self.expected);
+        visit::visit_pat_ident(self, pattern);
+    }
+}
+
+fn statement_establishes_verification_capture_origin(statement: &Stmt) -> bool {
+    let Stmt::Local(local) = statement else {
+        return false;
+    };
+    if !direct_pattern_binding(&local.pat, "event_for_verify") {
+        return false;
+    }
+    let Some(initializer) = &local.init else {
+        return false;
+    };
+    if initializer.diverge.is_some() {
+        return false;
+    }
+    let Expr::Call(clone) = strip_expression(&initializer.expr) else {
+        return false;
+    };
+    if !matches!(strip_expression(&clone.func), Expr::Path(path)
+        if path_name(&path.path) == "std::sync::Arc::clone")
+        || clone.args.len() != 1
+    {
+        return false;
+    }
+    clone
+        .args
+        .first()
+        .is_some_and(|argument| expression_is_shared_reference_to_path(argument, "event"))
 }
 
 const MODELED_MACRO_BINDINGS: &[&str] = &[
@@ -1343,7 +1448,14 @@ fn modeled_spawn_blocking_verification(spawn: &ExprCall) -> bool {
     let Some(Expr::Closure(closure)) = spawn.args.first() else {
         return false;
     };
-    if !closure.inputs.is_empty() {
+    if !closure.attrs.is_empty()
+        || closure.lifetimes.is_some()
+        || closure.constness.is_some()
+        || closure.asyncness.is_some()
+        || closure.capture.is_none()
+        || !closure.inputs.is_empty()
+        || !matches!(closure.output, syn::ReturnType::Default)
+    {
         return false;
     }
     let Expr::Call(verify) = strip_expression(&closure.body) else {
@@ -1353,7 +1465,7 @@ fn modeled_spawn_blocking_verification(spawn: &ExprCall) -> bool {
         if path.path.is_ident("verify_event"))
         && verify.args.len() == 1
         && verify.args.first().is_some_and(|argument| {
-            expression_binding_name(argument).as_deref() == Some("event_for_verify")
+            expression_is_shared_reference_to_path(argument, "event_for_verify")
         })
 }
 
@@ -1863,9 +1975,19 @@ fn modeled_event_unwrap_fallback(unwrap: &ExprMethodCall) -> bool {
     let Some(Expr::Closure(fallback)) = unwrap.args.first() else {
         return false;
     };
-    fallback.inputs.len() == 1
+    fallback.attrs.is_empty()
+        && fallback.lifetimes.is_none()
+        && fallback.constness.is_none()
+        && fallback.asyncness.is_none()
+        && fallback.capture.is_none()
+        && fallback.inputs.len() == 1
+        && matches!(fallback.output, syn::ReturnType::Default)
         && matches!(fallback.inputs.first(), Some(Pat::Ident(binding))
-            if binding.ident == "arc" && binding.subpat.is_none())
+            if binding.attrs.is_empty()
+                && binding.by_ref.is_none()
+                && binding.mutability.is_none()
+                && binding.ident == "arc"
+                && binding.subpat.is_none())
         && matches!(strip_expression(&fallback.body), Expr::MethodCall(clone)
             if allowed_pre_gate_method_call(clone))
 }
@@ -2225,6 +2347,12 @@ fn allowed_pre_gate_method_call(call: &ExprMethodCall) -> bool {
 
 fn expression_is_path(expression: &Expr, expected: &str) -> bool {
     matches!(strip_expression(expression), Expr::Path(path) if path.path.is_ident(expected))
+}
+
+fn expression_is_shared_reference_to_path(expression: &Expr, expected: &str) -> bool {
+    matches!(strip_expression(expression), Expr::Reference(reference)
+        if reference.mutability.is_none()
+            && expression_is_path(&reference.expr, expected))
 }
 
 fn expression_is_field(expression: &Expr, base: &str, member: &str) -> bool {
@@ -2963,6 +3091,148 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             &source,
             "outside the pinned verification-result statement",
         );
+    }
+
+    #[test]
+    fn verification_callbacks_require_the_pinned_capture_origin() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, alternate: AlternateEvent) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event_for_verify = alternate;\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn verification_callbacks_require_a_preceding_capture_binding() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn verification_capture_bindings_after_the_callback_do_not_count() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn verification_callbacks_require_the_exact_move_closure_header() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let verify_result = tokio::task::spawn_blocking(|| verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "call `tokio::task::spawn_blocking`");
+    }
+
+    #[test]
+    fn verification_callbacks_reject_repeated_capture_bindings() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, alternate: AlternateEvent) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let event_for_verify = alternate;\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn verification_callbacks_reject_nested_capture_shadows() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    { let event_for_verify = std::sync::Arc::clone(&event); }\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn verification_capture_clone_requires_the_canonical_event_binding() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {",
+                "async fn ingest_event_inner(kind_u32: u32, event: Event, alternate: Event) -> Result<(), Error> {",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    { let event = std::sync::Arc::new(alternate); }\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+
+        assert_unproven_gate_is_partial(&source, "does not have one preceding pinned");
+    }
+
+    #[test]
+    fn pinned_verification_callback_and_capture_origin_remain_exhaustive() {
+        let source = INGEST_SOURCE
+            .replace(
+                "fn required_scope_for_kind",
+                "use buzz_core::verification::verify_event;\n\nfn required_scope_for_kind",
+            )
+            .replace(
+                "let required = match required_scope_for_kind(kind_u32, &event) {",
+                "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
+            );
+        let lift = lift_relay_ingest(
+            &source,
+            KIND_SOURCE,
+            &fixture_protocol(),
+            "fixture",
+            "ingest.rs",
+            "revision",
+        )
+        .expect("pinned verification callback still lifts");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
+        assert!(lift.coverage.unresolved.is_empty());
     }
 
     #[test]

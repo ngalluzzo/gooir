@@ -83,10 +83,12 @@ origin. Receiver parameters, nested shadowing, and gate-pattern rebinding make
 coverage partial rather than letting a familiar method spelling stand in for
 binding resolution. Callback-taking APIs are pinned at both boundaries:
 `spawn_blocking` accepts only the inspected zero-argument verification closure
-in its exact result-binding statement, and `unwrap_or_else` accepts only the
-inspected `Arc` clone closure in the canonical event-identity rebinding. A
-function pointer, alternate callback body, or matching call outside those
-contexts makes coverage partial.
+in its exact result-binding statement, and its captured `event_for_verify`
+must have one unique preceding exact `std::sync::Arc::clone(&event)` origin
+from the canonical event binding. `unwrap_or_else` accepts only the inspected
+`Arc` clone closure in the canonical event-identity rebinding. A function
+pointer, alternate callback body or capture origin, repeated or nested capture
+binding, or matching call outside those contexts makes coverage partial.
 
 The pinned run is checked in as
 `fixtures/buzz/desktop-v0.5.18/job-relay.lift.json`. It was produced with:
