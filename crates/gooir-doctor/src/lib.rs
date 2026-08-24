@@ -8,7 +8,12 @@
 //! This analyzer consumes a registry and nothing else. It knows no fact
 //! meanings, no product, and no domain verbs.
 
-use std::collections::{BTreeMap, BTreeSet};
+pub mod declarations;
+
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use gooir_capability::{AdmissionPolicy, CapabilityId, CapabilityRegistry, FactType, ProviderId};
 
@@ -105,6 +110,109 @@ impl Report {
     /// Findings that are honest gaps rather than faults.
     pub fn open_needs(&self) -> usize {
         self.unimplemented.len()
+    }
+}
+
+/// The report renders itself, so there is one rendering rather than one per
+/// caller. Two of them drifted once already: a standalone binary printed the
+/// whole graph while `gooir doctor` printed two lines, and the difference was
+/// invisible until someone ran both.
+impl fmt::Display for Report {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "capability graph")?;
+        writeln!(
+            f,
+            "  {} capabilities, {} providers, {} fact types",
+            self.capabilities, self.providers, self.fact_types
+        )?;
+
+        writeln!(f, "\nyou must supply ({})", self.roots.len())?;
+        for root in &self.roots {
+            writeln!(f, "  {}", root.fact)?;
+            writeln!(f, "    needed by {}", root.required_by.len())?;
+        }
+
+        writeln!(f, "\nyou can obtain ({})", self.terminals.len())?;
+        for terminal in &self.terminals {
+            writeln!(
+                f,
+                "  {:<7} {}",
+                if terminal.obtainable { "yes" } else { "needs" },
+                terminal.fact
+            )?;
+            for capability in &terminal.blocked_by {
+                writeln!(f, "          waiting on {capability}")?;
+            }
+        }
+
+        if !self.unimplemented.is_empty() {
+            writeln!(
+                f,
+                "\nopen needs — assignable work ({})",
+                self.unimplemented.len()
+            )?;
+            for need in &self.unimplemented {
+                writeln!(f, "  {}", need.capability)?;
+                for produced in &need.produces {
+                    writeln!(f, "    produces {produced}")?;
+                }
+                writeln!(f, "    suite    {}", need.conformance_suite)?;
+            }
+        }
+
+        if !self.unreachable.is_empty() {
+            writeln!(f, "\nUNREACHABLE ({})", self.unreachable.len())?;
+            for fact in &self.unreachable {
+                writeln!(f, "  {}  ({})", fact.fact, fact.reason)?;
+            }
+        }
+
+        if !self.ambiguous.is_empty() {
+            writeln!(
+                f,
+                "\nmultiple routes ({}) — the planner picks by score",
+                self.ambiguous.len()
+            )?;
+            for fact in &self.ambiguous {
+                writeln!(f, "  {}", fact.fact)?;
+                for capability in &fact.produced_by {
+                    writeln!(f, "    via {capability}")?;
+                }
+            }
+        }
+
+        writeln!(f, "\nadmission")?;
+        writeln!(
+            f,
+            "  {} attester(s) admitted by this host",
+            self.admitted_attesters
+        )?;
+        writeln!(
+            f,
+            "  {} provider(s) whose outputs are not admissible yet",
+            self.unadmitted.len()
+        )?;
+        if self.admitted_attesters == 0 && !self.unadmitted.is_empty() {
+            writeln!(
+                f,
+                "  -> no produced fact can become admitted, whatever a verifier reports"
+            )?;
+        }
+        for provider in &self.unadmitted {
+            writeln!(
+                f,
+                "    {} needs {}",
+                provider.provider.name, provider.conformance_suite
+            )?;
+        }
+
+        write!(
+            f,
+            "\nsummary  {} blocking, {} open need(s), {} unadmitted provider(s)",
+            self.blocking(),
+            self.open_needs(),
+            self.unadmitted.len()
+        )
     }
 }
 

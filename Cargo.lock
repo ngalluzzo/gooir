@@ -331,9 +331,7 @@ dependencies = [
 name = "gooir-doctor"
 version = "0.1.0"
 dependencies = [
- "fleetd-capability-pack",
  "gooir-capability",
- "gooir-datamodel-pack",
  "serde_json",
 ]
 

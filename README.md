@@ -69,23 +69,23 @@ explicitly and measures the implementation itself — see
 
 ## How the crates are organised
 
-Thirty-six crates, six roles. Every crate is exactly one of these:
+Thirty-eight crates, six roles. Every crate is exactly one of these:
 
 | role | what it holds | examples |
 | --- | --- | --- |
-| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis` |
+| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis`, `gooir-doctor` |
 | **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-effects-v1` |
 | **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
 | **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |
-| **tool** | reads or reports on a graph | `gooir-cli`, `gooir-doctor` |
-| **support** | shared machinery | `lift-defeasible` |
+| **tool** | reads or reports on a graph | `gooir-cli` — the one entry point |
+| **support** | shared machinery | `lift-defeasible`, `gooir-provider` (the SDK) |
 
 A crate named `*-lifter` or `*-lowering` is a provider; the suffix says which
 direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Seventeen decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Twenty-five decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
@@ -93,6 +93,8 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0014](docs/DECISIONS/0014_AUTHORING_AS_A_CAPABILITY.md) — hand-written text is an ordinary source fact
 - [0015](docs/DECISIONS/0015_GOOIR_DOCTOR.md) — the graph reports on its own health
 - [0017](docs/DECISIONS/0017_ONE_ADMISSION_RULE.md) — passing a suite and being admitted are two conditions
+- [0023](docs/DECISIONS/0023_PACK_MANIFEST.md) — a capability graph is declared as data
+- [0024](docs/DECISIONS/0024_PROVIDER_SDK.md) — a provider is its transformation; coverage is derived, never declared
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).

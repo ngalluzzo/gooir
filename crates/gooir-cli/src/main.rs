@@ -221,19 +221,7 @@ fn run() -> Result<(), String> {
         }
         Some("doctor") => {
             let report = gooir_doctor::diagnose(&registry);
-            println!(
-                "{} capabilities, {} providers, {} fact types",
-                report.capabilities, report.providers, report.fact_types
-            );
-            println!(
-                "{} blocking, {} open need(s), {} attester(s) admitted",
-                report.blocking(),
-                report.open_needs(),
-                report.admitted_attesters
-            );
-            for u in &report.unreachable {
-                println!("  UNREACHABLE {} ({})", u.fact, u.reason);
-            }
+            println!("{report}");
             if report.blocking() > 0 {
                 process::exit(2);
             }
