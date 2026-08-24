@@ -15,6 +15,17 @@ use serde::{Deserialize, Serialize};
 pub const PACKAGE: &str = "org.gooi.semantics.data_model";
 pub const VERSION: &str = "1.0.0";
 
+/// The concept name for the model as a whole, as distinct from the `entity`
+/// and `relation` concepts within it.
+///
+/// Exported as a constant because consumers in the capability graph identify a
+/// whole model as one fact, and the value must have exactly one source.
+pub const MODEL: &str = "model";
+
+pub fn model_contract() -> ContractId {
+    ContractId::new(PACKAGE, MODEL, VERSION)
+}
+
 pub fn entity_contract() -> ContractId {
     ContractId::new(PACKAGE, "entity", VERSION)
 }

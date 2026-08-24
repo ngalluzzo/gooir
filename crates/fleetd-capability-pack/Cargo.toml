@@ -10,6 +10,7 @@ fleetd-control-projection.workspace = true
 fleetd-interaction-plan.workspace = true
 fleetd-surface-lowering.workspace = true
 gooir-capability.workspace = true
+gooir-datamodel-pack.workspace = true
 lift-defeasible.workspace = true
 openapi-lifter.workspace = true
 semantics-data-model-v1.workspace = true

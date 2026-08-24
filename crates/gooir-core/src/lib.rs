@@ -2,31 +2,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Exact identity of a semantic contract. Compatibility is never inferred from
-/// the version string; it requires an explicit bridge.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct ContractId {
-    pub package: String,
-    pub name: String,
-    pub version: String,
-}
-
-impl ContractId {
-    pub fn new(
-        package: impl Into<String>,
-        name: impl Into<String>,
-        version: impl Into<String>,
-    ) -> Self {
-        Self {
-            package: package.into(),
-            name: name.into(),
-            version: version.into(),
-        }
-    }
-
-    pub fn is_other_version_of(&self, other: &Self) -> bool {
-        self.package == other.package && self.name == other.name && self.version != other.version
-    }
+gooir_identity::exact_identity! {
+    /// Exact identity of a semantic contract. Compatibility is never inferred
+    /// from the version string; it requires an explicit bridge.
+    ContractId
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

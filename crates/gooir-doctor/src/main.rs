@@ -113,6 +113,7 @@ fn print_declarations() -> Result<(), String> {
 
     let mut fact_sites: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut identity_kinds: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut implementations: Vec<String> = Vec::new();
 
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
@@ -147,6 +148,25 @@ fn print_declarations() -> Result<(), String> {
                         .or_default() += n;
                 }
             }
+            // An *implementation* of the identity rule: a macro that declares
+            // one, or a hand-written struct carrying all three exact parts.
+            //
+            // The needles are assembled from fragments so that this file's own
+            // source does not match them. A tool that scans source must not
+            // count itself.
+            let macro_needle = concat!("macro_rules!", " exact_identity");
+            let legacy_needle = concat!("macro_rules!", " exact_id ");
+            let declares_macro = text.contains(macro_needle) || text.contains(legacy_needle);
+            let declares_struct = text.contains(concat!("pub ", "package: String"))
+                && text.contains(concat!("pub ", "name: String"))
+                && text.contains(concat!("pub ", "version: String"))
+                && !declares_macro;
+            if declares_macro || declares_struct {
+                implementations.push(format!(
+                    "{crate_name} ({})",
+                    if declares_macro { "macro" } else { "struct" }
+                ));
+            }
             for (index, _) in text.match_indices("FactType::new(") {
                 let tail = &text[index + "FactType::new(".len()..];
                 let Some(end) = tail.find(')') else { continue };
@@ -165,14 +185,21 @@ fn print_declarations() -> Result<(), String> {
         }
     }
 
-    println!("\nidentity systems in use");
+    implementations.sort();
+    implementations.dedup();
+    println!("\nexact identity");
+    println!(
+        "  {} implementation(s) of the rule: {}",
+        implementations.len(),
+        implementations.join(", ")
+    );
     for (kind, count) in &identity_kinds {
-        println!("  {kind:<14} {count} declaration site(s)");
+        println!("    {kind:<12} {count} use site(s)");
     }
-    if identity_kinds.len() > 1 {
+    if implementations.len() > 1 {
         println!(
-            "  -> {} parallel exact-identity systems for one idea",
-            identity_kinds.len()
+            "  -> {} parallel implementations of one idea",
+            implementations.len()
         );
     }
 

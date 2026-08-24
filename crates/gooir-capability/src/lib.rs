@@ -11,40 +11,20 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::{error::Error, fmt};
 
-macro_rules! exact_id {
-    ($name:ident) => {
-        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-        pub struct $name {
-            pub package: String,
-            pub name: String,
-            pub version: String,
-        }
-
-        impl $name {
-            pub fn new(
-                package: impl Into<String>,
-                name: impl Into<String>,
-                version: impl Into<String>,
-            ) -> Self {
-                Self {
-                    package: package.into(),
-                    name: name.into(),
-                    version: version.into(),
-                }
-            }
-        }
-
-        impl fmt::Display for $name {
-            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, "{}/{}@{}", self.package, self.name, self.version)
-            }
-        }
-    };
+gooir_identity::exact_identity! {
+    /// The exact identity of a kind of fact.
+    FactType
 }
 
-exact_id!(FactType);
-exact_id!(CapabilityId);
-exact_id!(ProviderId);
+gooir_identity::exact_identity! {
+    /// The exact identity of a typed promise from facts to facts.
+    CapabilityId
+}
+
+gooir_identity::exact_identity! {
+    /// The exact identity of one implementation of a capability.
+    ProviderId
+}
 
 /// Whether an input may carry unresolved defeats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

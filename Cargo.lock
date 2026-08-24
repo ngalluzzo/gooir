@@ -193,6 +193,7 @@ dependencies = [
  "fleetd-interaction-plan",
  "fleetd-surface-lowering",
  "gooir-capability",
+ "gooir-datamodel-pack",
  "lift-defeasible",
  "openapi-lifter",
  "semantics-data-model-v1",
@@ -282,6 +283,7 @@ dependencies = [
 name = "gooir-capability"
 version = "0.1.0"
 dependencies = [
+ "gooir-identity",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -292,6 +294,7 @@ dependencies = [
 name = "gooir-core"
 version = "0.1.0"
 dependencies = [
+ "gooir-identity",
  "serde",
  "serde_json",
 ]
@@ -301,7 +304,6 @@ name = "gooir-datamodel-pack"
 version = "0.1.0"
 dependencies = [
  "entity-spec",
- "fleetd-capability-pack",
  "gooir-capability",
  "lift-defeasible",
  "openapi-lowering",
@@ -320,6 +322,13 @@ dependencies = [
  "gooir-capability",
  "gooir-datamodel-pack",
  "serde_json",
+]
+
+[[package]]
+name = "gooir-identity"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

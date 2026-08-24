@@ -35,11 +35,15 @@ pub fn authored_entity_spec_fact() -> FactType {
 
 /// The neutral data-model waist, carried as `Defeasible<DataModel>`.
 ///
-/// This identity is canonical here. `fleetd-capability-pack` declares the same
-/// identity so that a lifted OpenAPI document and an authored spec produce the
-/// *same* fact; a test asserts the two declarations agree.
+/// Canonical, and built from the waist's own constants so the value has one
+/// source. `fleetd-capability-pack` imports this function rather than
+/// re-declaring the identity.
 pub fn data_model_fact() -> FactType {
-    FactType::new("org.gooi.semantics.data_model", "model", "1.0.0")
+    FactType::new(
+        semantics_data_model_v1::PACKAGE,
+        semantics_data_model_v1::MODEL,
+        semantics_data_model_v1::VERSION,
+    )
 }
 
 pub fn postgres_ddl_fact() -> FactType {

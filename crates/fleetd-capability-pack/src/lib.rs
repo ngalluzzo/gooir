@@ -56,9 +56,10 @@ pub fn delivery_rust_source_fact() -> FactType {
     FactType::new("dev.fleetd.source", "delivery_rust", "0.1.0")
 }
 
-pub fn data_model_fact() -> FactType {
-    FactType::new("org.gooi.semantics.data_model", "model", "1.0.0")
-}
+/// Re-exported from the neutral pack. Declaring it twice would let an authored
+/// specification and a lifted document populate two graphs that merely look
+/// alike.
+pub use gooir_datamodel_pack::data_model_fact;
 
 pub fn fleetd_control_native_fact() -> FactType {
     FactType::new("dev.fleetd.dialect.control_native", "review", "0.1.0")
