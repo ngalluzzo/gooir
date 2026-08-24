@@ -22,6 +22,7 @@ members = [
     "crates/gooir-doctor",
     "crates/gooir-identity",
     "crates/gooir-plugin-process",
+    "crates/gooir-provider",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
     "crates/openapi-lowering",
@@ -69,6 +70,7 @@ gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
+gooir-provider = { path = "crates/gooir-provider" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
 openapi-lifter = { path = "crates/openapi-lifter" }

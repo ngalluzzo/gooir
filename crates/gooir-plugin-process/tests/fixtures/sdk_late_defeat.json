@@ -1,0 +1,7 @@
+{
+  "protocol": "org.gooi.plugin/v1",
+  "provider": { "package": "test.plugin", "name": "sdk_late_defeat", "version": "1.0.0" },
+  "capability": { "package": "test.capability", "name": "make", "version": "1.0.0" },
+  "command": { "program": "python3", "args": ["sdk_late_defeat.py"] },
+  "implementation": ["sdk_late_defeat.py", "../../../../sdk/python/gooir.py"]
+}

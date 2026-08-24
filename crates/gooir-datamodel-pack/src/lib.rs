@@ -13,14 +13,12 @@
 //! command.
 
 use gooir_capability::{
-    CapabilityId, CapabilityProvider, CapabilityRegistry, CapabilitySpec, FactCoverage,
-    FactInstance, FactType, PackManifestError, ProducedFact, ProviderDescriptor, ProviderId,
-    RegistryError, register_pack,
+    CapabilityId, CapabilityRegistry, FactCoverage, FactInstance, FactType, PackManifestError,
+    ProviderId, RegistryError, register_pack,
 };
 use lift_defeasible::Defeasible;
 use semantics_data_model_v1::DataModel;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 
 pub const PACK_VERSION: &str = "0.1.0";
 
@@ -88,72 +86,16 @@ pub struct AuthoredSpec {
 
 // ----------------------------------------------------------------- providers
 
-struct AuthoredSpecProvider;
-
-impl CapabilityProvider for AuthoredSpecProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        descriptor("authored_entity_spec", author_data_model_capability())
-    }
-
-    fn invoke(
-        &self,
-        _: &CapabilitySpec,
-        inputs: &[FactInstance],
-    ) -> Result<Vec<ProducedFact>, String> {
-        let spec: AuthoredSpec = input(inputs, &authored_entity_spec_fact())?;
-        let parsed = entity_spec::parse_entity_spec(&spec.text);
-        Ok(vec![produced(
-            data_model_fact(),
-            coverage(parsed.is_exhaustive()),
-            &parsed,
-        )?])
-    }
-}
-
-struct PostgresDdlProvider;
-
-impl CapabilityProvider for PostgresDdlProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        descriptor("postgres_ddl", postgres_ddl_capability())
-    }
-
-    fn invoke(
-        &self,
-        _: &CapabilitySpec,
-        inputs: &[FactInstance],
-    ) -> Result<Vec<ProducedFact>, String> {
-        let model: Defeasible<DataModel> = input(inputs, &data_model_fact())?;
-        // The lowering already reports what it could not carry, in the same
-        // shape every lift uses. There is nothing left to translate.
-        let lowered = sql_ddl_lowering::lower_to_postgres_ddl(&model.value);
-        Ok(vec![produced(
-            postgres_ddl_fact(),
-            coverage(lowered.is_exhaustive()),
-            &lowered,
-        )?])
-    }
-}
-
-struct OpenApiSurfaceProvider;
-
-impl CapabilityProvider for OpenApiSurfaceProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        descriptor("openapi_crud_surface", openapi_surface_capability())
-    }
-
-    fn invoke(
-        &self,
-        _: &CapabilitySpec,
-        inputs: &[FactInstance],
-    ) -> Result<Vec<ProducedFact>, String> {
-        let model: Defeasible<DataModel> = input(inputs, &data_model_fact())?;
-        let lowered = openapi_lowering::lower_to_openapi(&model.value);
-        Ok(vec![produced(
-            openapi_surface_fact(),
-            coverage(lowered.is_exhaustive()),
-            &lowered,
-        )?])
-    }
+/// Bytes that identify this pack's implementation. `include_bytes!` resolves
+/// against this file, which is why the SDK takes the bytes rather than the
+/// paths.
+fn implementation(name: &str) -> String {
+    gooir_provider::digest(&[
+        include_bytes!("lib.rs"),
+        include_bytes!("../Cargo.toml"),
+        include_bytes!("../../../Cargo.lock"),
+        name.as_bytes(),
+    ])
 }
 
 // -------------------------------------------------------------- registration
@@ -165,10 +107,38 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), PackManif
     register_pack(registry, MANIFEST)
 }
 
+/// Each provider is one function. The fact types it consumes and produces are
+/// declared once, in `pack.json`, and the SDK reads them from the capability.
 pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
-    registry.register_provider(AuthoredSpecProvider)?;
-    registry.register_provider(PostgresDdlProvider)?;
-    registry.register_provider(OpenApiSurfaceProvider)?;
+    gooir_provider::register_transform(
+        registry,
+        ProviderId::new(
+            gooir_provider::IN_PROCESS,
+            "authored_entity_spec",
+            PACK_VERSION,
+        ),
+        author_data_model_capability(),
+        implementation("authored_entity_spec"),
+        |spec: AuthoredSpec| entity_spec::parse_entity_spec(&spec.text),
+    )?;
+    gooir_provider::register_transform(
+        registry,
+        ProviderId::new(gooir_provider::IN_PROCESS, "postgres_ddl", PACK_VERSION),
+        postgres_ddl_capability(),
+        implementation("postgres_ddl"),
+        |model: Defeasible<DataModel>| sql_ddl_lowering::lower_to_postgres_ddl(&model.value),
+    )?;
+    gooir_provider::register_transform(
+        registry,
+        ProviderId::new(
+            gooir_provider::IN_PROCESS,
+            "openapi_crud_surface",
+            PACK_VERSION,
+        ),
+        openapi_surface_capability(),
+        implementation("openapi_crud_surface"),
+        |model: Defeasible<DataModel>| openapi_lowering::lower_to_openapi(&model.value),
+    )?;
     Ok(())
 }
 
@@ -196,58 +166,4 @@ pub fn authored_fact(
         payload,
         origin,
     )
-}
-
-// ------------------------------------------------------------------- helpers
-
-fn descriptor(name: &str, capability: CapabilityId) -> ProviderDescriptor {
-    ProviderDescriptor {
-        id: ProviderId::new("org.gooi.provider.in_process", name, PACK_VERSION),
-        capability,
-        implementation_digest: implementation_digest(name),
-    }
-}
-
-fn implementation_digest(provider_name: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(include_bytes!("lib.rs"));
-    hasher.update(include_bytes!("../Cargo.toml"));
-    hasher.update(include_bytes!("../../../Cargo.lock"));
-    hasher.update(provider_name.as_bytes());
-    let digest = hasher.finalize();
-    let mut output = String::with_capacity(7 + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
-fn input<T: DeserializeOwned>(inputs: &[FactInstance], fact: &FactType) -> Result<T, String> {
-    let instance = inputs
-        .iter()
-        .find(|input| &input.fact_type == fact)
-        .ok_or_else(|| format!("input {fact} is missing"))?;
-    serde_json::from_value(instance.payload.clone()).map_err(|error| error.to_string())
-}
-
-fn produced<T: Serialize>(
-    fact_type: FactType,
-    coverage: FactCoverage,
-    value: &T,
-) -> Result<ProducedFact, String> {
-    Ok(ProducedFact {
-        fact_type,
-        coverage,
-        payload: serde_json::to_value(value).map_err(|error| error.to_string())?,
-    })
-}
-
-fn coverage(exhaustive: bool) -> FactCoverage {
-    if exhaustive {
-        FactCoverage::Complete
-    } else {
-        FactCoverage::Partial
-    }
 }

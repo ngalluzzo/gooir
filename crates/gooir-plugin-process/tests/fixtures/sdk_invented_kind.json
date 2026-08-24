@@ -1,0 +1,7 @@
+{
+  "protocol": "org.gooi.plugin/v1",
+  "provider": { "package": "test.plugin", "name": "sdk_invented_kind", "version": "1.0.0" },
+  "capability": { "package": "test.capability", "name": "make", "version": "1.0.0" },
+  "command": { "program": "python3", "args": ["sdk_invented_kind.py"] },
+  "implementation": ["sdk_invented_kind.py", "../../../../sdk/python/gooir.py"]
+}

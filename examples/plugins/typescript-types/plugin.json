@@ -10,6 +10,14 @@
     "name": "lower_typescript_types",
     "version": "0.1.0"
   },
-  "command": { "program": "python3", "args": ["provider.py"] },
-  "implementation": ["provider.py"]
+  "command": {
+    "program": "python3",
+    "args": [
+      "provider.py"
+    ]
+  },
+  "implementation": [
+    "provider.py",
+    "../../../sdk/python/gooir.py"
+  ]
 }

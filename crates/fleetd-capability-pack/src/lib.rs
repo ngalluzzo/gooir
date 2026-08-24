@@ -21,7 +21,6 @@ use semantics_data_model_v1::DataModel;
 use semantics_fleetd_control_v0::BlockedDeliveryReview;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 mod conformance;
 
@@ -137,9 +136,21 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), PackManif
 }
 
 pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
-    registry.register_provider(OpenApiDataProvider)?;
+    gooir_provider::register_transform(
+        registry,
+        provider_id("openapi_data"),
+        openapi_data_capability(),
+        implementation("openapi_data"),
+        |source: SourceDocument| lift_openapi(&source.text),
+    )?;
     registry.register_provider(FleetdNativeProvider)?;
-    registry.register_provider(FleetdControlProjectionProvider)?;
+    gooir_provider::register_transform(
+        registry,
+        provider_id("fleetd_control_projection"),
+        fleetd_control_projection_capability(),
+        implementation("fleetd_control_projection"),
+        |native: FleetdControlLift| project_blocked_delivery_review(&native),
+    )?;
     registry.register_provider(FleetdInteractionProvider)?;
     registry.register_provider(WebTargetProvider)?;
     registry.register_provider(TerminalTargetProvider)?;
@@ -178,32 +189,10 @@ pub fn source_fact(
     )
 }
 
-struct OpenApiDataProvider;
 struct FleetdNativeProvider;
-struct FleetdControlProjectionProvider;
 struct FleetdInteractionProvider;
 struct WebTargetProvider;
 struct TerminalTargetProvider;
-
-impl CapabilityProvider for OpenApiDataProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        descriptor("openapi_data", openapi_data_capability())
-    }
-
-    fn invoke(
-        &self,
-        _: &CapabilitySpec,
-        inputs: &[FactInstance],
-    ) -> Result<Vec<ProducedFact>, String> {
-        let source: SourceDocument = input(inputs, &openapi_source_fact())?;
-        let lifted = lift_openapi(&source.text)?;
-        Ok(vec![produced(
-            data_model_fact(),
-            coverage(lifted.is_exhaustive()),
-            &lifted,
-        )?])
-    }
-}
 
 impl CapabilityProvider for FleetdNativeProvider {
     fn descriptor(&self) -> ProviderDescriptor {
@@ -236,29 +225,6 @@ impl CapabilityProvider for FleetdNativeProvider {
             fleetd_control_native_fact(),
             coverage(complete),
             &lifted,
-        )?])
-    }
-}
-
-impl CapabilityProvider for FleetdControlProjectionProvider {
-    fn descriptor(&self) -> ProviderDescriptor {
-        descriptor(
-            "fleetd_control_projection",
-            fleetd_control_projection_capability(),
-        )
-    }
-
-    fn invoke(
-        &self,
-        _: &CapabilitySpec,
-        inputs: &[FactInstance],
-    ) -> Result<Vec<ProducedFact>, String> {
-        let native: FleetdControlLift = input(inputs, &fleetd_control_native_fact())?;
-        let projected = project_blocked_delivery_review(&native);
-        Ok(vec![produced(
-            fleetd_control_fact(),
-            coverage(projected.is_exhaustive()),
-            &projected,
         )?])
     }
 }
@@ -336,40 +302,34 @@ pub fn terminal_surface(fact: &FactInstance) -> Result<TerminalSurface, String> 
     decode(&fact.payload)
 }
 
+/// This pack publishes providers under its own package. The identity appears in
+/// the derivation of every fact they produce, so it is this pack's to choose.
+fn provider_id(name: &str) -> ProviderId {
+    ProviderId::new("dev.fleetd.provider.in_process", name, PACK_VERSION)
+}
+
+fn implementation(name: &str) -> String {
+    gooir_provider::digest(&[
+        include_bytes!("lib.rs"),
+        include_bytes!("../Cargo.toml"),
+        include_bytes!("../../../Cargo.lock"),
+        name.as_bytes(),
+    ])
+}
+
 fn descriptor(name: &str, capability: CapabilityId) -> ProviderDescriptor {
     ProviderDescriptor {
-        id: ProviderId::new("dev.fleetd.provider.in_process", name, PACK_VERSION),
+        id: provider_id(name),
         capability,
-        implementation_digest: implementation_digest(name),
+        implementation_digest: implementation(name),
     }
 }
 
-fn implementation_digest(provider_name: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(include_bytes!("lib.rs"));
-    hasher.update(include_bytes!("../Cargo.toml"));
-    hasher.update(include_bytes!("../../../Cargo.lock"));
-    hasher.update(provider_name.as_bytes());
-    let digest = hasher.finalize();
-    let mut output = String::with_capacity(7 + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(output, "{byte:02x}");
-    }
-    output
-}
-
-fn input<T: DeserializeOwned>(inputs: &[FactInstance], fact: &FactType) -> Result<T, String> {
-    let instance = inputs
-        .iter()
-        .find(|input| &input.fact_type == fact)
-        .ok_or_else(|| format!("input {fact} is missing"))?;
-    decode(&instance.payload)
-}
-
-fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
-    serde_json::from_value(value.clone()).map_err(|error| error.to_string())
+fn input<T: serde::de::DeserializeOwned>(
+    inputs: &[FactInstance],
+    fact: &FactType,
+) -> Result<T, String> {
+    gooir_provider::input(inputs, fact)
 }
 
 fn produced<T: Serialize>(
@@ -384,16 +344,20 @@ fn produced<T: Serialize>(
     })
 }
 
-fn serialize<T: Serialize>(value: &T) -> Result<Value, RegistryError> {
-    serde_json::to_value(value).map_err(|error| RegistryError::Serialization(error.to_string()))
-}
-
 fn coverage(exhaustive: bool) -> FactCoverage {
     if exhaustive {
         FactCoverage::Complete
     } else {
         FactCoverage::Partial
     }
+}
+
+fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
+    serde_json::from_value(value.clone()).map_err(|error| error.to_string())
+}
+
+fn serialize<T: Serialize>(value: &T) -> Result<Value, RegistryError> {
+    serde_json::to_value(value).map_err(|error| RegistryError::Serialization(error.to_string()))
 }
 
 fn require_same_source(sources: &[&SourceDocument]) -> Result<(), String> {
