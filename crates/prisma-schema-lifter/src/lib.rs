@@ -419,6 +419,7 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
                     f.attrs.contains("@unique") || singleton_uniques.contains(&f.name),
                 ),
                 default: default_origin(&f.attrs),
+                default_value: None,
                 enumeration: find_enum(&f.type_name),
             });
         }

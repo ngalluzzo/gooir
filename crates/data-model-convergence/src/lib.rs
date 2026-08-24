@@ -256,6 +256,7 @@ mod tests {
                     identity: semantics_data_model_v1::Tri::No,
                     unique: semantics_data_model_v1::Tri::No,
                     default: semantics_data_model_v1::DefaultOrigin::None,
+                    default_value: None,
                     enumeration: None,
                 }],
             }],

@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+entity-spec = { workspace = true }
 lift-defeasible = { workspace = true }
 postgres-catalog-lifter = { workspace = true }
 prisma-schema-lifter = { workspace = true }

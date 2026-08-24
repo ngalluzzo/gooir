@@ -163,6 +163,15 @@ pub struct FieldShape {
     /// something strictly stronger than the authority established.
     pub unique: Tri,
     pub default: DefaultOrigin,
+    /// The default's literal text, when an authority supplied one.
+    ///
+    /// Expression *formatting* is authority-local (a store rewrites `now()`
+    /// and re-qualifies casts), so this is carried but deliberately not
+    /// compared across authorities -- the same treatment as enum member order.
+    /// It is verified behaviourally instead: the value a lowering emits must be
+    /// the value the target ends up with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<String>,
     /// Present exactly when `ty` is [`ScalarType::Enumeration`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enumeration: Option<Enumeration>,
@@ -286,6 +295,7 @@ mod tests {
             identity: Tri::No,
             unique: Tri::No,
             default: DefaultOrigin::None,
+            default_value: None,
             enumeration: None,
         };
         assert!(matches!(f.ty, FieldType::Scalar(_)));
@@ -305,6 +315,7 @@ mod tests {
                     identity: Tri::No,
                     unique: Tri::No,
                     default: DefaultOrigin::Database,
+                    default_value: None,
                     enumeration: None,
                 },
                 FieldShape {
@@ -315,6 +326,7 @@ mod tests {
                     identity: Tri::No,
                     unique: Tri::No,
                     default: DefaultOrigin::None,
+                    default_value: None,
                     enumeration: None,
                 },
             ],
@@ -358,6 +370,7 @@ mod tests {
                     identity: Tri::No,
                     unique: Tri::No,
                     default: DefaultOrigin::None,
+                    default_value: None,
                     enumeration: None,
                 }],
             }],

@@ -227,6 +227,7 @@ pub fn lift_document(doc: &Value) -> Defeasible<DataModel> {
                     identity: Tri::Unknown,
                     unique: Tri::Unknown,
                     default: DefaultOrigin::Unknown,
+                    default_value: None,
                     enumeration,
                 });
             }

@@ -392,6 +392,7 @@ mod tests {
             identity: Tri::No,
             unique: Tri::No,
             default: DefaultOrigin::None,
+            default_value: None,
             enumeration: None,
         }
     }

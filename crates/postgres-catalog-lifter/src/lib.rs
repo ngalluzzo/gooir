@@ -173,6 +173,7 @@ pub fn lift(catalog: Catalog) -> Defeasible<DataModel> {
                 ),
                 // A catalog sees store-side defaults only. Absence of one is not
                 // evidence that nothing supplies a value.
+                default_value: None,
                 enumeration: col.enum_name.as_ref().map(|n| Enumeration {
                     name: n.clone(),
                     members: col.enum_members.clone(),

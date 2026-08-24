@@ -374,6 +374,7 @@ mod tests {
             identity: semantics_data_model_v1::Tri::No,
             unique: semantics_data_model_v1::Tri::No,
             default: DefaultOrigin::None,
+            default_value: None,
             enumeration: None,
         }
     }

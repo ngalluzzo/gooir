@@ -1,12 +1,14 @@
 [workspace]
 members = [
     "crates/buzz-protocol-lifter",
+    "crates/app-runtime",
     "crates/buzz-cli-lifter",
     "crates/buzz-relay-lifter",
     "crates/buzz-surface-check",
     "crates/buzz-surface-profile",
     "crates/buzz-surface-projection",
     "crates/data-model-convergence",
+    "crates/entity-spec",
     "crates/gooir-analysis",
     "crates/gooir-core",
     "crates/lift-defeasible",
@@ -34,12 +36,14 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 
 [workspace.dependencies]
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
+app-runtime = { path = "crates/app-runtime" }
 buzz-cli-lifter = { path = "crates/buzz-cli-lifter" }
 buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-check = { path = "crates/buzz-surface-check" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 buzz-surface-projection = { path = "crates/buzz-surface-projection" }
 data-model-convergence = { path = "crates/data-model-convergence" }
+entity-spec = { path = "crates/entity-spec" }
 gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-core = { path = "crates/gooir-core" }
 lift-defeasible = { path = "crates/lift-defeasible" }

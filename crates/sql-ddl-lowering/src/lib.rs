@@ -57,6 +57,29 @@ fn sql_type(ty: FieldType) -> Option<&'static str> {
 
 /// A store-side default the waist knows exists but cannot describe. The
 /// expression is a stand-in chosen to be valid for the column's domain.
+/// Renders an authored default as a SQL literal for the column's domain.
+/// A bare `now` / `current_date` style token is passed through as a call.
+fn store_literal(value: &str, ty: FieldType, list: bool) -> String {
+    const CALLS: [&str; 4] = ["now", "current_date", "current_time", "current_timestamp"];
+    if CALLS.contains(&value.to_lowercase().as_str()) {
+        return match value.to_lowercase().as_str() {
+            "now" => "now()".to_owned(),
+            other => other.to_uppercase(),
+        };
+    }
+    if list {
+        return placeholder_default(ty, true);
+    }
+    match ty {
+        FieldType::Scalar(ScalarType::Integer)
+        | FieldType::Scalar(ScalarType::BigInteger)
+        | FieldType::Scalar(ScalarType::Float)
+        | FieldType::Scalar(ScalarType::Decimal) => value.to_owned(),
+        FieldType::Scalar(ScalarType::Boolean) => value.to_lowercase(),
+        _ => format!("'{}'", value.replace('\'', "''")),
+    }
+}
+
 fn placeholder_default(ty: FieldType, list: bool) -> String {
     let base = placeholder_scalar(ty);
     if !list {
@@ -99,12 +122,25 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
             s.push_str(" NOT NULL");
         }
         if field.default == DefaultOrigin::Database {
-            out.lossy.push(Lossy {
-                subject: format!("{entity}.{}", field.name),
-                detail: "a store-side default exists but the waist carries no expression"
-                    .to_owned(),
-            });
-            let first = e.members.first().cloned().unwrap_or_default();
+            let chosen = match field.default_value.as_deref() {
+                Some(v) if e.members.iter().any(|m| m == v) => v.to_owned(),
+                Some(v) => {
+                    out.lossy.push(Lossy {
+                        subject: format!("{entity}.{}", field.name),
+                        detail: format!("default `{v}` is not a member of `{}`", e.name),
+                    });
+                    e.members.first().cloned().unwrap_or_default()
+                }
+                None => {
+                    out.lossy.push(Lossy {
+                        subject: format!("{entity}.{}", field.name),
+                        detail: "a store-side default exists but the waist carries no expression"
+                            .to_owned(),
+                    });
+                    e.members.first().cloned().unwrap_or_default()
+                }
+            };
+            let first = chosen;
             let lit = format!("'{}'::{}", first.replace('\'', "''"), quote(&e.name));
             let _ = write!(
                 s,
@@ -151,14 +187,19 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
     }
 
     match field.default {
-        DefaultOrigin::Database => {
-            out.lossy.push(Lossy {
-                subject: format!("{entity}.{}", field.name),
-                detail: "a store-side default exists but the waist carries no expression"
-                    .to_owned(),
-            });
-            let _ = write!(s, " DEFAULT {}", placeholder_default(field.ty, field.list));
-        }
+        DefaultOrigin::Database => match field.default_value.as_deref() {
+            Some(v) => {
+                let _ = write!(s, " DEFAULT {}", store_literal(v, field.ty, field.list));
+            }
+            None => {
+                out.lossy.push(Lossy {
+                    subject: format!("{entity}.{}", field.name),
+                    detail: "a store-side default exists but the waist carries no expression"
+                        .to_owned(),
+                });
+                let _ = write!(s, " DEFAULT {}", placeholder_default(field.ty, field.list));
+            }
+        },
         // An application-side default is not a store default. Emitting one would
         // move the fact to a layer that did not claim it.
         DefaultOrigin::Application | DefaultOrigin::None | DefaultOrigin::Unknown => {}
@@ -335,6 +376,7 @@ mod tests {
             identity: semantics_data_model_v1::Tri::No,
             unique: semantics_data_model_v1::Tri::No,
             default: DefaultOrigin::None,
+            default_value: None,
             enumeration: None,
         }
     }
