@@ -26,6 +26,31 @@ Target packs and distributions
   compatible lowerings, runtimes, defaults, coherent UX
 ```
 
+## Capability composition
+
+A capability is a separately versioned typed promise: exact required fact
+types, exact produced fact types, coverage acceptance, and a named conformance
+suite. Capabilities form directed hyperedges because one derivation may require
+several independent semantic facts. The generic registry may plan and execute
+those edges without learning what any fact means.
+
+Capabilities are not protocols. An in-process call, ACP session, HTTP service,
+external compiler, or durable Fleetd worker may provide the same capability.
+The protocol handles transport and lifecycle. A concrete work contract binds
+one invocation to exact facts, authority, expected outputs, ownership, and
+acceptance checks. An agent session is therefore a domain-specific composition
+of lifecycle and communication capabilities, not a microkernel concept.
+
+Provider registration establishes availability only. It does not establish
+conformance or trust. Coverage and trust remain distinct: a complete produced
+fact reports no unresolved defeat under the provider's mechanism, while
+admission still requires evidence bound to the exact provider, implementation,
+suite, inputs, and output. A providerless edge remains visible as a typed
+capability need so an orchestrator can acquire an implementation without
+changing semantic meaning.
+
+See [decision 0011](DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
+
 ## Multiple semantic waists
 
 GOOIR does not flatten every software domain into one universal semantic

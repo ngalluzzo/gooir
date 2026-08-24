@@ -11,9 +11,11 @@ members = [
     "crates/entity-spec",
     "crates/fleetd-control-lifter",
     "crates/fleetd-control-projection",
+    "crates/fleetd-capability-pack",
     "crates/fleetd-interaction-plan",
     "crates/fleetd-surface-lowering",
     "crates/gooir-analysis",
+    "crates/gooir-capability",
     "crates/gooir-core",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
@@ -51,9 +53,11 @@ data-model-convergence = { path = "crates/data-model-convergence" }
 entity-spec = { path = "crates/entity-spec" }
 fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }
 fleetd-control-projection = { path = "crates/fleetd-control-projection" }
+fleetd-capability-pack = { path = "crates/fleetd-capability-pack" }
 fleetd-interaction-plan = { path = "crates/fleetd-interaction-plan" }
 fleetd-surface-lowering = { path = "crates/fleetd-surface-lowering" }
 gooir-analysis = { path = "crates/gooir-analysis" }
+gooir-capability = { path = "crates/gooir-capability" }
 gooir-core = { path = "crates/gooir-core" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"

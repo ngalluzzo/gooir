@@ -33,3 +33,15 @@ Have the Buzz agent team implement one verified missing edge. Re-lift and show t
 ## GOOIR-004 — Import a non-Buzz authority
 
 Lift one mature external semantic model such as Prisma DMMF or Smithy, bridge a narrow subset into shared contracts, analyze it, and delegate generation/execution back to the authoritative toolchain.
+
+## Experimental — Capability-planned Fleetd dogfood
+
+Status: first in-process derivation and providerless need implemented on
+`gooir-capability-planner-v0`.
+
+The generic registry reconstructs the existing Fleetd multi-dialect pipeline
+from exact typed capability edges and executes the web and terminal targets
+with full fact derivation provenance. A declared but unimplemented runnable-web
+edge becomes a machine-readable capability need. The next milestone is to have
+Fleetd turn that need into a durable, provider-neutral work contract and admit
+the result through explicit checks.

@@ -56,6 +56,19 @@ The command resolves Fleetd's exact Git revision, refuses modified source
 inputs, and reads its generated OpenAPI plus the Rust guards and resolution
 implementation. See [decision 0010](docs/DECISIONS/0010_FLEETD_MULTI_DIALECT_DOGFOOD.md).
 
+The same derivation now runs through the experimental capability registry:
+
+```bash
+cargo run -q -p fleetd-capability-pack --bin fleetd-capability-check -- \
+  /path/to/fleetd
+```
+
+The registry discovers and executes the web and terminal routes, preserves
+fact-level derivation provenance, and emits the missing runnable-web provider
+as a machine-readable capability need. Capability meaning is independent of
+whether a later provider is an in-process pass, external compiler, or agent.
+See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
+
 ## Development
 
 ```bash

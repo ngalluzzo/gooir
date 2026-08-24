@@ -1,0 +1,24 @@
+[package]
+name = "fleetd-capability-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fleetd-control-lifter.workspace = true
+fleetd-control-projection.workspace = true
+fleetd-interaction-plan.workspace = true
+fleetd-surface-lowering.workspace = true
+gooir-capability.workspace = true
+lift-defeasible.workspace = true
+openapi-lifter.workspace = true
+semantics-data-model-v1.workspace = true
+semantics-fleetd-control-v0.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[[bin]]
+name = "fleetd-capability-check"
+path = "src/main.rs"
+
