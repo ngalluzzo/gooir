@@ -8,9 +8,10 @@ use std::{fs, path::PathBuf};
 
 use gooir_capability::{CapabilityRegistry, DerivationPlan, FactInstance, FactType};
 use gooir_datamodel_pack::{
-    OpenApiArtifact, SqlArtifact, authored_entity_spec_fact, authored_fact, data_model_fact,
-    openapi_surface_fact, postgres_ddl_fact, register, typescript_types_fact,
+    authored_entity_spec_fact, authored_fact, data_model_fact, openapi_surface_fact,
+    postgres_ddl_fact, register, typescript_types_fact,
 };
+use lift_defeasible::Defeasible;
 
 fn main() {
     if let Err(error) = run() {
@@ -102,24 +103,24 @@ fn report(
     println!("   facts      {} in the chain", report.facts.len());
 
     if produced.fact_type == postgres_ddl_fact() {
-        let artifact: SqlArtifact =
+        let artifact: Defeasible<String> =
             serde_json::from_value(produced.payload.clone()).map_err(|e| e.to_string())?;
-        let tables = artifact.ddl.matches("CREATE TABLE").count();
-        let types = artifact.ddl.matches("CREATE TYPE").count();
-        let keys = artifact.ddl.matches("FOREIGN KEY").count();
+        let tables = artifact.value.matches("CREATE TABLE").count();
+        let types = artifact.value.matches("CREATE TYPE").count();
+        let keys = artifact.value.matches("FOREIGN KEY").count();
         println!(
             "   artifact   {} bytes: {tables} table(s), {types} enum type(s), {keys} foreign key(s)",
-            artifact.ddl.len()
+            artifact.value.len()
         );
     }
     if produced.fact_type == openapi_surface_fact() {
-        let artifact: OpenApiArtifact =
+        let artifact: Defeasible<serde_json::Value> =
             serde_json::from_value(produced.payload.clone()).map_err(|e| e.to_string())?;
-        let paths = artifact.document["paths"]
+        let paths = artifact.value["paths"]
             .as_object()
             .map(|p| p.len())
             .unwrap_or(0);
-        let schemas = artifact.document["components"]["schemas"]
+        let schemas = artifact.value["components"]["schemas"]
             .as_object()
             .map(|s| s.len())
             .unwrap_or(0);

@@ -48,7 +48,7 @@ fn collect_refs(v: &Value, out: &mut BTreeSet<String>) {
 #[test]
 fn every_reference_in_the_emitted_document_resolves() {
     for app in APPS {
-        let doc = openapi_lowering::lower_to_openapi(&waist(app)).document;
+        let doc = openapi_lowering::lower_to_openapi(&waist(app)).value;
         let schemas = doc["components"]["schemas"]
             .as_object()
             .expect("schemas object");
@@ -67,7 +67,7 @@ fn every_reference_in_the_emitted_document_resolves() {
 #[test]
 fn every_required_property_exists_and_operation_ids_are_unique() {
     for app in APPS {
-        let doc = openapi_lowering::lower_to_openapi(&waist(app)).document;
+        let doc = openapi_lowering::lower_to_openapi(&waist(app)).value;
         for (name, schema) in doc["components"]["schemas"].as_object().unwrap() {
             let props = schema.get("properties").and_then(Value::as_object);
             for r in schema
@@ -106,7 +106,7 @@ fn a_create_request_never_requires_a_server_supplied_value() {
     use semantics_data_model_v1::{DefaultOrigin, Presence};
     for app in APPS {
         let w = waist(app);
-        let doc = openapi_lowering::lower_to_openapi(&w).document;
+        let doc = openapi_lowering::lower_to_openapi(&w).value;
         for e in &w.entities {
             let create = &doc["components"]["schemas"][format!("{}Create", e.name)];
             let required: Vec<&str> = create
@@ -152,7 +152,7 @@ fn what_the_target_cannot_express_returns_unknown_not_a_wrong_answer() {
     use semantics_data_model_v1::{DefaultOrigin, Tri};
     for app in APPS {
         let w1 = waist(app);
-        let doc = openapi_lowering::lower_to_openapi(&w1).document;
+        let doc = openapi_lowering::lower_to_openapi(&w1).value;
         let w2 = openapi_lifter::lift_document(&doc);
 
         for e in &w2.value.entities {
@@ -181,7 +181,7 @@ fn shapes_and_domains_survive_the_document_round_trip() {
     let mut compared = 0usize;
     for app in APPS {
         let w1 = waist(app);
-        let doc = openapi_lowering::lower_to_openapi(&w1).document;
+        let doc = openapi_lowering::lower_to_openapi(&w1).value;
         let w2 = openapi_lifter::lift_document(&doc);
         let r = compare(&w1, &w2.value);
 

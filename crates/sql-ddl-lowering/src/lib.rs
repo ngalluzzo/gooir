@@ -8,26 +8,18 @@
 
 use std::fmt::Write as _;
 
+use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::{
     DataModel, DefaultOrigin, FieldShape, FieldType, Presence, ScalarType,
 };
+
+/// Identity of the defeater set applied by this lowering.
+pub const DEFEATER_SET: &str = "org.gooi.lowering.sql_ddl.postgres/defeaters@1";
 
 pub const LOWERING_ID: &str = "org.gooi.lowering.sql_ddl.postgres@1";
 
 /// Fallback type name for an enumeration whose name the waist did not carry.
 pub const ENUM_FALLBACK: &str = "gooi_enumeration";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Lossy {
-    pub subject: String,
-    pub detail: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Lowered {
-    pub ddl: String,
-    pub lossy: Vec<Lossy>,
-}
 
 fn quote(ident: &str) -> String {
     format!("\"{}\"", ident.replace('"', "\"\""))
@@ -111,7 +103,7 @@ fn placeholder_scalar(ty: FieldType) -> &'static str {
     }
 }
 
-fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String> {
+fn column(field: &FieldShape, out: &mut Defeasible<String>, entity: &str) -> Option<String> {
     if let Some(e) = field.enumeration.as_ref().filter(|e| !e.members.is_empty()) {
         let mut ty = quote(&e.name);
         if field.list {
@@ -125,18 +117,20 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
             let chosen = match field.default_value.as_deref() {
                 Some(v) if e.members.iter().any(|m| m == v) => v.to_owned(),
                 Some(v) => {
-                    out.lossy.push(Lossy {
-                        subject: format!("{entity}.{}", field.name),
-                        detail: format!("default `{v}` is not a member of `{}`", e.name),
-                    });
+                    out.defeat(Defeat::new(
+                        DefeatKind::LookedAndBlocked,
+                        format!("{entity}.{}", field.name),
+                        format!("default `{v}` is not a member of `{}`", e.name),
+                    ));
                     e.members.first().cloned().unwrap_or_default()
                 }
                 None => {
-                    out.lossy.push(Lossy {
-                        subject: format!("{entity}.{}", field.name),
-                        detail: "a store-side default exists but the waist carries no expression"
+                    out.defeat(Defeat::new(
+                        DefeatKind::LookedAndBlocked,
+                        format!("{entity}.{}", field.name),
+                        "a store-side default exists but the waist carries no expression"
                             .to_owned(),
-                    });
+                    ));
                     e.members.first().cloned().unwrap_or_default()
                 }
             };
@@ -155,10 +149,11 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
         return Some(s);
     }
     let Some(base) = sql_type(field.ty) else {
-        out.lossy.push(Lossy {
-            subject: format!("{entity}.{}", field.name),
-            detail: "field type is unknown and has no store representation".to_owned(),
-        });
+        out.defeat(Defeat::new(
+            DefeatKind::LookedAndBlocked,
+            format!("{entity}.{}", field.name),
+            "field type is unknown and has no store representation".to_owned(),
+        ));
         return None;
     };
     let mut ty = base.to_owned();
@@ -172,17 +167,19 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
     match field.nullable {
         Presence::Required if !field.list => s.push_str(" NOT NULL"),
         Presence::Required => {
-            out.lossy.push(Lossy {
-                subject: format!("{entity}.{}", field.name),
-                detail: "list field declared required; stores model absence as NULL".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::AuthorityCannotExpress,
+                format!("{entity}.{}", field.name),
+                "list field declared required; stores model absence as NULL".to_owned(),
+            ));
         }
         Presence::Optional => {}
         Presence::Unknown => {
-            out.lossy.push(Lossy {
-                subject: format!("{entity}.{}", field.name),
-                detail: "presence was not established by the source authority".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::LookedAndBlocked,
+                format!("{entity}.{}", field.name),
+                "presence was not established by the source authority".to_owned(),
+            ));
         }
     }
 
@@ -192,11 +189,11 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
                 let _ = write!(s, " DEFAULT {}", store_literal(v, field.ty, field.list));
             }
             None => {
-                out.lossy.push(Lossy {
-                    subject: format!("{entity}.{}", field.name),
-                    detail: "a store-side default exists but the waist carries no expression"
-                        .to_owned(),
-                });
+                out.defeat(Defeat::new(
+                    DefeatKind::LookedAndBlocked,
+                    format!("{entity}.{}", field.name),
+                    "a store-side default exists but the waist carries no expression".to_owned(),
+                ));
                 let _ = write!(s, " DEFAULT {}", placeholder_default(field.ty, field.list));
             }
         },
@@ -207,8 +204,8 @@ fn column(field: &FieldShape, out: &mut Lowered, entity: &str) -> Option<String>
     Some(s)
 }
 
-pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
-    let mut out = Lowered::default();
+pub fn lower_to_postgres_ddl(model: &DataModel) -> Defeasible<String> {
+    let mut out = Defeasible::new(<String>::default(), DEFEATER_SET);
     let mut s = String::new();
 
     writeln!(s, "-- generated by {LOWERING_ID}").expect("string write");
@@ -223,11 +220,11 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
                 seen_enums.insert(e.name.clone(), e.members.clone());
             }
             _ => {
-                out.lossy.push(Lossy {
-                    subject: "enumeration".to_owned(),
-                    detail: "an enumeration arrived without members; a placeholder is emitted"
-                        .to_owned(),
-                });
+                out.defeat(Defeat::new(
+                    DefeatKind::LookedAndBlocked,
+                    "enumeration".to_owned(),
+                    "an enumeration arrived without members; a placeholder is emitted".to_owned(),
+                ));
                 seen_enums
                     .entry(ENUM_FALLBACK.to_owned())
                     .or_insert_with(|| vec!["PLACEHOLDER".to_owned()]);
@@ -267,10 +264,11 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
         if !identity.is_empty() {
             parts.push(format!("  PRIMARY KEY ({})", identity.join(", ")));
         } else {
-            out.lossy.push(Lossy {
-                subject: e.name.clone(),
-                detail: "no identity field; the table is emitted without a primary key".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::SubjectUnresolvable,
+                e.name.clone(),
+                "no identity field; the table is emitted without a primary key".to_owned(),
+            ));
         }
         writeln!(s, "{}\n);", parts.join(",\n")).expect("string write");
     }
@@ -305,10 +303,11 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
 
     for (i, rel) in model.relations.iter().enumerate() {
         let Some(from) = model.entity(&rel.from_entity) else {
-            out.lossy.push(Lossy {
-                subject: format!("{} -> {}", rel.from_entity, rel.to_entity),
-                detail: "relation source entity is absent".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::SubjectUnresolvable,
+                format!("{} -> {}", rel.from_entity, rel.to_entity),
+                "relation source entity is absent".to_owned(),
+            ));
             continue;
         };
         let missing: Vec<&String> = rel
@@ -317,10 +316,11 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
             .filter(|c| from.field(c).is_none())
             .collect();
         if !missing.is_empty() {
-            out.lossy.push(Lossy {
-                subject: format!("{} -> {}", rel.from_entity, rel.to_entity),
-                detail: format!("relation names fields absent from its entity: {missing:?}"),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::SubjectUnresolvable,
+                format!("{} -> {}", rel.from_entity, rel.to_entity),
+                format!("relation names fields absent from its entity: {missing:?}"),
+            ));
             continue;
         }
         let to_cols: Vec<String> = if rel.to_fields.is_empty() {
@@ -338,10 +338,11 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
             rel.to_fields.clone()
         };
         if to_cols.is_empty() {
-            out.lossy.push(Lossy {
-                subject: format!("{} -> {}", rel.from_entity, rel.to_entity),
-                detail: "no referenced columns and no identity on the target".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::SubjectUnresolvable,
+                format!("{} -> {}", rel.from_entity, rel.to_entity),
+                "no referenced columns and no identity on the target".to_owned(),
+            ));
             continue;
         }
         let from_cols: Vec<String> = rel.from_fields.iter().map(|c| quote(c)).collect();
@@ -358,7 +359,7 @@ pub fn lower_to_postgres_ddl(model: &DataModel) -> Lowered {
         .expect("string write");
     }
 
-    out.ddl = s;
+    out.value = s;
     out
 }
 
@@ -394,9 +395,9 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_postgres_ddl(&m);
-        assert!(out.ddl.contains("CREATE TABLE \"EnvelopeItem\" ("));
-        assert!(out.ddl.contains("\"id\" uuid NOT NULL"));
-        assert!(out.ddl.contains("PRIMARY KEY (\"id\")"));
+        assert!(out.value.contains("CREATE TABLE \"EnvelopeItem\" ("));
+        assert!(out.value.contains("\"id\" uuid NOT NULL"));
+        assert!(out.value.contains("PRIMARY KEY (\"id\")"));
     }
 
     #[test]
@@ -424,8 +425,8 @@ mod tests {
             }],
         };
         let out = lower_to_postgres_ddl(&m);
-        let create_b = out.ddl.find("CREATE TABLE \"b\"").expect("table b");
-        let alter = out.ddl.find("ALTER TABLE \"b\"").expect("fk");
+        let create_b = out.value.find("CREATE TABLE \"b\"").expect("table b");
+        let alter = out.value.find("ALTER TABLE \"b\"").expect("fk");
         assert!(alter > create_b, "constraints must follow table creation");
     }
 
@@ -443,7 +444,7 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_postgres_ddl(&m);
-        assert!(!out.ddl.contains("DEFAULT"), "{}", out.ddl);
+        assert!(!out.value.contains("DEFAULT"), "{}", out.value);
     }
 
     #[test]
@@ -460,15 +461,15 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_postgres_ddl(&m);
-        assert!(out.ddl.contains("PRIMARY KEY (\"id\")"));
+        assert!(out.value.contains("PRIMARY KEY (\"id\")"));
         // An explicit index survives alongside the primary key; an inline
         // UNIQUE constraint would be folded away by PostgreSQL.
         assert!(
-            out.ddl.contains("CREATE UNIQUE INDEX"),
+            out.value.contains("CREATE UNIQUE INDEX"),
             "a declared constraint must not be dropped as redundant: {}",
-            out.ddl
+            out.value
         );
-        assert!(!out.ddl.contains("  UNIQUE ("), "{}", out.ddl);
+        assert!(!out.value.contains("  UNIQUE ("), "{}", out.value);
     }
 
     #[test]
@@ -485,8 +486,8 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_postgres_ddl(&m);
-        assert!(out.ddl.contains("'{}'::text[]"), "{}", out.ddl);
-        assert!(!out.ddl.contains("''::text "), "{}", out.ddl);
+        assert!(out.value.contains("'{}'::text[]"), "{}", out.value);
+        assert!(!out.value.contains("''::text "), "{}", out.value);
     }
 
     #[test]
@@ -502,12 +503,12 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_postgres_ddl(&m);
-        assert!(out.ddl.contains("\"tags\" text[]"));
-        assert!(!out.ddl.contains("text[] NOT NULL"));
+        assert!(out.value.contains("\"tags\" text[]"));
+        assert!(!out.value.contains("text[] NOT NULL"));
         assert!(
-            out.lossy
+            out.defeats
                 .iter()
-                .any(|l| l.detail.contains("absence as NULL"))
+                .any(|d| d.reason.contains("absence as NULL"))
         );
     }
 }

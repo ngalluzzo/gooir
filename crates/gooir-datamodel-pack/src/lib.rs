@@ -20,7 +20,6 @@ use gooir_capability::{
 use lift_defeasible::Defeasible;
 use semantics_data_model_v1::DataModel;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 pub const PACK_VERSION: &str = "0.1.0";
@@ -87,27 +86,6 @@ pub struct AuthoredSpec {
     pub text: String,
 }
 
-/// What a lowering could not supply from the waist. Mirrored here because the
-/// lowering crates deliberately do not depend on serialization.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct LossyRecord {
-    pub subject: String,
-    pub detail: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SqlArtifact {
-    pub dialect: String,
-    pub ddl: String,
-    pub lossy: Vec<LossyRecord>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct OpenApiArtifact {
-    pub document: Value,
-    pub lossy: Vec<LossyRecord>,
-}
-
 // ----------------------------------------------------------------- providers
 
 struct AuthoredSpecProvider;
@@ -145,25 +123,13 @@ impl CapabilityProvider for PostgresDdlProvider {
         inputs: &[FactInstance],
     ) -> Result<Vec<ProducedFact>, String> {
         let model: Defeasible<DataModel> = input(inputs, &data_model_fact())?;
+        // The lowering already reports what it could not carry, in the same
+        // shape every lift uses. There is nothing left to translate.
         let lowered = sql_ddl_lowering::lower_to_postgres_ddl(&model.value);
-        let lossy: Vec<LossyRecord> = lowered
-            .lossy
-            .iter()
-            .map(|l| LossyRecord {
-                subject: l.subject.clone(),
-                detail: l.detail.clone(),
-            })
-            .collect();
-        let artifact = SqlArtifact {
-            dialect: "postgresql".to_owned(),
-            ddl: lowered.ddl,
-            lossy,
-        };
-        let complete = artifact.lossy.is_empty();
         Ok(vec![produced(
             postgres_ddl_fact(),
-            coverage(complete),
-            &artifact,
+            coverage(lowered.is_exhaustive()),
+            &lowered,
         )?])
     }
 }
@@ -182,23 +148,10 @@ impl CapabilityProvider for OpenApiSurfaceProvider {
     ) -> Result<Vec<ProducedFact>, String> {
         let model: Defeasible<DataModel> = input(inputs, &data_model_fact())?;
         let lowered = openapi_lowering::lower_to_openapi(&model.value);
-        let lossy: Vec<LossyRecord> = lowered
-            .lossy
-            .iter()
-            .map(|l| LossyRecord {
-                subject: l.subject.clone(),
-                detail: l.detail.clone(),
-            })
-            .collect();
-        let artifact = OpenApiArtifact {
-            document: lowered.document,
-            lossy,
-        };
-        let complete = artifact.lossy.is_empty();
         Ok(vec![produced(
             openapi_surface_fact(),
-            coverage(complete),
-            &artifact,
+            coverage(lowered.is_exhaustive()),
+            &lowered,
         )?])
     }
 }

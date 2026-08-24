@@ -8,9 +8,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::{
     DataModel, DefaultOrigin, EntityShape, FieldShape, FieldType, Presence, ScalarType,
 };
+
+/// Identity of the defeater set applied by this lowering.
+pub const DEFEATER_SET: &str = "org.gooi.lowering.prisma_schema/defeaters@1";
 
 pub const LOWERING_ID: &str = "org.gooi.lowering.prisma_schema@1";
 
@@ -18,21 +22,6 @@ pub const LOWERING_ID: &str = "org.gooi.lowering.prisma_schema@1";
 pub const ENUM_FALLBACK: &str = "GooiEnumeration";
 
 /// Something the waist could not supply, which the target requires.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Lossy {
-    pub subject: String,
-    pub detail: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Lowered {
-    pub source: String,
-    /// What had to be filled in because the waist does not carry it. A non-empty
-    /// list means this output is round-trip-stable but not faithful to whatever
-    /// the model was originally lifted from.
-    pub lossy: Vec<Lossy>,
-}
-
 fn prisma_type(ty: FieldType) -> Option<&'static str> {
     Some(match ty {
         FieldType::Scalar(s) => match s {
@@ -109,8 +98,8 @@ fn back_reference(target_of: &str, index: usize) -> String {
     }
 }
 
-pub fn lower_to_prisma(model: &DataModel) -> Lowered {
-    let mut out = Lowered::default();
+pub fn lower_to_prisma(model: &DataModel) -> Defeasible<String> {
+    let mut out = Defeasible::new(<String>::default(), DEFEATER_SET);
     let naming = Naming::build(model);
     let mut s = String::new();
 
@@ -131,11 +120,11 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
                 seen_enums.insert(e.name.clone(), e.members.clone());
             }
             _ => {
-                out.lossy.push(Lossy {
-                    subject: "enumeration".to_owned(),
-                    detail: "an enumeration arrived without members; a placeholder is emitted"
-                        .to_owned(),
-                });
+                out.defeat(Defeat::new(
+                    DefeatKind::LookedAndBlocked,
+                    "enumeration".to_owned(),
+                    "an enumeration arrived without members; a placeholder is emitted".to_owned(),
+                ));
                 seen_enums
                     .entry(ENUM_FALLBACK.to_owned())
                     .or_insert_with(|| vec!["PLACEHOLDER".to_owned()]);
@@ -154,10 +143,11 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
     let mut inverses: BTreeMap<String, Vec<(String, bool)>> = BTreeMap::new();
     for (i, rel) in model.relations.iter().enumerate() {
         let Some(from) = model.entity(&rel.from_entity) else {
-            out.lossy.push(Lossy {
-                subject: format!("{} -> {}", rel.from_entity, rel.to_entity),
-                detail: "relation source entity is absent from the model".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::SubjectUnresolvable,
+                format!("{} -> {}", rel.from_entity, rel.to_entity),
+                "relation source entity is absent from the model".to_owned(),
+            ));
             continue;
         };
         // Cardinality is read off the waist: a unique foreign key is one-to-one.
@@ -207,10 +197,11 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
                 rel.to_fields.clone()
             };
             if refs.is_empty() {
-                out.lossy.push(Lossy {
-                    subject: format!("{} -> {}", rel.from_entity, rel.to_entity),
-                    detail: "no referenced fields and no identity on the target".to_owned(),
-                });
+                out.defeat(Defeat::new(
+                    DefeatKind::SubjectUnresolvable,
+                    format!("{} -> {}", rel.from_entity, rel.to_entity),
+                    "no referenced fields and no identity on the target".to_owned(),
+                ));
                 continue;
             }
             let name = format!("{}Rel{i}", lower_first(&target));
@@ -255,7 +246,7 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
         writeln!(s, "}}\n").expect("string write");
     }
 
-    out.source = s;
+    out.value = s;
     out
 }
 
@@ -296,7 +287,7 @@ fn emit_field(
     entity: &EntityShape,
     field: &FieldShape,
     compound_id: bool,
-    out: &mut Lowered,
+    out: &mut Defeasible<String>,
 ) {
     let enum_name = field
         .enumeration
@@ -304,10 +295,11 @@ fn emit_field(
         .filter(|e| !e.members.is_empty())
         .map(|e| e.name.clone());
     let Some(base) = enum_name.as_deref().or_else(|| prisma_type(field.ty)) else {
-        out.lossy.push(Lossy {
-            subject: format!("{}.{}", entity.name, field.name),
-            detail: "field type is unknown and has no target representation".to_owned(),
-        });
+        out.defeat(Defeat::new(
+            DefeatKind::LookedAndBlocked,
+            format!("{}.{}", entity.name, field.name),
+            "field type is unknown and has no target representation".to_owned(),
+        ));
         return;
     };
     let ident = legal_identifier(&field.name);
@@ -331,18 +323,20 @@ fn emit_field(
         DefaultOrigin::None => {}
         DefaultOrigin::Application => attrs.push("@default(cuid())".to_owned()),
         DefaultOrigin::Database => {
-            out.lossy.push(Lossy {
-                subject: format!("{}.{}", entity.name, field.name),
-                detail: "a store-side default exists but the waist does not carry its expression"
+            out.defeat(Defeat::new(
+                DefeatKind::LookedAndBlocked,
+                format!("{}.{}", entity.name, field.name),
+                "a store-side default exists but the waist does not carry its expression"
                     .to_owned(),
-            });
+            ));
             attrs.push("@default(dbgenerated(\"__unspecified__\"))".to_owned());
         }
         DefaultOrigin::Unknown => {
-            out.lossy.push(Lossy {
-                subject: format!("{}.{}", entity.name, field.name),
-                detail: "the source authority could not see whether a default exists".to_owned(),
-            });
+            out.defeat(Defeat::new(
+                DefeatKind::LookedAndBlocked,
+                format!("{}.{}", entity.name, field.name),
+                "the source authority could not see whether a default exists".to_owned(),
+            ));
         }
     }
     if field.ty == FieldType::Scalar(ScalarType::Uuid) {
@@ -392,9 +386,9 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_prisma(&m);
-        assert!(out.source.contains("model User {"));
-        assert!(out.source.contains("id String @id"));
-        assert!(out.lossy.is_empty());
+        assert!(out.value.contains("model User {"));
+        assert!(out.value.contains("id String @id"));
+        assert!(out.is_exhaustive());
     }
 
     #[test]
@@ -408,8 +402,8 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_prisma(&m);
-        assert!(out.source.contains("model JoinTable {"));
-        assert!(out.source.contains("@@map(\"_JoinTable\")"));
+        assert!(out.value.contains("model JoinTable {"));
+        assert!(out.value.contains("@@map(\"_JoinTable\")"));
     }
 
     #[test]
@@ -425,6 +419,6 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_prisma(&m);
-        assert!(out.lossy.iter().any(|l| l.detail.contains("expression")));
+        assert!(out.defeats.iter().any(|d| d.reason.contains("expression")));
     }
 }

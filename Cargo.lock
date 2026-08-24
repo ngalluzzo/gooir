@@ -426,6 +426,7 @@ dependencies = [
 name = "openapi-lowering"
 version = "0.1.0"
 dependencies = [
+ "lift-defeasible",
  "semantics-data-model-v1",
  "serde_json",
 ]
@@ -631,6 +632,7 @@ dependencies = [
 name = "sql-ddl-lowering"
 version = "0.1.0"
 dependencies = [
+ "lift-defeasible",
  "semantics-data-model-v1",
 ]
 

@@ -11,24 +11,16 @@
 //! wraps a page. That shaping is identical for every entity, which is precisely
 //! the repetitive work worth generating.
 
+use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::{
     DataModel, DefaultOrigin, EntityShape, FieldShape, FieldType, Presence, ScalarType,
 };
 use serde_json::{Map, Value, json};
 
+/// Identity of the defeater set applied by this lowering.
+pub const DEFEATER_SET: &str = "org.gooi.lowering.openapi/defeaters@1";
+
 pub const LOWERING_ID: &str = "org.gooi.lowering.openapi@1";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Lossy {
-    pub subject: String,
-    pub detail: String,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Lowered {
-    pub document: Value,
-    pub lossy: Vec<Lossy>,
-}
 
 /// JSON Schema for one neutral domain. OpenAPI 3.1 permits a type array, so
 /// nullability is expressed without a vendor keyword.
@@ -42,6 +34,7 @@ fn json_type(ty: FieldType, out: &mut LossySink, subject: &str) -> Value {
             // A JSON number cannot carry arbitrary precision safely.
             ScalarType::Decimal => {
                 out.push(
+                    DefeatKind::LookedAndBlocked,
                     subject,
                     "decimal is carried as a string to preserve precision",
                 );
@@ -55,16 +48,25 @@ fn json_type(ty: FieldType, out: &mut LossySink, subject: &str) -> Value {
             ScalarType::Bytes => json!({"type": "string", "contentEncoding": "base64"}),
             ScalarType::Uuid => json!({"type": "string", "format": "uuid"}),
             ScalarType::Enumeration => {
-                out.push(subject, "enumeration members are not carried by the waist");
+                out.push(
+                    DefeatKind::LookedAndBlocked,
+                    subject,
+                    "enumeration members are not carried by the waist",
+                );
                 json!({"type": "string"})
             }
             ScalarType::Other => {
-                out.push(subject, "domain is outside the waist's neutral set");
+                out.push(
+                    DefeatKind::LookedAndBlocked,
+                    subject,
+                    "domain is outside the waist's neutral set",
+                );
                 json!({"type": "string"})
             }
         },
         FieldType::Unknown => {
             out.push(
+                DefeatKind::LookedAndBlocked,
                 subject,
                 "field type is unknown; the schema is unconstrained",
             );
@@ -74,14 +76,11 @@ fn json_type(ty: FieldType, out: &mut LossySink, subject: &str) -> Value {
 }
 
 #[derive(Default)]
-struct LossySink(Vec<Lossy>);
+struct LossySink(Vec<Defeat>);
 
 impl LossySink {
-    fn push(&mut self, subject: &str, detail: &str) {
-        self.0.push(Lossy {
-            subject: subject.to_owned(),
-            detail: detail.to_owned(),
-        });
+    fn push(&mut self, kind: DefeatKind, subject: &str, reason: &str) {
+        self.0.push(Defeat::new(kind, subject, reason));
     }
 }
 
@@ -114,6 +113,7 @@ fn property(field: &FieldShape, sink: &mut LossySink, entity: &str) -> Value {
     }
     if field.nullable == Presence::Unknown {
         sink.push(
+            DefeatKind::LookedAndBlocked,
             &subject,
             "presence was not established by the source authority",
         );
@@ -179,7 +179,8 @@ fn collection_path(entity: &str) -> String {
     format!("/{}", entity)
 }
 
-pub fn lower_to_openapi(model: &DataModel) -> Lowered {
+pub fn lower_to_openapi(model: &DataModel) -> Defeasible<serde_json::Value> {
+    let mut out = Defeasible::new(<serde_json::Value>::default(), DEFEATER_SET);
     let mut sink = LossySink::default();
     let mut schemas = Map::new();
     let mut paths = Map::new();
@@ -191,6 +192,7 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
             enums.insert(e.name.clone(), e.members.clone());
         } else if f.ty == FieldType::Scalar(ScalarType::Enumeration) {
             sink.push(
+                DefeatKind::AuthorityCannotExpress,
                 "enumeration",
                 "an enumeration arrived without members; it degrades to a bare string",
             );
@@ -253,6 +255,7 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
 
         if identity.is_empty() {
             sink.push(
+                DefeatKind::SubjectUnresolvable,
                 name,
                 "no identity field; item routes cannot be addressed and are omitted",
             );
@@ -324,6 +327,7 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
             );
         } else if identity.len() > 1 {
             sink.push(
+                DefeatKind::SubjectUnresolvable,
                 name,
                 "composite identity is not addressable as a single path parameter",
             );
@@ -336,7 +340,11 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
         .iter()
         .any(|e| e.fields.iter().any(|f| f.identity.is_yes()))
     {
-        sink.push("identity", "JSON Schema has no notion of a primary key");
+        sink.push(
+            DefeatKind::AuthorityCannotExpress,
+            "identity",
+            "JSON Schema has no notion of a primary key",
+        );
     }
     if model
         .entities
@@ -344,12 +352,14 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
         .any(|e| e.fields.iter().any(|f| f.unique.is_yes()))
     {
         sink.push(
+            DefeatKind::AuthorityCannotExpress,
             "uniqueness",
             "JSON Schema has no notion of a unique constraint",
         );
     }
     if !model.relations.is_empty() {
         sink.push(
+            DefeatKind::AuthorityCannotExpress,
             "relations",
             "a relation is carried only as its foreign-key property; the edge itself \
              has no representation",
@@ -360,7 +370,11 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
         .iter()
         .any(|e| e.fields.iter().any(|f| f.default != DefaultOrigin::None))
     {
-        sink.push("defaults", "the origin of a default has no representation");
+        sink.push(
+            DefeatKind::AuthorityCannotExpress,
+            "defaults",
+            "the origin of a default has no representation",
+        );
     }
 
     let document = json!({
@@ -371,10 +385,9 @@ pub fn lower_to_openapi(model: &DataModel) -> Lowered {
         "components": {"schemas": Value::Object(schemas)}
     });
 
-    Lowered {
-        document,
-        lossy: sink.0,
-    }
+    out.value = document;
+    out.defeats = sink.0;
+    out
 }
 
 #[cfg(test)]
@@ -418,15 +431,15 @@ mod tests {
     #[test]
     fn emits_crud_paths_for_an_addressable_entity() {
         let out = lower_to_openapi(&one_entity());
-        let paths = out.document["paths"].as_object().unwrap();
+        let paths = out.value["paths"].as_object().unwrap();
         assert!(paths.contains_key("/User"));
         assert!(paths.contains_key("/User/{id}"));
         assert_eq!(
-            out.document["paths"]["/User"]["get"]["operationId"],
+            out.value["paths"]["/User"]["get"]["operationId"],
             "listUser"
         );
         assert_eq!(
-            out.document["paths"]["/User/{id}"]["delete"]["operationId"],
+            out.value["paths"]["/User/{id}"]["delete"]["operationId"],
             "deleteUser"
         );
     }
@@ -434,7 +447,7 @@ mod tests {
     #[test]
     fn create_drops_server_supplied_fields_and_update_requires_nothing() {
         let out = lower_to_openapi(&one_entity());
-        let create = &out.document["components"]["schemas"]["UserCreate"];
+        let create = &out.value["components"]["schemas"]["UserCreate"];
         assert!(
             create["properties"].get("id").is_none(),
             "server supplies id"
@@ -442,7 +455,7 @@ mod tests {
         assert!(create["properties"].get("email").is_some());
         assert_eq!(create["required"], json!(["email"]));
 
-        let update = &out.document["components"]["schemas"]["UserUpdate"];
+        let update = &out.value["components"]["schemas"]["UserUpdate"];
         assert!(
             update["properties"].get("id").is_none(),
             "identity not updatable"
@@ -453,14 +466,14 @@ mod tests {
     #[test]
     fn an_optional_field_is_nullable_via_a_type_array() {
         let out = lower_to_openapi(&one_entity());
-        let bio = &out.document["components"]["schemas"]["User"]["properties"]["bio"];
+        let bio = &out.value["components"]["schemas"]["User"]["properties"]["bio"];
         assert_eq!(bio["type"], json!(["string", "null"]));
     }
 
     #[test]
     fn facts_the_target_cannot_carry_are_declared() {
         let out = lower_to_openapi(&one_entity());
-        let subjects: Vec<&str> = out.lossy.iter().map(|l| l.subject.as_str()).collect();
+        let subjects: Vec<&str> = out.defeats.iter().map(|d| d.subject.as_str()).collect();
         assert!(subjects.contains(&"identity"));
         assert!(subjects.contains(&"uniqueness"));
         assert!(subjects.contains(&"defaults"));
@@ -477,13 +490,13 @@ mod tests {
             relations: Vec::new(),
         };
         let out = lower_to_openapi(&m);
-        let paths = out.document["paths"].as_object().unwrap();
+        let paths = out.value["paths"].as_object().unwrap();
         assert!(paths.contains_key("/Log"));
         assert_eq!(paths.len(), 1, "no item route without an identity");
         assert!(
-            out.lossy
+            out.defeats
                 .iter()
-                .any(|l| l.detail.contains("cannot be addressed"))
+                .any(|d| d.reason.contains("cannot be addressed"))
         );
     }
 }

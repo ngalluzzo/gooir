@@ -6,4 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+lift-defeasible = { workspace = true }
 semantics-data-model-v1 = { workspace = true }

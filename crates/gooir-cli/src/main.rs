@@ -81,6 +81,42 @@ fn authored_source(path: &PathBuf) -> Result<FactInstance, String> {
 /// gives the exact payload.
 fn print_payload(payload: &serde_json::Value) {
     const TEXT_FIELDS: [&str; 4] = ["ddl", "text", "source", "content"];
+
+    // A generated schema is text. Unwrapping an envelope must not hand it back
+    // as a JSON string with escaped newlines.
+    if let Some(text) = payload.as_str() {
+        println!("{text}");
+        return;
+    }
+
+    // Every fact payload is a defeasible envelope: a value plus what could not
+    // be established. Show the value, then say what was lost, rather than
+    // making a reader dig the artifact out of its own provenance.
+    if let Some(object) = payload
+        .as_object()
+        .filter(|o| o.contains_key("value") && o.contains_key("defeater_set"))
+    {
+        {
+            print_payload(&object["value"]);
+            let defeats = object.get("defeats").and_then(|d| d.as_array());
+            match defeats.map(|d| d.len()).unwrap_or(0) {
+                0 => println!("\nnothing was lost"),
+                n => {
+                    println!("\n{n} thing(s) the target could not carry:");
+                    for defeat in defeats.into_iter().flatten() {
+                        println!(
+                            "  [{}] {}: {}",
+                            defeat["kind"].as_str().unwrap_or("?"),
+                            defeat["subject"].as_str().unwrap_or("?"),
+                            defeat["reason"].as_str().unwrap_or("?")
+                        );
+                    }
+                }
+            }
+            return;
+        }
+    }
+
     if let Some(object) = payload.as_object() {
         for field in TEXT_FIELDS {
             if let Some(text) = object.get(field).and_then(|v| v.as_str()) {

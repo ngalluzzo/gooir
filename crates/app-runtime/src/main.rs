@@ -108,15 +108,14 @@ fn run() -> Result<(), String> {
         db.run("postgres", &format!("create database {dbname};"))?;
     }
     let ddl = sql_ddl_lowering::lower_to_postgres_ddl(&model);
-    for l in &ddl.lossy {
-        eprintln!("  lossy {}: {}", l.subject, l.detail);
+    for d in &ddl.defeats {
+        eprintln!("  {:?} {}: {}", d.kind, d.subject, d.reason);
     }
-    db.query(&ddl.ddl)
+    db.query(&ddl.value)
         .map_err(|e| format!("schema could not be applied:\n{e}"))?;
 
-    let openapi =
-        serde_json::to_string_pretty(&openapi_lowering::lower_to_openapi(&model).document)
-            .unwrap_or_else(|_| "{}".to_owned());
+    let openapi = serde_json::to_string_pretty(&openapi_lowering::lower_to_openapi(&model).value)
+        .unwrap_or_else(|_| "{}".to_owned());
 
     let listener = TcpListener::bind(("127.0.0.1", port))
         .map_err(|e| format!("could not bind port {port}: {e}"))?;

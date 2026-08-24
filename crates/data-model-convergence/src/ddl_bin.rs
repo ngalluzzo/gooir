@@ -26,8 +26,8 @@ fn main() -> Result<(), String> {
         Some("emit") => {
             let app = args.get(1).ok_or("usage: emit <app>")?;
             let lowered = sql_ddl_lowering::lower_to_postgres_ddl(&waist_from_prisma(app));
-            print!("{}", lowered.ddl);
-            eprintln!("lossy records: {}", lowered.lossy.len());
+            print!("{}", lowered.value);
+            eprintln!("lossy records: {}", lowered.defeats.len());
             Ok(())
         }
         Some("emit-spec") => {
@@ -38,8 +38,8 @@ fn main() -> Result<(), String> {
                 eprintln!("defeat [{:?}] {}: {}", d.kind, d.subject, d.reason);
             }
             let lowered = sql_ddl_lowering::lower_to_postgres_ddl(&spec.value);
-            print!("{}", lowered.ddl);
-            eprintln!("lossy records: {}", lowered.lossy.len());
+            print!("{}", lowered.value);
+            eprintln!("lossy records: {}", lowered.defeats.len());
             Ok(())
         }
         Some("compare-spec") => {

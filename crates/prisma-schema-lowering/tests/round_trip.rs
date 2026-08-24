@@ -55,7 +55,7 @@ fn the_waist_survives_a_trip_through_prisma_and_back() {
     for app in APPS {
         let w1 = prisma_schema_lifter::lift_prisma_schema(&fixture(app)).value;
         let lowered = lower_to_prisma(&w1);
-        let w2 = prisma_schema_lifter::lift_prisma_schema(&lowered.source).value;
+        let w2 = prisma_schema_lifter::lift_prisma_schema(&lowered.value).value;
 
         // Guard against a vacuous pass: the comparison surface must be real,
         // and the lowered text must genuinely differ from the source.
@@ -69,7 +69,7 @@ fn the_waist_survives_a_trip_through_prisma_and_back() {
         total_fields += fields;
         total_relations += w1.relations.len();
         assert_ne!(
-            lowered.source.trim(),
+            lowered.value.trim(),
             fixture(app).trim(),
             "{app}: lowering reproduced its input, so the trip proves nothing"
         );
@@ -117,7 +117,7 @@ fn the_lowering_reports_what_the_waist_could_not_supply() {
     let w = prisma_schema_lifter::lift_prisma_schema(&fixture("documenso_documenso")).value;
     let lowered = lower_to_prisma(&w);
     assert!(
-        !lowered.lossy.is_empty(),
+        !lowered.defeats.is_empty(),
         "a lowering from a lossy waist must declare what it filled in"
     );
 }

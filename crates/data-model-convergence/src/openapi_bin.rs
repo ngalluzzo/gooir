@@ -103,12 +103,12 @@ fn main() {
     for app in APPS {
         let w1 = waist(app);
         let lowered = openapi_lowering::lower_to_openapi(&w1);
-        let problems = structural_problems(&lowered.document);
-        let w2 = openapi_lifter::lift_document(&lowered.document);
+        let problems = structural_problems(&lowered.value);
+        let w2 = openapi_lifter::lift_document(&lowered.value);
         let r = compare(&w1, &w2.value);
 
         let ops = lowered
-            .document
+            .value
             .get("paths")
             .and_then(Value::as_object)
             .map(|p| {
@@ -118,7 +118,7 @@ fn main() {
                     .sum::<usize>()
             })
             .unwrap_or(0);
-        let schemas = lowered.document["components"]["schemas"]
+        let schemas = lowered.value["components"]["schemas"]
             .as_object()
             .map(|s| s.len())
             .unwrap_or(0);
@@ -128,7 +128,7 @@ fn main() {
             "   emitted    {} schemas, {} operations, {} bytes",
             schemas,
             ops,
-            serde_json::to_string(&lowered.document)
+            serde_json::to_string(&lowered.value)
                 .map(|s| s.len())
                 .unwrap_or(0)
         );
@@ -170,7 +170,7 @@ fn main() {
         for (k, n) in top.iter().take(6) {
             println!("     {n:>4}x {k}");
         }
-        println!("   lossy      {} declared", lowered.lossy.len());
+        println!("   lossy      {} declared", lowered.defeats.len());
         println!();
     }
 }
