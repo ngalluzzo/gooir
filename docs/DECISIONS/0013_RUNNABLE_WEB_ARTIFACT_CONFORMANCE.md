@@ -48,6 +48,14 @@ The emitted contract asset is the semantic link between target IR and runtime
 UI. The JavaScript adapter may render it, but it may not replace or reinterpret
 it with another hand-written API contract.
 
+An artifact need can also be satisfied after implementation already exists.
+The separately identified `runnable_web_manifest` provider deterministically
+projects a clean Fleetd Git revision and the four served files into this same
+candidate payload. This brownfield projector performs no generation and makes
+no conformance claim; the independent verifier still evaluates the exact
+revision. Thus authored intent and discovered implementation meet at the same
+artifact/admission center rather than requiring separate pipelines.
+
 ## Consequences
 
 - Candidate-authored tests remain useful development feedback but are not

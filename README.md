@@ -92,6 +92,17 @@ cargo run -q -p fleetd-capability-pack \
   /path/to/fleetd request.json candidate.json
 ```
 
+An existing clean Fleetd revision can enter through the other side of the same
+waist. The deterministic brownfield projector emits an unverified provider
+response containing the exact Git revision and asset manifest; it neither
+generates the UI nor claims the suite passed:
+
+```bash
+cargo run -q -p fleetd-capability-pack \
+  --bin fleetd-runnable-web-project -- \
+  /path/to/fleetd request.json
+```
+
 See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 See also [decision 0012](docs/DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).

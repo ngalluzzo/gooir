@@ -26,3 +26,7 @@ path = "src/main.rs"
 [[bin]]
 name = "fleetd-runnable-web-conformance"
 path = "src/conformance_main.rs"
+
+[[bin]]
+name = "fleetd-runnable-web-project"
+path = "src/candidate_main.rs"
