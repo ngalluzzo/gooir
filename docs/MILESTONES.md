@@ -53,6 +53,14 @@ named runnable-web suite and therefore admits no facts. The real
 `dev.fleetd.conformance.runnable_web_surface@0.1.0` provider now defines an
 exact artifact manifest, checks out the proposed Fleetd revision from an
 operator-trusted repository, verifies its assets, and injects a verifier-owned
-black-box test. The remaining proof is a genuine agent-produced artifact,
-durable Fleetd attempt extraction, passing admission, and re-planning with the
-admitted fact.
+black-box test.
+
+The first complete product loop now passes. A deterministic brownfield
+provider projected Fleetd revision `98c73ba08c47eff77769c12f142442cdebb29ace`
+through a durable Fleetd attempt. Candidate
+`sha256:42d157fcec55a6385630a1b11130b40f4ec05cb4ef625a63ebba6d6df4236fcf`
+passed independent conformance, produced admitted artifact fact
+`sha256:5591961e7692ce6429464bf1b04abf04a44b95afb720a765d26871949f418a56`,
+and re-planned to zero steps and zero needs. The next orchestration boundary is
+an explicit structured result channel for tool-using ACP agents; progress prose
+must remain evidence without being conflated with the final provider result.

@@ -68,3 +68,14 @@ artifact/admission center rather than requiring separate pipelines.
   filesystem-bounded runner without changing the artifact or admission waist.
 - Browser interaction can be added as another independently identified check
   without changing provider output shape.
+
+## Qualification
+
+The first live candidate was
+`sha256:42d157fcec55a6385630a1b11130b40f4ec05cb4ef625a63ebba6d6df4236fcf`
+for Fleetd revision `98c73ba08c47eff77769c12f142442cdebb29ace`.
+All four checks passed under conformance result
+`sha256:0d0f56fae5097e1ce741b7581ffb2665636027cc6d950c74bd7c69f31111d1a3`.
+Admission created fact
+`sha256:5591961e7692ce6429464bf1b04abf04a44b95afb720a765d26871949f418a56`,
+after which the runnable-web plan had no steps or needs.

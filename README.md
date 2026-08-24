@@ -103,6 +103,11 @@ cargo run -q -p fleetd-capability-pack \
   /path/to/fleetd request.json
 ```
 
+The first live loop is qualified: the brownfield projection traveled through a
+durable Fleetd message, strict extraction, independent Git/asset/runtime
+conformance, admission, and a zero-need re-plan. The qualification identities
+are recorded in [the milestones](docs/MILESTONES.md).
+
 See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 See also [decision 0012](docs/DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
