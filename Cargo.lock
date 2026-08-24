@@ -54,6 +54,8 @@ dependencies = [
  "buzz-surface-profile",
  "buzz-surface-projection",
  "gooir-analysis",
+ "gooir-core",
+ "semantics-software-surface-v1",
  "serde_json",
  "surface-completeness-analysis",
 ]

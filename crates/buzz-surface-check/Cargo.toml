@@ -9,5 +9,7 @@ repository.workspace = true
 buzz-surface-profile.workspace = true
 buzz-surface-projection.workspace = true
 gooir-analysis.workspace = true
+gooir-core.workspace = true
+semantics-software-surface-v1.workspace = true
 serde_json.workspace = true
 surface-completeness-analysis.workspace = true
