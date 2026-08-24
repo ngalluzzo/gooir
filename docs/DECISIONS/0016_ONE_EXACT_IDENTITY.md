@@ -1,10 +1,10 @@
-# 0014 — One exact identity
+# 0016 — One exact identity
 
 Status: complete
 
 ## Why now
 
-[0013](0013_GOOIR_DOCTOR.md) built the diagnostic before any renaming so the
+[0015](0015_GOOIR_DOCTOR.md) built the diagnostic before any renaming so the
 graph could choose the order of ergonomic work, and it did: it reported a split
 kernel, not a naming problem. `gooir-capability` depended on nothing in GOOIR
 and had reimplemented exact identity beside `gooir_core::ContractId`.
@@ -37,7 +37,7 @@ component cannot be matched exactly, so it cannot mean anything.
 
 ## The duplicate identity is gone structurally
 
-[0012](0012_AUTHORING_AS_A_CAPABILITY.md) guarded `data_model_fact()` with a
+[0014](0014_AUTHORING_AS_A_CAPABILITY.md) guarded `data_model_fact()` with a
 test because two packs declared it. The identity now has one source:
 
 ```rust

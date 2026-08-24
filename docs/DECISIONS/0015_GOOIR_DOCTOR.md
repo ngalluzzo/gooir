@@ -1,4 +1,4 @@
-# 0013 — `gooir doctor`: the graph reports on itself
+# 0015 — `gooir doctor`: the graph reports on itself
 
 Status: complete
 
@@ -62,7 +62,7 @@ Three of these were previously invisible without reading Rust:
 1. **The graph has five entry points and five answers.** That is the whole
    product surface, and it fits in ten lines.
 2. **`data_model` has two routes** — an authored specification and a lifted
-   OpenAPI document. [0012](0012_AUTHORING_AS_A_CAPABILITY.md) claimed that
+   OpenAPI document. [0014](0014_AUTHORING_AS_A_CAPABILITY.md) claimed that
    interchangeability and tested it; the graph now *shows* it.
 3. **Three identity systems**, counted rather than asserted.
 
@@ -85,7 +85,7 @@ order, and it did:
 1. **One identity.** Collapse `ContractId` into `FactType`. Mechanical, and it
    is what makes the repository feel like two projects.
 2. **Import the shared identity rather than re-declaring it.** One duplicate
-   today, guarded by a test in [0012](0012_AUTHORING_AS_A_CAPABILITY.md). That
+   today, guarded by a test in [0014](0014_AUTHORING_AS_A_CAPABILITY.md). That
    guard should become unnecessary.
 3. **Admission.** Nine of nine providers are unadmitted, and
    `gooir-analysis` already contains the default-deny trust machinery from

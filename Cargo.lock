@@ -291,6 +291,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-cli"
+version = "0.1.0"
+dependencies = [
+ "fleetd-capability-pack",
+ "gooir-capability",
+ "gooir-datamodel-pack",
+ "gooir-doctor",
+ "serde_json",
+]
+
+[[package]]
 name = "gooir-core"
 version = "0.1.0"
 dependencies = [

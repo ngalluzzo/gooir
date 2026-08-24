@@ -1,45 +1,88 @@
 # GOOIR
 
-GOOIR is a lift-first semantic compiler workbench for existing software.
+GOOIR derives facts about software over a **capability graph**. You supply what
+only you have; it works out what can be reached, produces it, and names exactly
+what is missing so somebody or something else can produce that.
 
-It imports facts from authoritative tools and formats, preserves their distinctions and unknown regions, links those facts through separately versioned semantic contracts, and runs analyses that no individual tool can perform alone. Generation and lowering are later projections, not prerequisites for value.
+It never guesses. An identity is matched exactly and never by range, a fact
+that could not be fully established says so, and a capability nobody implements
+stays in the plan as an assignable need rather than disappearing.
 
-```text
-existing semantic artifacts
-          ↓ lift
-native, lossless dialects
-          ↓ explicit bridge
-versioned semantic contracts
-          ↓ link + analyze
-scoped, provenance-bearing findings
-          ↓ optional lowering
-existing generators and runtimes
-```
+## Five concepts
 
-The microkernel does not know `page`, `entity`, `retry`, React, Postgres, or Buzz event kinds. It knows only structural IR, exact contract identities, evidence/provenance transport, opaque extension data, pass mechanics, legality, artifacts, and diagnostics.
+| | |
+| --- | --- |
+| **Fact** | a typed, identified value, carrying whether its coverage was complete |
+| **Capability** | a versioned promise from exact input fact types to exact output fact types |
+| **Provider** | one implementation of a capability |
+| **Plan** | a derivation over capabilities from what you have to what you want |
+| **Admission** | the separate decision that a produced fact may be trusted |
 
-## Current milestone
+Everything else is a special case. A *lift* is a capability whose inputs come
+from existing software; a *lowering* is one whose outputs are a target format;
+a *projection* moves between two semantic facts; an *analysis* produces
+findings. The planner knows none of those words — it only composes typed edges.
 
-`GOOIR-000` is merged and proves the architectural boundary:
-
-- unknown dialect data round-trips without a plugin;
-- analyzers consume exact semantic contracts rather than dialect names;
-- unfamiliar dialects with equivalent projections produce equivalent normalized results;
-- unverified or unknown claims never become safety facts;
-- meaning-changing contract versions require an explicit bridge.
-- partial legality reports the exact pinned/unknown portability frontier.
-
-`GOOIR-001` now has source-derived protocol, relay, and CLI lifts plus a generic contract-only completeness analyzer. Exact local admission produces six relay-ingest contradictions and one exhaustive CLI gap; SDK and runtime absences remain unknown until their coverage-witnessed lifters land. The hand-authored staging snapshot stays outside the trusted path.
-
-Run the first real-software product slice from a clean checkout:
+## Start here
 
 ```bash
-cargo run -q -p buzz-surface-check
+cargo run -q --bin gooir
 ```
 
-The one-screen default view marks the behavior `BROKEN`, follows one Buzz agent-job event from declaration through production, relay acceptance, and runtime consumption, explains the impact and next action, and names the boundaries that remain unknown. Use `--details` for exact evidence or `--json` for the complete machine-readable report. See the [ten-minute Slice 1 demo](docs/SLICE_1_DEMO.md) for the evidence-mutation trust check and product gate.
+One command is the whole surface:
 
-See the [project brief](docs/PROJECT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), and [milestones](docs/MILESTONES.md).
+```text
+gooir facts                        every fact type, and how it is reached
+gooir capabilities                 every promise, and whether it has a provider
+gooir needs                        promises with no provider, as work contracts
+gooir doctor                       graph health
+gooir plan <target>                the route to a target
+gooir derive <target> --from FILE  run it, and print the derivation chain
+```
+
+Write a few lines of text and derive a real artifact from it:
+
+```bash
+cat examples/tasks.entities
+cargo run -q --bin gooir -- derive postgres_ddl --from examples/tasks.entities
+```
+
+Ask for something nothing can produce yet, and the answer is a contract rather
+than a shrug:
+
+```bash
+cargo run -q --bin gooir -- derive model_types --from examples/tasks.entities
+```
+
+## How the crates are organised
+
+Thirty-six crates, six roles. Every crate is exactly one of these:
+
+| role | what it holds | examples |
+| --- | --- | --- |
+| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis` |
+| **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-effects-v1` |
+| **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
+| **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |
+| **tool** | reads or reports on a graph | `gooir-cli`, `gooir-doctor` |
+| **support** | shared machinery | `lift-defeasible` |
+
+A crate named `*-lifter` or `*-lowering` is a provider; the suffix says which
+direction it travels, not that it is a different kind of thing.
+
+## Where the reasoning lives
+
+Seventeen decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+argument, including the ones that overturned earlier plans. The most load-bearing:
+
+- [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
+- [0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md) — capabilities as typed derivations
+- [0014](docs/DECISIONS/0014_AUTHORING_AS_A_CAPABILITY.md) — hand-written text is an ordinary source fact
+- [0015](docs/DECISIONS/0015_GOOIR_DOCTOR.md) — the graph reports on its own health
+- [0017](docs/DECISIONS/0017_ONE_ADMISSION_RULE.md) — passing a suite and being admitted are two conditions
+
+Also the [project brief](docs/PROJECT_BRIEF.md),
+[architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).
 
 ## Fleetd multi-dialect dogfood
 
@@ -112,10 +155,33 @@ See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 See also [decision 0012](docs/DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
 
+## Earlier proof surfaces
+
+`GOOIR-000` proved the kernel boundary: unknown dialect data round-trips
+without a plugin, analyzers depend on exact contracts rather than dialect
+names, equivalent projections normalise equally, unverified claims never become
+safety facts, and a meaning-changing version requires an explicit bridge.
+
+`GOOIR-001` lifted a pinned Buzz event surface and reported a real cross-layer
+gap with exact scope and provenance:
+
+```bash
+cargo run -q -p buzz-surface-check
+```
+
+See the [ten-minute Slice 1 demo](docs/SLICE_1_DEMO.md).
+
 ## Development
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+```
+
+Verification harnesses that need a live PostgreSQL:
+
+```bash
+./scripts/store-round-trip.sh
+./scripts/app-runtime-smoke.sh
 ```

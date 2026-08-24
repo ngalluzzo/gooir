@@ -1,4 +1,4 @@
-# 0012 — Authoring as a capability
+# 0014 — Authoring as a capability
 
 Status: complete
 

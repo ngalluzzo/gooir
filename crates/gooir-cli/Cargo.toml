@@ -1,0 +1,17 @@
+[package]
+name = "gooir-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+fleetd-capability-pack = { workspace = true }
+gooir-capability = { workspace = true }
+gooir-datamodel-pack = { workspace = true }
+gooir-doctor = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "gooir"
+path = "src/main.rs"

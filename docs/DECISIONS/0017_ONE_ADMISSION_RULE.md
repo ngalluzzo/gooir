@@ -1,11 +1,11 @@
-# 0015 — One admission rule
+# 0017 — One admission rule
 
 Status: complete
 
 ## What the two systems turned out to be
 
 `gooir doctor` reported 9 of 9 providers unadmitted, and
-[0014](0014_ONE_EXACT_IDENTITY.md) predicted the remaining half of the split
+[0016](0016_ONE_EXACT_IDENTITY.md) predicted the remaining half of the split
 kernel was a duplicated trust path. Reading both first showed that prediction
 was wrong in an important way. They are **sequential stages, not duplicates**:
 
