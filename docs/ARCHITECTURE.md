@@ -49,6 +49,12 @@ suite, inputs, and output. A providerless edge remains visible as a typed
 capability need so an orchestrator can acquire an implementation without
 changing semantic meaning.
 
+Before handoff, a need may be bound to exact input fact instances as a
+provider-neutral capability request. Its RFC 8785/SHA-256 identity covers the
+capability, requirements, facts, expected outputs, and conformance suite. The
+request contains no agent, harness, transport, authority, or lease. An
+orchestrator such as Fleetd adds those execution concerns durably.
+
 See [decision 0011](DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 
 ## Multiple semantic waists

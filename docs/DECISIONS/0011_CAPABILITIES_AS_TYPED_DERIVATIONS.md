@@ -87,6 +87,19 @@ conformance suite. This is the first useful boundary for Fleetd to turn into a
 work contract for OpenCode, Qwen, a conventional generator, or any later
 provider.
 
+`CapabilityRequest::bind` now performs that provider-neutral handoff. It binds
+the need to the exact produced web-target fact and derives `request_id` as
+SHA-256 over the RFC 8785 canonical JSON request body. Authority, recipient,
+leases, deadlines, and ownership are deliberately absent: Fleetd adds those
+when it durably consumes the request. The live checker emits this value as
+`runnable_web_request`.
+
+Fleetd's experimental `work.capability.request/v1` adapter accepts the emitted
+request without translation, persists it as an immutable message, admits an
+exact configured capability, and executes it in a per-request session lane
+whose binding generation and owner epoch are durable. The correlated response
+is explicitly an unverified provider attempt, not an accepted output.
+
 Run the live proof from a clean Fleetd revision:
 
 ```bash
@@ -104,14 +117,15 @@ cargo run -q -p fleetd-capability-pack --bin fleetd-capability-check -- \
   a reproducible-build attestation of the complete dependency closure.
 - Planning proves that a typed route and installed providers exist. Runtime
   facts may still be partial and cause a complete-only edge to reject them.
-- A `CapabilityNeed` is not yet a Fleetd work contract, lease, or assignment.
+- A bound request is not itself a Fleetd lease or accepted result; Fleetd adds
+  assignment and ownership, while conformance admission remains unimplemented.
 - The product-specific interaction fact has not earned a generic Interaction,
   UI, Workflow, or Agent dialect.
 
 ## Next falsification
 
-Have Fleetd consume the runnable-web `CapabilityNeed`, bind the exact web-target
-fact to a durable work contract, select an eligible provider, and accept the
-result only after target-specific checks. The provider protocol must remain an
-adapter: replacing OpenCode with a local Qwen harness or a deterministic
-generator must not change the capability or work-contract meaning.
+Extract candidate facts from Fleetd's provider-attempt result and accept them
+only after the exact named conformance suite runs against the bound request.
+The provider protocol must remain an adapter: replacing OpenCode with a local
+Qwen harness or a deterministic generator must not change the capability,
+request, or acceptance meaning.

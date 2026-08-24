@@ -180,6 +180,81 @@ pub struct CapabilityNeed {
     pub reason: String,
 }
 
+/// The digest-bearing provider-neutral portion of one exact capability
+/// invocation. Authority, ownership, deadlines, and settlement belong to the
+/// orchestrator that durably consumes this request.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityRequestBody {
+    pub capability: CapabilityId,
+    pub requires: Vec<Requirement>,
+    pub inputs: Vec<FactInstance>,
+    pub produces: Vec<FactType>,
+    pub conformance_suite: String,
+}
+
+/// A missing capability bound to exact input fact instances. This is the
+/// provider-neutral handoff from derivation planning to an orchestrator; it is
+/// not itself a lease, authority grant, provider selection, or accepted result.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityRequest {
+    pub request_id: String,
+    #[serde(flatten)]
+    pub body: CapabilityRequestBody,
+}
+
+impl CapabilityRequest {
+    pub fn bind(
+        need: &CapabilityNeed,
+        inputs: Vec<FactInstance>,
+    ) -> Result<Self, CapabilityRequestError> {
+        let mut required = need
+            .requires
+            .iter()
+            .map(|requirement| (requirement.fact.clone(), requirement))
+            .collect::<BTreeMap<_, _>>();
+        if required.len() != need.requires.len() {
+            return Err(CapabilityRequestError::InvalidNeed(
+                "duplicate required fact identity".to_owned(),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for input in &inputs {
+            if !seen.insert(input.fact_type.clone()) {
+                return Err(CapabilityRequestError::DuplicateInput(
+                    input.fact_type.clone(),
+                ));
+            }
+            let requirement = required
+                .remove(&input.fact_type)
+                .ok_or_else(|| CapabilityRequestError::UnexpectedInput(input.fact_type.clone()))?;
+            if requirement.acceptance == FactAcceptance::CompleteOnly
+                && input.coverage == FactCoverage::Partial
+            {
+                return Err(CapabilityRequestError::PartialInputRejected(
+                    input.fact_type.clone(),
+                ));
+            }
+        }
+        if let Some(missing) = required.into_keys().next() {
+            return Err(CapabilityRequestError::MissingInput(missing));
+        }
+        if need.produces.is_empty() {
+            return Err(CapabilityRequestError::InvalidNeed(
+                "produced fact set is empty".to_owned(),
+            ));
+        }
+        let body = CapabilityRequestBody {
+            capability: need.capability.clone(),
+            requires: need.requires.clone(),
+            inputs,
+            produces: need.produces.clone(),
+            conformance_suite: need.conformance_suite.clone(),
+        };
+        let request_id = request_digest(&body)?;
+        Ok(Self { request_id, body })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DerivationPlan {
     pub target: FactType,
@@ -531,6 +606,23 @@ fn fact_digest(
     Ok(output)
 }
 
+fn request_digest(body: &CapabilityRequestBody) -> Result<String, CapabilityRequestError> {
+    let bytes = serde_json_canonicalizer::to_vec(body)
+        .map_err(|error| CapabilityRequestError::Serialization(error.to_string()))?;
+    Ok(sha256_identity(&bytes))
+}
+
+fn sha256_identity(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut output = String::with_capacity(7 + digest.len() * 2);
+    output.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistryError {
     DuplicateCapability(CapabilityId),
@@ -546,6 +638,24 @@ pub enum RegistryError {
     },
     Serialization(String),
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CapabilityRequestError {
+    InvalidNeed(String),
+    DuplicateInput(FactType),
+    UnexpectedInput(FactType),
+    MissingInput(FactType),
+    PartialInputRejected(FactType),
+    Serialization(String),
+}
+
+impl fmt::Display for CapabilityRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for CapabilityRequestError {}
 
 impl fmt::Display for RegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -784,5 +894,41 @@ mod tests {
                 fact: Box::new(source),
             })
         );
+    }
+
+    #[test]
+    fn capability_request_binds_need_to_exact_input_fact() {
+        let source = fact("source");
+        let target = fact("target");
+        let need = CapabilityNeed {
+            capability: CapabilityId::new("test", "generate", "1"),
+            requires: vec![Requirement::complete(source.clone())],
+            produces: vec![target],
+            conformance_suite: "test/generate@1".to_owned(),
+            reason: "no provider".to_owned(),
+        };
+        let first = FactInstance::initial(
+            source.clone(),
+            FactCoverage::Complete,
+            json!({"value": 1}),
+            "fixture@1",
+        )
+        .unwrap();
+        let second = FactInstance::initial(
+            source,
+            FactCoverage::Complete,
+            json!({"value": 2}),
+            "fixture@1",
+        )
+        .unwrap();
+
+        let first_request = CapabilityRequest::bind(&need, vec![first.clone()]).unwrap();
+        let replay = CapabilityRequest::bind(&need, vec![first]).unwrap();
+        let changed = CapabilityRequest::bind(&need, vec![second]).unwrap();
+
+        assert_eq!(first_request.request_id, replay.request_id);
+        assert_ne!(first_request.request_id, changed.request_id);
+        assert_eq!(first_request.body.capability, need.capability);
+        assert_eq!(first_request.body.inputs.len(), 1);
     }
 }

@@ -65,8 +65,10 @@ cargo run -q -p fleetd-capability-pack --bin fleetd-capability-check -- \
 
 The registry discovers and executes the web and terminal routes, preserves
 fact-level derivation provenance, and emits the missing runnable-web provider
-as a machine-readable capability need. Capability meaning is independent of
-whether a later provider is an in-process pass, external compiler, or agent.
+as a machine-readable capability need plus `runnable_web_request`, which binds
+that need to the exact web-target fact for Fleetd consumption. Capability
+meaning is independent of whether a later provider is an in-process pass,
+external compiler, or agent.
 See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 
 ## Development

@@ -5,8 +5,8 @@ use fleetd_capability_pack::{
 };
 use fleetd_control_lifter::{API_ARTIFACT, DELIVERY_ARTIFACT, MODEL_ARTIFACT, OPENAPI_ARTIFACT};
 use gooir_capability::{
-    CapabilityNeed, CapabilitySpec, DerivationPlan, FactCoverage, FactDerivation, FactInstance,
-    FactType, ProviderDescriptor,
+    CapabilityNeed, CapabilityRequest, CapabilitySpec, DerivationPlan, FactCoverage,
+    FactDerivation, FactInstance, FactType, ProviderDescriptor,
 };
 use serde::Serialize;
 use std::{
@@ -30,6 +30,7 @@ struct CapabilityDogfoodReport {
     runnable_web_plan: DerivationPlan,
     runnable_web_plan_executable: bool,
     capability_needs: Vec<CapabilityNeed>,
+    runnable_web_request: CapabilityRequest,
     web_target: fleetd_surface_lowering::WebSurface,
     terminal_target: fleetd_surface_lowering::TerminalSurface,
     semantic_fingerprints_equal: bool,
@@ -96,6 +97,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let terminal = terminal_surface(&terminal_execution.target).map_err(io::Error::other)?;
     let semantic_fingerprints_equal = web.semantic_fingerprint() == terminal.semantic_fingerprint();
     let capability_needs = runnable_web_plan.needs.clone();
+    let runnable_web_need = capability_needs
+        .first()
+        .ok_or("runnable web plan unexpectedly has no capability need")?;
+    let runnable_web_request =
+        CapabilityRequest::bind(runnable_web_need, vec![web_execution.target.clone()])?;
     let web_plan_executable = web_plan.is_executable();
     let terminal_plan_executable = terminal_plan.is_executable();
     let runnable_web_plan_executable = runnable_web_plan.is_executable();
@@ -111,6 +117,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         runnable_web_plan,
         runnable_web_plan_executable,
         capability_needs,
+        runnable_web_request,
         web_target: web,
         terminal_target: terminal,
         semantic_fingerprints_equal,

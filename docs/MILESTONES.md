@@ -44,4 +44,7 @@ from exact typed capability edges and executes the web and terminal targets
 with full fact derivation provenance. A declared but unimplemented runnable-web
 edge becomes a machine-readable capability need. The next milestone is to have
 Fleetd turn that need into a durable, provider-neutral work contract and admit
-the result through explicit checks.
+the result through explicit checks. The first half now works end to end: GOOIR
+binds the need to an exact input fact and Fleetd carries it through an
+owner-fenced provider attempt. Candidate extraction and conformance admission
+remain next.
