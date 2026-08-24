@@ -10,6 +10,7 @@ fleetd-capability-pack = { workspace = true }
 gooir-capability = { workspace = true }
 gooir-datamodel-pack = { workspace = true }
 gooir-doctor = { workspace = true }
+gooir-plugin-process = { workspace = true }
 serde_json = { workspace = true }
 
 [[bin]]

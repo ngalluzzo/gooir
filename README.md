@@ -54,6 +54,19 @@ than a shrug:
 cargo run -q --bin gooir -- derive model_types --from examples/tasks.entities
 ```
 
+Then install a provider for it. This one is a Python script:
+
+```bash
+cargo run -q --bin gooir -- derive model_types \
+  --from examples/tasks.entities \
+  --plugin examples/plugins/typescript-types/plugin.json
+```
+
+A provider is any program that reads one JSON document and writes another, so
+it need not be Rust, or compiled, or built here. The host names each manifest
+explicitly and measures the implementation itself — see
+[0019](docs/DECISIONS/0019_PLUGIN_LIFECYCLE.md).
+
 ## How the crates are organised
 
 Thirty-six crates, six roles. Every crate is exactly one of these:

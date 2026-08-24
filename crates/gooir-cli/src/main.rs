@@ -27,17 +27,43 @@ gooir — derive facts over a capability graph
   gooir plan <target>                 the route to a target
   gooir derive <target> --from FILE   run it, and print the derivation chain
 
+Add --plugin MANIFEST (repeatable) to install an out-of-process provider.
+
 A target may be a full identity (org.gooi.artifact.sql/postgres_ddl@0.1.0) or a
 bare name (postgres_ddl) when it is unambiguous.
 
 FILE is a hand-written .entities specification. Sources lifted from existing
 software are supplied by their own packs; see `gooir capabilities`.";
 
-fn installed() -> Result<CapabilityRegistry, String> {
+/// Plugin manifests are named by the caller, never discovered. Scanning a
+/// directory for programs to execute would be a supply-chain hole.
+fn plugin_paths(args: &[String]) -> Vec<PathBuf> {
+    args.iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == "--plugin")
+        .filter_map(|(i, _)| args.get(i + 1))
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn installed(plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
     let mut registry = CapabilityRegistry::default();
     gooir_datamodel_pack::register(&mut registry).map_err(|e| e.to_string())?;
     fleetd_capability_pack::register_specs(&mut registry).map_err(|e| e.to_string())?;
     fleetd_capability_pack::register_providers(&mut registry).map_err(|e| e.to_string())?;
+    for path in plugins {
+        let provider = gooir_plugin_process::ProcessProvider::load(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        eprintln!(
+            "plugin {} -> {} (digest covers {} file(s))",
+            provider.manifest().provider,
+            provider.manifest().capability,
+            provider.covered_files()
+        );
+        registry
+            .register_provider(provider)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
     Ok(registry)
 }
 
@@ -92,7 +118,7 @@ fn print_payload(payload: &serde_json::Value) {
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str);
-    let registry = installed()?;
+    let registry = installed(&plugin_paths(&args))?;
 
     match command {
         None | Some("-h") | Some("--help") | Some("help") => {

@@ -1,0 +1,7 @@
+{
+  "protocol": "org.gooi.plugin/v1",
+  "provider": { "package": "test.plugin", "name": "crashes", "version": "1.0.0" },
+  "capability": { "package": "test.capability", "name": "make", "version": "1.0.0" },
+  "command": { "program": "python3", "args": ["crashes.py"] },
+  "implementation": ["crashes.py"]
+}
