@@ -63,9 +63,15 @@ pub struct CapabilitySpec {
     pub id: CapabilityId,
     pub requires: Vec<Requirement>,
     pub produces: Vec<FactType>,
-    /// Exact suite a provider must eventually pass before its outputs may be
-    /// admitted as trusted. Registration alone is not conformance.
-    pub conformance_suite: String,
+    /// The suite this capability declares by default.
+    ///
+    /// It is an obligation, not a fixed requirement. A neutral capability may
+    /// be verified by a concrete, installation-specific suite, so a request may
+    /// bind a different one — see [`CapabilityRequest::bind_with_suite`].
+    /// Nothing compares a request's suite to this value; what gates admission
+    /// is whether the host admits an attester *for the suite the request
+    /// names*, which is [`AdmissionPolicy`]'s job.
+    pub default_conformance_suite: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -195,9 +201,29 @@ pub struct CapabilityRequest {
 }
 
 impl CapabilityRequest {
+    /// Binds a need to exact inputs, keeping the suite the need published.
     pub fn bind(
         need: &CapabilityNeed,
         inputs: Vec<FactInstance>,
+    ) -> Result<Self, CapabilityRequestError> {
+        let suite = need.conformance_suite.clone();
+        Self::bind_with_suite(need, inputs, suite)
+    }
+
+    /// Binds a need while naming the suite that will actually be run.
+    ///
+    /// A capability can be neutral while its verification is not: only a suite
+    /// that knows a particular system can check that a generated surface really
+    /// serves it. Without this, that specificity would have to live in the
+    /// capability's identity, dragging every fact identity along with it.
+    ///
+    /// This is not a hole. A request naming a weaker suite still yields no
+    /// admitted facts unless the host has admitted an attester *for that
+    /// suite*, which is a deliberate act — see [`AdmissionPolicy`].
+    pub fn bind_with_suite(
+        need: &CapabilityNeed,
+        inputs: Vec<FactInstance>,
+        conformance_suite: impl Into<String>,
     ) -> Result<Self, CapabilityRequestError> {
         let mut required = need
             .requires
@@ -240,7 +266,7 @@ impl CapabilityRequest {
             requires: need.requires.clone(),
             inputs,
             produces: need.produces.clone(),
-            conformance_suite: need.conformance_suite.clone(),
+            conformance_suite: conformance_suite.into(),
         };
         validate_request_body(&body)?;
         let request_id = request_digest(&body)?;
@@ -632,7 +658,7 @@ impl CapabilityRegistry {
                     capability: spec.id.clone(),
                     requires: spec.requires.clone(),
                     produces: spec.produces.clone(),
-                    conformance_suite: spec.conformance_suite.clone(),
+                    conformance_suite: spec.default_conformance_suite.clone(),
                     reason: "no installed provider implements this exact capability".to_owned(),
                 }
             })
@@ -796,7 +822,7 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
             reason: "a capability must produce at least one fact".to_owned(),
         });
     }
-    if spec.conformance_suite.trim().is_empty() {
+    if spec.default_conformance_suite.trim().is_empty() {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
             reason: "a capability must name an exact conformance suite".to_owned(),
@@ -1289,7 +1315,7 @@ mod tests {
             id: CapabilityId::new("test", name, "1"),
             requires,
             produces,
-            conformance_suite: format!("test/{name}@1"),
+            default_conformance_suite: format!("test/{name}@1"),
         }
     }
 
@@ -1612,6 +1638,103 @@ mod tests {
         policy
     }
 
+    /// A need, its inputs, and a candidate bound under a caller-chosen suite.
+    fn candidate_under_suite(suite: &str) -> (CapabilityRequest, CapabilityCandidate) {
+        let source = fact("external_source");
+        let target = fact("external_target");
+        let need = CapabilityNeed {
+            capability: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
+            requires: vec![Requirement::complete(source.clone())],
+            produces: vec![target.clone()],
+            conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+            reason: "no installed provider".to_owned(),
+        };
+        let input = FactInstance::initial(
+            source,
+            FactCoverage::Complete,
+            json!({"intent": "exact"}),
+            "fixture@1",
+        )
+        .unwrap();
+        let request = CapabilityRequest::bind_with_suite(&need, vec![input], suite).unwrap();
+        let candidate = CapabilityCandidate::bind(
+            &request,
+            ProviderDescriptor {
+                id: ProviderId::new("test.provider", "external_agent", "1.0.0"),
+                capability: need.capability,
+                implementation_digest: format!("sha256:{}", "a".repeat(64)),
+            },
+            vec![ProducedFact {
+                fact_type: target,
+                coverage: FactCoverage::Complete,
+                payload: json!({"artifact": "candidate"}),
+            }],
+            AttemptEvidence {
+                authority: "test.orchestrator/fleet@1".to_owned(),
+                attempt_id: "attempt-1".to_owned(),
+                invocation_id: "invocation-1".to_owned(),
+                evidence_digest: format!("sha256:{}", "b".repeat(64)),
+            },
+        )
+        .unwrap();
+        (request, candidate)
+    }
+
+    fn verifier_for(suite: &str) -> FixedVerifier {
+        FixedVerifier {
+            descriptor: ConformanceProviderDescriptor {
+                id: ProviderId::new("test.conformance", "concrete_suite", "1.0.0"),
+                suite: suite.to_owned(),
+                implementation_digest: format!("sha256:{}", "f".repeat(64)),
+            },
+            outcome: ConformanceOutcome::Passed,
+        }
+    }
+
+    /// A capability may be neutral while its verification is not. Without this,
+    /// the suite's specificity would have to live in the capability's identity.
+    #[test]
+    fn a_request_may_name_a_more_concrete_suite_than_the_capability_declares() {
+        const CONCRETE: &str = "dev.product.conformance/runs_the_real_system@1.0.0";
+        let (request, candidate) = candidate_under_suite(CONCRETE);
+        assert_eq!(request.body.conformance_suite, CONCRETE);
+        assert_ne!(
+            request.body.conformance_suite, "test.conformance/external_generate@1.0.0",
+            "the need's default was overridden"
+        );
+
+        let attester = verifier_for(CONCRETE);
+        let admission =
+            verify_and_admit(&request, &candidate, &attester, &admitting(&attester)).unwrap();
+        assert!(admission.withheld.is_none());
+        assert_eq!(admission.facts.len(), 1);
+    }
+
+    /// Overriding the suite is not a hole: an attester admitted for one suite
+    /// cannot verify a request that names another.
+    #[test]
+    fn an_attester_admitted_for_a_different_suite_cannot_verify_the_request() {
+        let (request, candidate) = candidate_under_suite("dev.product.conformance/real@1.0.0");
+        // Admitted, independent, and passing -- but for the default suite.
+        let attester = verifier_for("test.conformance/external_generate@1.0.0");
+        assert_eq!(
+            verify_and_admit(&request, &candidate, &attester, &admitting(&attester)),
+            Err(CapabilityAdmissionError::SuiteMismatch {
+                expected: "dev.product.conformance/real@1.0.0".to_owned(),
+                actual: "test.conformance/external_generate@1.0.0".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn binding_without_an_override_keeps_the_declared_default() {
+        let (request, _) = external_candidate();
+        assert_eq!(
+            request.body.conformance_suite,
+            "test.conformance/external_generate@1.0.0"
+        );
+    }
+
     #[test]
     fn independent_passing_conformance_admits_exact_candidate_facts() {
         let (request, candidate) = external_candidate();
@@ -1644,7 +1767,7 @@ mod tests {
                 id: request.body.capability.clone(),
                 requires: request.body.requires.clone(),
                 produces: request.body.produces.clone(),
-                conformance_suite: request.body.conformance_suite.clone(),
+                default_conformance_suite: request.body.conformance_suite.clone(),
             })
             .unwrap();
         let admitted = admission.facts[0].clone();

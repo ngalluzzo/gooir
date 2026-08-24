@@ -32,7 +32,7 @@ fn spec() -> CapabilitySpec {
         id: capability(),
         requires: vec![Requirement::complete(source())],
         produces: vec![produced()],
-        conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test.suite@1.0.0".to_owned(),
     }
 }
 

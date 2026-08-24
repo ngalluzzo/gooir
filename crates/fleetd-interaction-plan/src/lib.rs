@@ -8,9 +8,7 @@
 
 use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::DataModel;
-use semantics_fleetd_control_v0::{
-    BlockedDeliveryReview, DeliveryOutcome, ResolutionChoice, ReviewAuthority,
-};
+use semantics_fleetd_control_v0::{BlockedDeliveryReview, ResolutionChoice};
 use serde::{Deserialize, Serialize};
 
 pub const DEFEATER_SET: &str = "org.gooi.projection.fleetd_interaction/defeaters@1";
@@ -20,7 +18,7 @@ pub struct BlockedDeliveryInteractionPlan {
     pub record_type: String,
     pub selector_field: String,
     pub visible_fields: Vec<String>,
-    pub authority: ReviewAuthority,
+    pub authority: Option<String>,
     pub choices: Vec<ResolutionChoice>,
 }
 
@@ -33,7 +31,7 @@ pub fn derive_blocked_delivery_plan(
             record_type: control.value.record_type.clone().unwrap_or_default(),
             selector_field: control.value.selector_field.clone().unwrap_or_default(),
             visible_fields: control.value.review_fields.clone(),
-            authority: control.value.authority,
+            authority: control.value.authority.clone(),
             choices: control.value.resolutions.clone(),
         },
         DEFEATER_SET,
@@ -60,7 +58,7 @@ pub fn derive_blocked_delivery_plan(
             "the control contract did not identify an exact resolution selector",
         ));
     }
-    if plan.value.authority == ReviewAuthority::Unknown {
+    if plan.value.authority.is_none() {
         plan.defeat(Defeat::new(
             DefeatKind::LookedAndBlocked,
             "blocked_delivery.authority",
@@ -71,7 +69,7 @@ pub fn derive_blocked_delivery_plan(
         .value
         .choices
         .iter()
-        .filter(|choice| choice.outcome == DeliveryOutcome::Unknown)
+        .filter(|choice| choice.outcome.is_none())
         .map(|choice| choice.name.clone())
         .collect::<Vec<_>>();
     for name in unknown_choices {
@@ -178,15 +176,15 @@ mod tests {
                     "reason".to_owned(),
                     "message".to_owned(),
                 ],
-                authority: ReviewAuthority::Operator,
+                authority: Some("operator".to_owned()),
                 resolutions: vec![
                     ResolutionChoice {
                         name: "requeue".to_owned(),
-                        outcome: DeliveryOutcome::Pending,
+                        outcome: Some("pending".to_owned()),
                     },
                     ResolutionChoice {
                         name: "abandon".to_owned(),
-                        outcome: DeliveryOutcome::Dead,
+                        outcome: Some("dead".to_owned()),
                     },
                 ],
             },
@@ -221,7 +219,7 @@ mod tests {
     #[test]
     fn unknown_choice_effect_cannot_become_a_button_or_command() {
         let mut control = control();
-        control.value.resolutions[0].outcome = DeliveryOutcome::Unknown;
+        control.value.resolutions[0].outcome = None;
 
         let plan = derive_blocked_delivery_plan(&data(), &control);
 

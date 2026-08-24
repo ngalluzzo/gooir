@@ -189,7 +189,7 @@ pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPol
         .map(|spec| UnimplementedCapability {
             capability: spec.id.clone(),
             produces: spec.produces.clone(),
-            conformance_suite: spec.conformance_suite.clone(),
+            conformance_suite: spec.default_conformance_suite.clone(),
         })
         .collect();
 
@@ -207,7 +207,7 @@ pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPol
     // external conformance result is verified against it.
     let suites: BTreeMap<CapabilityId, String> = registry
         .specs()
-        .map(|s| (s.id.clone(), s.conformance_suite.clone()))
+        .map(|s| (s.id.clone(), s.default_conformance_suite.clone()))
         .collect();
     let unadmitted: Vec<UnadmittedProvider> = descriptors
         .iter()

@@ -37,7 +37,7 @@ fn spec(id: CapabilityId, from: &str, to: &str) -> CapabilitySpec {
         id,
         requires: vec![Requirement::complete(fact(from))],
         produces: vec![fact(to)],
-        conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test.suite@1.0.0".to_owned(),
     }
 }
 
@@ -93,7 +93,7 @@ fn a_fact_with_no_route_is_blocking() {
         id: cap("cycle"),
         requires: vec![Requirement::complete(fact("z"))],
         produces: vec![fact("z")],
-        conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test.suite@1.0.0".to_owned(),
     })
     .unwrap();
 

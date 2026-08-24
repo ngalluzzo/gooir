@@ -135,7 +135,7 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
             id: openapi_data_capability(),
             requires: vec![Requirement::complete(openapi_source_fact())],
             produces: vec![data_model_fact()],
-            conformance_suite: "org.gooi.conformance.openapi_data_model@0.1.0".to_owned(),
+            default_conformance_suite: "org.gooi.conformance.openapi_data_model@0.1.0".to_owned(),
         },
         CapabilitySpec {
             id: fleetd_native_capability(),
@@ -146,13 +146,13 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
                 Requirement::complete(delivery_rust_source_fact()),
             ],
             produces: vec![fleetd_control_native_fact()],
-            conformance_suite: "dev.fleetd.conformance.control_native@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.control_native@0.1.0".to_owned(),
         },
         CapabilitySpec {
             id: fleetd_control_projection_capability(),
             requires: vec![Requirement::partial_allowed(fleetd_control_native_fact())],
             produces: vec![fleetd_control_fact()],
-            conformance_suite: "dev.fleetd.conformance.control_projection@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.control_projection@0.1.0".to_owned(),
         },
         CapabilitySpec {
             id: fleetd_interaction_capability(),
@@ -161,7 +161,8 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
                 Requirement::partial_allowed(fleetd_control_fact()),
             ],
             produces: vec![fleetd_interaction_fact()],
-            conformance_suite: "dev.fleetd.conformance.interaction_projection@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.interaction_projection@0.1.0"
+                .to_owned(),
         },
         CapabilitySpec {
             id: web_target_capability(),
@@ -170,7 +171,7 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
                 Requirement::complete(fleetd_control_native_fact()),
             ],
             produces: vec![web_target_ir_fact()],
-            conformance_suite: "dev.fleetd.conformance.web_target_ir@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.web_target_ir@0.1.0".to_owned(),
         },
         CapabilitySpec {
             id: terminal_target_capability(),
@@ -179,7 +180,7 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
                 Requirement::complete(fleetd_control_native_fact()),
             ],
             produces: vec![terminal_target_ir_fact()],
-            conformance_suite: "dev.fleetd.conformance.terminal_target_ir@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.terminal_target_ir@0.1.0".to_owned(),
         },
         // This specification intentionally has no provider. It is the first
         // machine-readable capability need for Fleetd to assign.
@@ -187,7 +188,8 @@ pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryE
             id: runnable_web_capability(),
             requires: vec![Requirement::complete(web_target_ir_fact())],
             produces: vec![runnable_web_artifact_fact()],
-            conformance_suite: "dev.fleetd.conformance.runnable_web_surface@0.1.0".to_owned(),
+            default_conformance_suite: "dev.fleetd.conformance.runnable_web_surface@0.1.0"
+                .to_owned(),
         },
     ];
     for spec in specs {

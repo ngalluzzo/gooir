@@ -57,14 +57,14 @@ mod tests {
             id: gooir_capability::CapabilityId::new("t", "one", "1.0.0"),
             requires: vec![Requirement::complete(fact("t.source", "input"))],
             produces: vec![fact("t.artifact", "unique_name")],
-            conformance_suite: "t.suite@1".to_owned(),
+            default_conformance_suite: "t.suite@1".to_owned(),
         })
         .unwrap();
         r.register_spec(CapabilitySpec {
             id: gooir_capability::CapabilityId::new("t", "two", "1.0.0"),
             requires: vec![Requirement::complete(fact("t.source", "input"))],
             produces: vec![fact("t.a", "shared"), fact("t.b", "shared")],
-            conformance_suite: "t.suite@1".to_owned(),
+            default_conformance_suite: "t.suite@1".to_owned(),
         })
         .unwrap();
         r

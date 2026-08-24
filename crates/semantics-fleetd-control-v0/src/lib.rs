@@ -10,30 +10,14 @@ use serde::{Deserialize, Serialize};
 pub const PACKAGE: &str = "dev.fleetd.semantics.control";
 pub const VERSION: &str = "0.1.0";
 
-/// The principal class allowed to inspect and resolve blocked deliveries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReviewAuthority {
-    Operator,
-    Unknown,
-}
-
-/// Fleetd's observable delivery state after applying one resolution.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeliveryOutcome {
-    Pending,
-    Dead,
-    /// The source lift saw the choice but could not establish its effect.
-    Unknown,
-}
-
 /// One named decision the operator may apply to an unresolved block.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ResolutionChoice {
     /// Stable wire name from Fleetd's public contract.
     pub name: String,
-    pub outcome: DeliveryOutcome,
+    /// The observable state this resolution produces, by name. `None` means the
+    /// source did not establish one.
+    pub outcome: Option<String>,
 }
 
 /// Meaning needed to expose Fleetd's blocked-delivery review loop without
@@ -46,7 +30,13 @@ pub struct BlockedDeliveryReview {
     pub selector_field: Option<String>,
     /// Exact fields Fleetd promises to provide for an unresolved block.
     pub review_fields: Vec<String>,
-    pub authority: ReviewAuthority,
+    /// The principal class allowed to inspect and resolve, by name.
+    ///
+    /// `None` means the source did not establish one. This is the same
+    /// convention `record_type` and `selector_field` already use, rather than a
+    /// second way of saying "not established". Which names are meaningful is
+    /// the projection's business, not this type's.
+    pub authority: Option<String>,
     pub resolutions: Vec<ResolutionChoice>,
 }
 
@@ -62,16 +52,54 @@ impl BlockedDeliveryReview {
 mod tests {
     use super::*;
 
+    /// Not-established is one convention across the whole contract, rather than
+    /// `Option` for some fields and an `Unknown` variant for others.
+    #[test]
+    fn every_unestablished_value_is_absent_rather_than_named() {
+        let review = BlockedDeliveryReview {
+            record_type: None,
+            selector_field: None,
+            review_fields: Vec::new(),
+            authority: None,
+            resolutions: vec![ResolutionChoice {
+                name: "requeue".to_owned(),
+                outcome: None,
+            }],
+        };
+        let encoded = serde_json::to_string(&review).expect("contract serializes");
+        assert!(!encoded.contains("unknown"), "{encoded}");
+        assert!(encoded.contains("null"), "{encoded}");
+    }
+
+    /// The names carried are data, not variants, so an established value is on
+    /// the wire exactly as the source spelled it.
+    #[test]
+    fn an_established_name_is_carried_verbatim() {
+        let review = BlockedDeliveryReview {
+            record_type: Some("BlockedDelivery".to_owned()),
+            selector_field: Some("block_id".to_owned()),
+            review_fields: vec!["reason".to_owned()],
+            authority: Some("operator".to_owned()),
+            resolutions: vec![ResolutionChoice {
+                name: "requeue".to_owned(),
+                outcome: Some("pending".to_owned()),
+            }],
+        };
+        let encoded = serde_json::to_string(&review).expect("contract serializes");
+        assert!(encoded.contains("\"operator\""), "{encoded}");
+        assert!(encoded.contains("\"pending\""), "{encoded}");
+    }
+
     #[test]
     fn the_contract_contains_no_presentation_or_transport_vocabulary() {
         let review = BlockedDeliveryReview {
             record_type: Some("BlockedDelivery".to_owned()),
             selector_field: Some("block_id".to_owned()),
             review_fields: vec!["reason".to_owned()],
-            authority: ReviewAuthority::Operator,
+            authority: Some("operator".to_owned()),
             resolutions: vec![ResolutionChoice {
                 name: "requeue".to_owned(),
-                outcome: DeliveryOutcome::Pending,
+                outcome: Some("pending".to_owned()),
             }],
         };
 

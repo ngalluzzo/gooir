@@ -7,7 +7,6 @@
 use fleetd_control_lifter::{FleetdControlLift, NativeApiOperation};
 use fleetd_interaction_plan::BlockedDeliveryInteractionPlan;
 use lift_defeasible::Defeasible;
-use semantics_fleetd_control_v0::{DeliveryOutcome, ReviewAuthority};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -23,7 +22,7 @@ pub struct HttpBinding {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TargetAction {
     pub name: String,
-    pub outcome: DeliveryOutcome,
+    pub outcome: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -44,7 +43,7 @@ pub struct WebSurface {
     pub record_type: String,
     pub selector_field: String,
     pub table_columns: Vec<String>,
-    pub authority: ReviewAuthority,
+    pub authority: Option<String>,
     pub actions: Vec<WebAction>,
 }
 
@@ -60,7 +59,7 @@ pub struct TerminalSurface {
     pub record_type: String,
     pub selector_field: String,
     pub list_columns: Vec<String>,
-    pub authority: ReviewAuthority,
+    pub authority: Option<String>,
     pub action_menu: Vec<TerminalAction>,
 }
 
@@ -69,7 +68,7 @@ pub struct SemanticFingerprint {
     pub record_type: String,
     pub selector_field: String,
     pub fields: Vec<String>,
-    pub authority: ReviewAuthority,
+    pub authority: Option<String>,
     pub actions: Vec<TargetAction>,
 }
 
@@ -79,7 +78,7 @@ impl WebSurface {
             record_type: self.record_type.clone(),
             selector_field: self.selector_field.clone(),
             fields: self.table_columns.clone(),
-            authority: self.authority,
+            authority: self.authority.clone(),
             actions: self
                 .actions
                 .iter()
@@ -95,7 +94,7 @@ impl TerminalSurface {
             record_type: self.record_type.clone(),
             selector_field: self.selector_field.clone(),
             fields: self.list_columns.clone(),
-            authority: self.authority,
+            authority: self.authority.clone(),
             actions: self
                 .action_menu
                 .iter()
@@ -159,7 +158,7 @@ pub fn lower_web(
         record_type: plan.value.record_type.clone(),
         selector_field: plan.value.selector_field.clone(),
         table_columns: plan.value.visible_fields.clone(),
-        authority: plan.value.authority,
+        authority: plan.value.authority.clone(),
         actions: plan
             .value
             .choices
@@ -186,7 +185,7 @@ pub fn lower_terminal(
         record_type: plan.value.record_type.clone(),
         selector_field: plan.value.selector_field.clone(),
         list_columns: plan.value.visible_fields.clone(),
-        authority: plan.value.authority,
+        authority: plan.value.authority.clone(),
         action_menu: plan
             .value
             .choices
@@ -280,15 +279,15 @@ mod tests {
                 record_type: "BlockedDelivery".to_owned(),
                 selector_field: "block_id".to_owned(),
                 visible_fields: vec!["block_id".to_owned(), "reason".to_owned()],
-                authority: ReviewAuthority::Operator,
+                authority: Some("operator".to_owned()),
                 choices: vec![
                     ResolutionChoice {
                         name: "requeue".to_owned(),
-                        outcome: DeliveryOutcome::Pending,
+                        outcome: Some("pending".to_owned()),
                     },
                     ResolutionChoice {
                         name: "abandon".to_owned(),
-                        outcome: DeliveryOutcome::Dead,
+                        outcome: Some("dead".to_owned()),
                     },
                 ],
             },

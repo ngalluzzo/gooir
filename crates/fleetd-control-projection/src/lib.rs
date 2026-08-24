@@ -7,9 +7,15 @@
 
 use fleetd_control_lifter::FleetdControlLift;
 use lift_defeasible::{Defeasible, Defeat, DefeatKind};
-use semantics_fleetd_control_v0::{
-    BlockedDeliveryReview, DeliveryOutcome, ResolutionChoice, ReviewAuthority,
-};
+use semantics_fleetd_control_v0::{BlockedDeliveryReview, ResolutionChoice};
+
+/// The delivery states this projection is prepared to carry. Vetting lives here
+/// rather than in the contract's type, so an unrecognised state can be reported
+/// by name instead of collapsing into an anonymous unknown.
+pub const VETTED_OUTCOMES: [&str; 2] = ["pending", "dead"];
+
+/// The authority name Fleetd's operator guards establish.
+pub const AUTHORITY_OPERATOR: &str = "operator";
 
 pub const DEFEATER_SET: &str = "org.gooi.projection.fleetd_control/defeaters@1";
 
@@ -17,9 +23,9 @@ pub fn project_blocked_delivery_review(
     lifted: &FleetdControlLift,
 ) -> Defeasible<BlockedDeliveryReview> {
     let authority = if lifted.list_operator_guarded && lifted.resolve_operator_guarded {
-        ReviewAuthority::Operator
+        Some(AUTHORITY_OPERATOR.to_owned())
     } else {
-        ReviewAuthority::Unknown
+        None
     };
     let mut projected = Defeasible::new(
         BlockedDeliveryReview {
@@ -34,17 +40,23 @@ pub fn project_blocked_delivery_review(
 
     for resolution in &lifted.resolutions {
         let outcome = match resolution.resulting_state.as_deref() {
-            Some("pending") => DeliveryOutcome::Pending,
-            Some("dead") => DeliveryOutcome::Dead,
+            Some(state) if VETTED_OUTCOMES.contains(&state) => Some(state.to_owned()),
             Some(state) => {
                 projected.defeat(Defeat::new(
                     DefeatKind::LookedAndBlocked,
                     format!("resolution:{}.outcome", resolution.wire_name),
                     format!("Fleetd delivery state {state:?} has no meaning in this contract"),
                 ));
-                DeliveryOutcome::Unknown
+                None
             }
-            None => DeliveryOutcome::Unknown,
+            None => {
+                projected.defeat(Defeat::new(
+                    DefeatKind::LookedAndBlocked,
+                    format!("resolution:{}.outcome", resolution.wire_name),
+                    "the lift established no resulting delivery state".to_owned(),
+                ));
+                None
+            }
         };
         projected.value.resolutions.push(ResolutionChoice {
             name: resolution.wire_name.clone(),
@@ -124,14 +136,24 @@ mod tests {
         let projected = project_blocked_delivery_review(&native());
 
         assert_eq!(projected.completeness(), Completeness::Exhaustive);
-        assert_eq!(projected.value.authority, ReviewAuthority::Operator);
+        assert_eq!(projected.value.authority.as_deref(), Some("operator"));
         assert_eq!(
-            projected.value.resolution("requeue").unwrap().outcome,
-            DeliveryOutcome::Pending
+            projected
+                .value
+                .resolution("requeue")
+                .unwrap()
+                .outcome
+                .as_deref(),
+            Some("pending")
         );
         assert_eq!(
-            projected.value.resolution("abandon").unwrap().outcome,
-            DeliveryOutcome::Dead
+            projected
+                .value
+                .resolution("abandon")
+                .unwrap()
+                .outcome
+                .as_deref(),
+            Some("dead")
         );
     }
 
@@ -149,10 +171,29 @@ mod tests {
         let projected = project_blocked_delivery_review(&lifted);
 
         assert_eq!(projected.completeness(), Completeness::Partial);
-        assert_eq!(projected.value.authority, ReviewAuthority::Unknown);
-        assert_eq!(
-            projected.value.resolution("requeue").unwrap().outcome,
-            DeliveryOutcome::Unknown
+        assert_eq!(projected.value.authority, None);
+        assert_eq!(projected.value.resolution("requeue").unwrap().outcome, None);
+    }
+
+    /// The vetted set lives in this projection, not in the contract's type, so
+    /// an unrecognised state is reported by name rather than collapsing into an
+    /// anonymous unknown.
+    #[test]
+    fn an_unvetted_delivery_state_is_refused_by_name() {
+        let mut lifted = native();
+        lifted.resolutions[0].resulting_state = Some("quarantined".to_owned());
+
+        let projected = project_blocked_delivery_review(&lifted);
+
+        assert_eq!(projected.value.resolution("requeue").unwrap().outcome, None);
+        assert!(
+            projected
+                .defeats
+                .iter()
+                .any(|d| d.reason.contains("quarantined")),
+            "the observed name must survive into the defeat: {:?}",
+            projected.defeats
         );
+        assert!(!VETTED_OUTCOMES.contains(&"quarantined"));
     }
 }
