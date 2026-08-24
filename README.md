@@ -69,7 +69,17 @@ as a machine-readable capability need plus `runnable_web_request`, which binds
 that need to the exact web-target fact for Fleetd consumption. Capability
 meaning is independent of whether a later provider is an in-process pass,
 external compiler, or agent.
+
+The return path is now explicit as well. Fleetd can strictly lift a durable
+provider attempt into an exact, still-unverified `CapabilityCandidate`. GOOIR
+accepts candidate facts only after a separately identified implementation runs
+the request's exact conformance suite. Passing facts carry request, candidate,
+provider implementation, input, and conformance-result identities in their
+derivation; a failing suite produces a durable report and no admitted facts.
+The checked-in cross-repository fixture intentionally fails conformance to
+prove that successful transport cannot masquerade as a runnable artifact.
 See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
+See also [decision 0012](docs/DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 
 ## Development
 

@@ -116,6 +116,18 @@ pub enum FactDerivation {
         provider: ProviderId,
         inputs: Vec<String>,
     },
+    /// An out-of-process candidate admitted only after an independent exact
+    /// conformance suite passed. The referenced request, candidate, and result
+    /// documents carry the rest of the immutable evidence chain.
+    Admitted {
+        capability: CapabilityId,
+        provider: ProviderId,
+        provider_implementation: String,
+        inputs: Vec<String>,
+        request: String,
+        candidate: String,
+        conformance_result: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -148,7 +160,7 @@ impl FactInstance {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProducedFact {
     pub fact_type: FactType,
     pub coverage: FactCoverage,
@@ -250,9 +262,215 @@ impl CapabilityRequest {
             produces: need.produces.clone(),
             conformance_suite: need.conformance_suite.clone(),
         };
+        validate_request_body(&body)?;
         let request_id = request_digest(&body)?;
         Ok(Self { request_id, body })
     }
+
+    /// Revalidates a deserialized request and its content-derived identity.
+    pub fn validate(&self) -> Result<(), CapabilityRequestError> {
+        validate_request_body(&self.body)?;
+        let expected = request_digest(&self.body)?;
+        if self.request_id != expected {
+            return Err(CapabilityRequestError::IdentityMismatch {
+                expected,
+                actual: self.request_id.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Opaque, content-bound reference to the durable provider attempt from which
+/// a candidate was extracted. GOOIR need not understand the orchestrator's
+/// invocation, lease, session, or fencing model.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AttemptEvidence {
+    pub authority: String,
+    pub attempt_id: String,
+    pub invocation_id: String,
+    pub evidence_digest: String,
+}
+
+/// Digest-bearing portion of one unverified provider candidate.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityCandidateBody {
+    pub request_id: String,
+    pub provider: ProviderDescriptor,
+    pub outputs: Vec<ProducedFact>,
+    pub attempt: AttemptEvidence,
+}
+
+/// Exact proposed outputs extracted from a provider attempt. A candidate is
+/// syntactically bound to the request but remains untrusted and unadmitted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityCandidate {
+    pub candidate_id: String,
+    #[serde(flatten)]
+    pub body: CapabilityCandidateBody,
+}
+
+impl CapabilityCandidate {
+    pub fn bind(
+        request: &CapabilityRequest,
+        provider: ProviderDescriptor,
+        outputs: Vec<ProducedFact>,
+        attempt: AttemptEvidence,
+    ) -> Result<Self, CapabilityCandidateError> {
+        request
+            .validate()
+            .map_err(CapabilityCandidateError::Request)?;
+        let body = CapabilityCandidateBody {
+            request_id: request.request_id.clone(),
+            provider,
+            outputs,
+            attempt,
+        };
+        validate_candidate_body(request, &body)?;
+        let candidate_id = canonical_digest(&body)
+            .map_err(|error| CapabilityCandidateError::Serialization(error.to_string()))?;
+        Ok(Self { candidate_id, body })
+    }
+
+    pub fn validate(&self, request: &CapabilityRequest) -> Result<(), CapabilityCandidateError> {
+        request
+            .validate()
+            .map_err(CapabilityCandidateError::Request)?;
+        validate_candidate_body(request, &self.body)?;
+        let expected = canonical_digest(&self.body)
+            .map_err(|error| CapabilityCandidateError::Serialization(error.to_string()))?;
+        if self.candidate_id != expected {
+            return Err(CapabilityCandidateError::IdentityMismatch {
+                expected,
+                actual: self.candidate_id.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConformanceOutcome {
+    Passed,
+    Failed,
+}
+
+/// One named observation made by an exact conformance provider.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ConformanceCheck {
+    pub name: String,
+    pub outcome: ConformanceOutcome,
+    pub evidence: Value,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ConformanceProviderDescriptor {
+    pub id: ProviderId,
+    pub suite: String,
+    pub implementation_digest: String,
+}
+
+/// Product- or dialect-specific verifier behind the generic admission waist.
+/// It receives exact immutable inputs and returns named observations; it does
+/// not construct trusted facts itself.
+pub trait CapabilityConformanceProvider: Send + Sync {
+    fn descriptor(&self) -> ConformanceProviderDescriptor;
+
+    fn verify(
+        &self,
+        request: &CapabilityRequest,
+        candidate: &CapabilityCandidate,
+    ) -> Result<Vec<ConformanceCheck>, String>;
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityConformanceBody {
+    pub request_id: String,
+    pub candidate_id: String,
+    pub suite: String,
+    pub attester: ProviderId,
+    pub attester_implementation: String,
+    pub outcome: ConformanceOutcome,
+    pub checks: Vec<ConformanceCheck>,
+}
+
+/// Immutable result of independently evaluating one exact candidate.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityConformanceResult {
+    pub result_id: String,
+    #[serde(flatten)]
+    pub body: CapabilityConformanceBody,
+}
+
+/// A conformance result plus any facts it made eligible for graph admission.
+/// Failed conformance is a valid report with an empty fact set.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CapabilityAdmission {
+    pub conformance: CapabilityConformanceResult,
+    pub facts: Vec<FactInstance>,
+}
+
+pub fn verify_and_admit(
+    request: &CapabilityRequest,
+    candidate: &CapabilityCandidate,
+    verifier: &dyn CapabilityConformanceProvider,
+) -> Result<CapabilityAdmission, CapabilityAdmissionError> {
+    candidate
+        .validate(request)
+        .map_err(CapabilityAdmissionError::Candidate)?;
+    let descriptor = verifier.descriptor();
+    validate_conformance_provider(&descriptor)?;
+    if descriptor.suite != request.body.conformance_suite {
+        return Err(CapabilityAdmissionError::SuiteMismatch {
+            expected: request.body.conformance_suite.clone(),
+            actual: descriptor.suite,
+        });
+    }
+    if descriptor.id == candidate.body.provider.id
+        || descriptor.implementation_digest == candidate.body.provider.implementation_digest
+    {
+        return Err(CapabilityAdmissionError::VerifierNotIndependent);
+    }
+    let checks = verifier
+        .verify(request, candidate)
+        .map_err(CapabilityAdmissionError::VerifierFailed)?;
+    if checks.is_empty() {
+        return Err(CapabilityAdmissionError::NoChecks);
+    }
+    for check in &checks {
+        if check.name.trim().is_empty() {
+            return Err(CapabilityAdmissionError::InvalidCheck(
+                "check name is empty".to_owned(),
+            ));
+        }
+    }
+    let outcome = if checks
+        .iter()
+        .all(|check| check.outcome == ConformanceOutcome::Passed)
+    {
+        ConformanceOutcome::Passed
+    } else {
+        ConformanceOutcome::Failed
+    };
+    let body = CapabilityConformanceBody {
+        request_id: request.request_id.clone(),
+        candidate_id: candidate.candidate_id.clone(),
+        suite: request.body.conformance_suite.clone(),
+        attester: descriptor.id,
+        attester_implementation: descriptor.implementation_digest,
+        outcome,
+        checks,
+    };
+    let result_id = canonical_digest(&body)
+        .map_err(|error| CapabilityAdmissionError::Serialization(error.to_string()))?;
+    let conformance = CapabilityConformanceResult { result_id, body };
+    let facts = if outcome == ConformanceOutcome::Passed {
+        admitted_facts(request, candidate, &conformance)?
+    } else {
+        Vec::new()
+    };
+    Ok(CapabilityAdmission { conformance, facts })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -562,13 +780,260 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
 }
 
 fn validate_provider(descriptor: &ProviderDescriptor) -> Result<(), RegistryError> {
-    if !descriptor.implementation_digest.starts_with("sha256:") {
+    if !is_sha256_identity(&descriptor.implementation_digest) {
         return Err(RegistryError::InvalidProvider {
             provider: descriptor.id.clone(),
             reason: "implementation digest must be a sha256 identity".to_owned(),
         });
     }
     Ok(())
+}
+
+fn validate_request_body(body: &CapabilityRequestBody) -> Result<(), CapabilityRequestError> {
+    validate_exact_identity(
+        "capability",
+        &body.capability.package,
+        &body.capability.name,
+        &body.capability.version,
+    )?;
+    if body.conformance_suite.trim().is_empty() {
+        return Err(CapabilityRequestError::InvalidNeed(
+            "conformance suite is empty".to_owned(),
+        ));
+    }
+    if body.produces.is_empty() {
+        return Err(CapabilityRequestError::InvalidNeed(
+            "produced fact set is empty".to_owned(),
+        ));
+    }
+    let required = body
+        .requires
+        .iter()
+        .map(|requirement| {
+            validate_exact_identity(
+                "required fact",
+                &requirement.fact.package,
+                &requirement.fact.name,
+                &requirement.fact.version,
+            )?;
+            Ok(requirement.fact.clone())
+        })
+        .collect::<Result<BTreeSet<_>, CapabilityRequestError>>()?;
+    if required.len() != body.requires.len() {
+        return Err(CapabilityRequestError::InvalidNeed(
+            "duplicate required fact identity".to_owned(),
+        ));
+    }
+    let produced = body
+        .produces
+        .iter()
+        .map(|fact| {
+            validate_exact_identity("produced fact", &fact.package, &fact.name, &fact.version)?;
+            Ok(fact.clone())
+        })
+        .collect::<Result<BTreeSet<_>, CapabilityRequestError>>()?;
+    if produced.len() != body.produces.len() {
+        return Err(CapabilityRequestError::InvalidNeed(
+            "duplicate produced fact identity".to_owned(),
+        ));
+    }
+    let mut inputs = BTreeMap::new();
+    for input in &body.inputs {
+        validate_exact_identity(
+            "input fact",
+            &input.fact_type.package,
+            &input.fact_type.name,
+            &input.fact_type.version,
+        )?;
+        if inputs.insert(input.fact_type.clone(), input).is_some() {
+            return Err(CapabilityRequestError::DuplicateInput(
+                input.fact_type.clone(),
+            ));
+        }
+        if !is_sha256_identity(&input.id) {
+            return Err(CapabilityRequestError::InvalidFactIdentity(
+                input.id.clone(),
+            ));
+        }
+        let expected = fact_digest(
+            &input.fact_type,
+            input.coverage,
+            &input.payload,
+            &input.derivation,
+        )
+        .map_err(|error| CapabilityRequestError::Serialization(error.to_string()))?;
+        if input.id != expected {
+            return Err(CapabilityRequestError::InvalidFactIdentity(
+                input.id.clone(),
+            ));
+        }
+    }
+    for requirement in &body.requires {
+        let input = inputs
+            .remove(&requirement.fact)
+            .ok_or_else(|| CapabilityRequestError::MissingInput(requirement.fact.clone()))?;
+        if requirement.acceptance == FactAcceptance::CompleteOnly
+            && input.coverage == FactCoverage::Partial
+        {
+            return Err(CapabilityRequestError::PartialInputRejected(
+                requirement.fact.clone(),
+            ));
+        }
+    }
+    if let Some(unexpected) = inputs.into_keys().next() {
+        return Err(CapabilityRequestError::UnexpectedInput(unexpected));
+    }
+    Ok(())
+}
+
+fn validate_candidate_body(
+    request: &CapabilityRequest,
+    body: &CapabilityCandidateBody,
+) -> Result<(), CapabilityCandidateError> {
+    if body.request_id != request.request_id {
+        return Err(CapabilityCandidateError::RequestMismatch {
+            expected: request.request_id.clone(),
+            actual: body.request_id.clone(),
+        });
+    }
+    validate_exact_identity(
+        "provider",
+        &body.provider.id.package,
+        &body.provider.id.name,
+        &body.provider.id.version,
+    )
+    .map_err(|error| {
+        CapabilityCandidateError::Provider(RegistryError::InvalidProvider {
+            provider: body.provider.id.clone(),
+            reason: error.to_string(),
+        })
+    })?;
+    validate_provider(&body.provider).map_err(CapabilityCandidateError::Provider)?;
+    if body.provider.capability != request.body.capability {
+        return Err(CapabilityCandidateError::ProviderCapabilityMismatch);
+    }
+    let actual = body
+        .outputs
+        .iter()
+        .map(|output| output.fact_type.clone())
+        .collect::<Vec<_>>();
+    let actual_set = actual.iter().collect::<BTreeSet<_>>();
+    let expected_set = request.body.produces.iter().collect::<BTreeSet<_>>();
+    if actual.len() != actual_set.len() || actual_set != expected_set {
+        return Err(CapabilityCandidateError::OutputContractViolation {
+            expected: request.body.produces.clone(),
+            actual,
+        });
+    }
+    if body.attempt.authority.trim().is_empty()
+        || body.attempt.attempt_id.trim().is_empty()
+        || body.attempt.invocation_id.trim().is_empty()
+    {
+        return Err(CapabilityCandidateError::InvalidAttempt(
+            "attempt authority and identities must not be empty".to_owned(),
+        ));
+    }
+    if !is_sha256_identity(&body.attempt.evidence_digest) {
+        return Err(CapabilityCandidateError::InvalidAttempt(
+            "attempt evidence digest must be a sha256 identity".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_conformance_provider(
+    descriptor: &ConformanceProviderDescriptor,
+) -> Result<(), CapabilityAdmissionError> {
+    validate_exact_identity(
+        "conformance provider",
+        &descriptor.id.package,
+        &descriptor.id.name,
+        &descriptor.id.version,
+    )
+    .map_err(|error| CapabilityAdmissionError::InvalidVerifier(error.to_string()))?;
+    if descriptor.suite.trim().is_empty() {
+        return Err(CapabilityAdmissionError::InvalidVerifier(
+            "conformance suite is empty".to_owned(),
+        ));
+    }
+    if !is_sha256_identity(&descriptor.implementation_digest) {
+        return Err(CapabilityAdmissionError::InvalidVerifier(
+            "implementation digest must be a sha256 identity".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn admitted_facts(
+    request: &CapabilityRequest,
+    candidate: &CapabilityCandidate,
+    conformance: &CapabilityConformanceResult,
+) -> Result<Vec<FactInstance>, CapabilityAdmissionError> {
+    let input_ids = request
+        .body
+        .inputs
+        .iter()
+        .map(|input| input.id.clone())
+        .collect::<Vec<_>>();
+    candidate
+        .body
+        .outputs
+        .iter()
+        .map(|output| {
+            let derivation = FactDerivation::Admitted {
+                capability: request.body.capability.clone(),
+                provider: candidate.body.provider.id.clone(),
+                provider_implementation: candidate.body.provider.implementation_digest.clone(),
+                inputs: input_ids.clone(),
+                request: request.request_id.clone(),
+                candidate: candidate.candidate_id.clone(),
+                conformance_result: conformance.result_id.clone(),
+            };
+            let id = fact_digest(
+                &output.fact_type,
+                output.coverage,
+                &output.payload,
+                &derivation,
+            )
+            .map_err(CapabilityAdmissionError::Registry)?;
+            Ok(FactInstance {
+                id,
+                fact_type: output.fact_type.clone(),
+                coverage: output.coverage,
+                payload: output.payload.clone(),
+                derivation,
+            })
+        })
+        .collect()
+}
+
+fn validate_exact_identity(
+    label: &str,
+    package: &str,
+    name: &str,
+    version: &str,
+) -> Result<(), CapabilityRequestError> {
+    if package.trim().is_empty() || name.trim().is_empty() || version.trim().is_empty() {
+        return Err(CapabilityRequestError::InvalidNeed(format!(
+            "{label} identity contains an empty part"
+        )));
+    }
+    Ok(())
+}
+
+fn is_sha256_identity(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+fn canonical_digest(value: &impl Serialize) -> Result<String, String> {
+    serde_json_canonicalizer::to_vec(value)
+        .map(|bytes| sha256_identity(&bytes))
+        .map_err(|error| error.to_string())
 }
 
 fn validate_outputs(spec: &CapabilitySpec, outputs: &[ProducedFact]) -> Result<(), ExecutionError> {
@@ -646,6 +1111,8 @@ pub enum CapabilityRequestError {
     UnexpectedInput(FactType),
     MissingInput(FactType),
     PartialInputRejected(FactType),
+    InvalidFactIdentity(String),
+    IdentityMismatch { expected: String, actual: String },
     Serialization(String),
 }
 
@@ -656,6 +1123,56 @@ impl fmt::Display for CapabilityRequestError {
 }
 
 impl Error for CapabilityRequestError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CapabilityCandidateError {
+    Request(CapabilityRequestError),
+    RequestMismatch {
+        expected: String,
+        actual: String,
+    },
+    Provider(RegistryError),
+    ProviderCapabilityMismatch,
+    OutputContractViolation {
+        expected: Vec<FactType>,
+        actual: Vec<FactType>,
+    },
+    InvalidAttempt(String),
+    IdentityMismatch {
+        expected: String,
+        actual: String,
+    },
+    Serialization(String),
+}
+
+impl fmt::Display for CapabilityCandidateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for CapabilityCandidateError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CapabilityAdmissionError {
+    Candidate(CapabilityCandidateError),
+    InvalidVerifier(String),
+    SuiteMismatch { expected: String, actual: String },
+    VerifierNotIndependent,
+    VerifierFailed(String),
+    NoChecks,
+    InvalidCheck(String),
+    Serialization(String),
+    Registry(RegistryError),
+}
+
+impl fmt::Display for CapabilityAdmissionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{self:?}")
+    }
+}
+
+impl Error for CapabilityAdmissionError {}
 
 impl fmt::Display for RegistryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -930,5 +1447,195 @@ mod tests {
         assert_ne!(first_request.request_id, changed.request_id);
         assert_eq!(first_request.body.capability, need.capability);
         assert_eq!(first_request.body.inputs.len(), 1);
+    }
+
+    #[test]
+    fn source_capability_request_may_have_no_inputs() {
+        let need = CapabilityNeed {
+            capability: CapabilityId::new("test", "discover", "1"),
+            requires: Vec::new(),
+            produces: vec![fact("discovered")],
+            conformance_suite: "test/discover@1".to_owned(),
+            reason: "no provider".to_owned(),
+        };
+
+        let request = CapabilityRequest::bind(&need, Vec::new()).unwrap();
+        request.validate().unwrap();
+        assert!(request.body.inputs.is_empty());
+    }
+
+    struct FixedVerifier {
+        descriptor: ConformanceProviderDescriptor,
+        outcome: ConformanceOutcome,
+    }
+
+    impl CapabilityConformanceProvider for FixedVerifier {
+        fn descriptor(&self) -> ConformanceProviderDescriptor {
+            self.descriptor.clone()
+        }
+
+        fn verify(
+            &self,
+            _: &CapabilityRequest,
+            _: &CapabilityCandidate,
+        ) -> Result<Vec<ConformanceCheck>, String> {
+            Ok(vec![ConformanceCheck {
+                name: "exact-output-semantics".to_owned(),
+                outcome: self.outcome,
+                evidence: json!({"fixture": true}),
+            }])
+        }
+    }
+
+    fn external_candidate() -> (CapabilityRequest, CapabilityCandidate) {
+        let source = fact("external_source");
+        let target = fact("external_target");
+        let need = CapabilityNeed {
+            capability: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
+            requires: vec![Requirement::complete(source.clone())],
+            produces: vec![target.clone()],
+            conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+            reason: "no installed provider".to_owned(),
+        };
+        let input = FactInstance::initial(
+            source,
+            FactCoverage::Complete,
+            json!({"intent": "exact"}),
+            "fixture@1",
+        )
+        .unwrap();
+        let request = CapabilityRequest::bind(&need, vec![input]).unwrap();
+        let candidate = CapabilityCandidate::bind(
+            &request,
+            ProviderDescriptor {
+                id: ProviderId::new("test.provider", "external_agent", "1.0.0"),
+                capability: need.capability,
+                implementation_digest: format!("sha256:{}", "a".repeat(64)),
+            },
+            vec![ProducedFact {
+                fact_type: target,
+                coverage: FactCoverage::Complete,
+                payload: json!({"artifact": "candidate"}),
+            }],
+            AttemptEvidence {
+                authority: "test.orchestrator/fleet@1".to_owned(),
+                attempt_id: "attempt-1".to_owned(),
+                invocation_id: "invocation-1".to_owned(),
+                evidence_digest: format!("sha256:{}", "b".repeat(64)),
+            },
+        )
+        .unwrap();
+        (request, candidate)
+    }
+
+    fn verifier(outcome: ConformanceOutcome) -> FixedVerifier {
+        FixedVerifier {
+            descriptor: ConformanceProviderDescriptor {
+                id: ProviderId::new("test.conformance", "external_suite", "1.0.0"),
+                suite: "test.conformance/external_generate@1.0.0".to_owned(),
+                implementation_digest: format!("sha256:{}", "c".repeat(64)),
+            },
+            outcome,
+        }
+    }
+
+    #[test]
+    fn candidate_identity_binds_request_provider_outputs_and_attempt() {
+        let (request, candidate) = external_candidate();
+        candidate.validate(&request).unwrap();
+        let replay = CapabilityCandidate::bind(
+            &request,
+            candidate.body.provider.clone(),
+            candidate.body.outputs.clone(),
+            candidate.body.attempt.clone(),
+        )
+        .unwrap();
+        assert_eq!(candidate.candidate_id, replay.candidate_id);
+
+        let mut changed = candidate.clone();
+        changed.body.outputs[0].payload = json!({"artifact": "different"});
+        assert!(matches!(
+            changed.validate(&request),
+            Err(CapabilityCandidateError::IdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn independent_passing_conformance_admits_exact_candidate_facts() {
+        let (request, candidate) = external_candidate();
+        let admission =
+            verify_and_admit(&request, &candidate, &verifier(ConformanceOutcome::Passed)).unwrap();
+
+        assert_eq!(
+            admission.conformance.body.outcome,
+            ConformanceOutcome::Passed
+        );
+        assert_eq!(admission.facts.len(), 1);
+        let FactDerivation::Admitted {
+            request: bound_request,
+            candidate: bound_candidate,
+            conformance_result,
+            ..
+        } = &admission.facts[0].derivation
+        else {
+            panic!("candidate fact must carry admitted derivation")
+        };
+        assert_eq!(bound_request, &request.request_id);
+        assert_eq!(bound_candidate, &candidate.candidate_id);
+        assert_eq!(conformance_result, &admission.conformance.result_id);
+
+        let mut registry = CapabilityRegistry::default();
+        registry
+            .register_spec(CapabilitySpec {
+                id: request.body.capability.clone(),
+                requires: request.body.requires.clone(),
+                produces: request.body.produces.clone(),
+                conformance_suite: request.body.conformance_suite.clone(),
+            })
+            .unwrap();
+        let admitted = admission.facts[0].clone();
+        let resumed = registry
+            .plan([admitted.fact_type.clone()], &admitted.fact_type)
+            .unwrap();
+        assert!(resumed.is_executable());
+        assert!(resumed.needs.is_empty());
+        assert_eq!(
+            registry
+                .execute(&resumed, vec![admitted.clone()])
+                .unwrap()
+                .target,
+            admitted
+        );
+    }
+
+    #[test]
+    fn failed_conformance_is_preserved_without_admitting_facts() {
+        let (request, candidate) = external_candidate();
+        let admission =
+            verify_and_admit(&request, &candidate, &verifier(ConformanceOutcome::Failed)).unwrap();
+
+        assert_eq!(
+            admission.conformance.body.outcome,
+            ConformanceOutcome::Failed
+        );
+        assert!(admission.facts.is_empty());
+    }
+
+    #[test]
+    fn generating_provider_cannot_attest_its_own_candidate() {
+        let (request, candidate) = external_candidate();
+        let self_verifier = FixedVerifier {
+            descriptor: ConformanceProviderDescriptor {
+                id: candidate.body.provider.id.clone(),
+                suite: request.body.conformance_suite.clone(),
+                implementation_digest: format!("sha256:{}", "d".repeat(64)),
+            },
+            outcome: ConformanceOutcome::Passed,
+        };
+
+        assert_eq!(
+            verify_and_admit(&request, &candidate, &self_verifier),
+            Err(CapabilityAdmissionError::VerifierNotIndependent)
+        );
     }
 }

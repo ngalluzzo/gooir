@@ -55,7 +55,23 @@ capability, requirements, facts, expected outputs, and conformance suite. The
 request contains no agent, harness, transport, authority, or lease. An
 orchestrator such as Fleetd adds those execution concerns durably.
 
+The return boundary is a strict lift, not trust by response shape. A
+`CapabilityCandidate` binds one request to an exact semantic provider,
+implementation digest, output fact set, and opaque digest of the durable
+attempt. Candidate identity uses the same RFC 8785/SHA-256 convention. It says
+only what was proposed.
+
+Admission requires a separately identified conformance provider whose exact
+suite matches the request. The generating provider cannot attest its own
+candidate, and sharing its implementation digest with the verifier also fails
+closed. A failing check remains an immutable conformance result with no facts.
+A passing result constructs facts whose derivations bind the exact request,
+candidate, inputs, provider implementation, and conformance result. The result
+is still evidence subject to the consuming host's contextual trust policy; it
+is not universal proof.
+
 See [decision 0011](DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
+See [decision 0012](DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 
 ## Multiple semantic waists
 

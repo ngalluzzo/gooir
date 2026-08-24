@@ -42,9 +42,13 @@ Status: first in-process derivation and providerless need implemented on
 The generic registry reconstructs the existing Fleetd multi-dialect pipeline
 from exact typed capability edges and executes the web and terminal targets
 with full fact derivation provenance. A declared but unimplemented runnable-web
-edge becomes a machine-readable capability need. The next milestone is to have
-Fleetd turn that need into a durable, provider-neutral work contract and admit
-the result through explicit checks. The first half now works end to end: GOOIR
-binds the need to an exact input fact and Fleetd carries it through an
-owner-fenced provider attempt. Candidate extraction and conformance admission
-remain next.
+edge becomes a machine-readable capability need. GOOIR binds that need to an
+exact input fact and Fleetd carries it through an owner-fenced provider
+attempt. The generic return path now works: Fleetd strictly extracts an exact
+candidate, both repositories agree on its content identity, and GOOIR admits
+facts only through a separately identified matching conformance provider.
+
+The current cross-repository fixture intentionally fails the named runnable-web
+suite and therefore admits no facts. The next product step is the real
+`dev.fleetd.conformance.runnable_web_surface@0.1.0` implementation and a genuine
+agent-produced artifact, followed by re-planning with the admitted fact.
