@@ -16,6 +16,7 @@ members = [
     "crates/prisma-schema-lowering",
     "crates/retry-safety-analysis",
     "crates/semantics-data-model-v1",
+    "crates/sql-ddl-lowering",
     "crates/semantics-effects-v1",
     "crates/semantics-software-surface-v1",
     "crates/surface-completeness-analysis",
@@ -47,6 +48,7 @@ prisma-schema-lifter = { path = "crates/prisma-schema-lifter" }
 prisma-schema-lowering = { path = "crates/prisma-schema-lowering" }
 retry-safety-analysis = { path = "crates/retry-safety-analysis" }
 semantics-data-model-v1 = { path = "crates/semantics-data-model-v1" }
+sql-ddl-lowering = { path = "crates/sql-ddl-lowering" }
 semantics-effects-v1 = { path = "crates/semantics-effects-v1" }
 semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" }
 surface-completeness-analysis = { path = "crates/surface-completeness-analysis" }

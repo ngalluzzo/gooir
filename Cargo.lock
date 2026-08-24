@@ -120,6 +120,7 @@ dependencies = [
  "prisma-schema-lifter",
  "prisma-schema-lowering",
  "semantics-data-model-v1",
+ "sql-ddl-lowering",
 ]
 
 [[package]]
@@ -362,6 +363,13 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "sql-ddl-lowering"
+version = "0.1.0"
+dependencies = [
+ "semantics-data-model-v1",
 ]
 
 [[package]]
