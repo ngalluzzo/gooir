@@ -163,6 +163,52 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "fleetd-control-lifter"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn",
+]
+
+[[package]]
+name = "fleetd-control-projection"
+version = "0.1.0"
+dependencies = [
+ "fleetd-control-lifter",
+ "fleetd-interaction-plan",
+ "fleetd-surface-lowering",
+ "lift-defeasible",
+ "openapi-lifter",
+ "semantics-fleetd-control-v0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "fleetd-interaction-plan"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "semantics-data-model-v1",
+ "semantics-fleetd-control-v0",
+ "serde",
+]
+
+[[package]]
+name = "fleetd-surface-lowering"
+version = "0.1.0"
+dependencies = [
+ "fleetd-control-lifter",
+ "fleetd-interaction-plan",
+ "lift-defeasible",
+ "semantics-fleetd-control-v0",
+ "serde",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -330,6 +376,14 @@ name = "semantics-effects-v1"
 version = "0.1.0"
 dependencies = [
  "gooir-core",
+ "serde_json",
+]
+
+[[package]]
+name = "semantics-fleetd-control-v0"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "serde_json",
 ]
 

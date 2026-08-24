@@ -70,6 +70,11 @@ fn scalar_of(schema: &Value) -> Option<ScalarType> {
 }
 
 /// Resource schema names, read from the item type of each collection response.
+///
+/// A collection may be represented either directly as an array response or as
+/// a named response envelope whose `data` property is an array. Both forms are
+/// common in generated OpenAPI documents; neither is more semantically
+/// authoritative than the other.
 fn resource_names(doc: &Value) -> Vec<String> {
     let mut out = Vec::new();
     let Some(paths) = doc.get("paths").and_then(Value::as_object) else {
@@ -86,16 +91,18 @@ fn resource_names(doc: &Value) -> Vec<String> {
         else {
             continue;
         };
-        let Some(list_name) = ref_name(list) else {
-            continue;
+        let items = if list.get("type").and_then(Value::as_str) == Some("array") {
+            list.get("items")
+        } else {
+            ref_name(list).and_then(|list_name| {
+                doc.get("components")
+                    .and_then(|c| c.get("schemas"))
+                    .and_then(|s| s.get(&list_name))
+                    .and_then(|s| s.get("properties"))
+                    .and_then(|p| p.get("data"))
+                    .and_then(|d| d.get("items"))
+            })
         };
-        let items = doc
-            .get("components")
-            .and_then(|c| c.get("schemas"))
-            .and_then(|s| s.get(&list_name))
-            .and_then(|s| s.get("properties"))
-            .and_then(|p| p.get("data"))
-            .and_then(|d| d.get("items"));
         if let Some(name) = items.and_then(ref_name).filter(|n| !out.contains(n)) {
             out.push(name);
         }
@@ -282,6 +289,36 @@ mod tests {
     fn resources_are_found_through_the_collection_response() {
         let l = lift_document(&doc());
         assert_eq!(l.value.entity_names(), vec!["user"]);
+    }
+
+    #[test]
+    fn resources_are_found_in_direct_array_responses() {
+        let doc = json!({
+          "openapi": "3.1.0",
+          "paths": {"/delivery-blocks": {"get": {"responses": {"200": {"content":
+            {"application/json": {"schema": {"type": "array", "items":
+              {"$ref": "#/components/schemas/BlockedDelivery"}}}}}}}}},
+          "components": {"schemas": {
+            "BlockedDelivery": {"type":"object","required":["block_id","reason"],
+              "properties": {
+                "block_id": {"type":"integer","format":"int64"},
+                "reason": {"type":"string"}
+              }}
+          }}
+        });
+
+        let lifted = lift_document(&doc);
+
+        assert_eq!(lifted.value.entity_names(), vec!["blockeddelivery"]);
+        let blocked = lifted.value.entity("BlockedDelivery").unwrap();
+        assert_eq!(
+            blocked.field("block_id").unwrap().ty,
+            FieldType::Scalar(ScalarType::BigInteger)
+        );
+        assert_eq!(
+            blocked.field("reason").unwrap().nullable,
+            Presence::Required
+        );
     }
 
     #[test]

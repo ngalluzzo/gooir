@@ -26,6 +26,35 @@ Target packs and distributions
   compatible lowerings, runtimes, defaults, coherent UX
 ```
 
+## Multiple semantic waists
+
+GOOIR does not flatten every software domain into one universal semantic
+dialect. The microkernel is the common structural and evidentiary substrate;
+separately versioned semantic dialects may coexist and refer to the same
+subjects.
+
+```text
+source-native dialects
+  OpenAPI     Rust control flow     database catalogs
+      \              |                    /
+       \             |                   /
+        DataModel   FleetdControl   other semantic contracts
+             \        /
+          interaction projection
+             /        \
+        web target   terminal target
+```
+
+Neutrality is relative. `semantics-data-model-v1` is neutral between Prisma,
+PostgreSQL, OpenAPI, and compatible data targets; it is not a place to encode
+authority, workflow transitions, or presentation intent. Product-specific
+contracts are preferred until repeated evidence from independent products
+earns a reusable semantic dialect.
+
+A multi-hop lowering is valid only when every bridge names the meaning it
+preserves and unresolved meaning remains explicit. Mixed-dialect programs are
+expected during progressive lifting and lowering.
+
 Unknown means maximally interfering, never safe. A generic pass must not reorder, duplicate, eliminate, or otherwise reinterpret an operation unless installed contracts establish the required semantics.
 
 ## Lifting

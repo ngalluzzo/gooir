@@ -1,0 +1,12 @@
+[package]
+name = "fleetd-interaction-plan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lift-defeasible.workspace = true
+semantics-data-model-v1.workspace = true
+semantics-fleetd-control-v0.workspace = true
+serde.workspace = true
+

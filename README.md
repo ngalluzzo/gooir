@@ -41,6 +41,21 @@ The one-screen default view marks the behavior `BROKEN`, follows one Buzz agent-
 
 See the [project brief](docs/PROJECT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), and [milestones](docs/MILESTONES.md).
 
+## Fleetd multi-dialect dogfood
+
+The first Fleetd operator-surface probe composes the neutral data-model
+contract with a product-specific Fleetd control contract, then lowers the same
+interaction meaning to web and terminal target IRs:
+
+```bash
+cargo run -q -p fleetd-control-projection --bin fleetd-control-check -- \
+  /path/to/fleetd
+```
+
+The command resolves Fleetd's exact Git revision, refuses modified source
+inputs, and reads its generated OpenAPI plus the Rust guards and resolution
+implementation. See [decision 0010](docs/DECISIONS/0010_FLEETD_MULTI_DIALECT_DOGFOOD.md).
+
 ## Development
 
 ```bash

@@ -9,6 +9,10 @@ members = [
     "crates/buzz-surface-projection",
     "crates/data-model-convergence",
     "crates/entity-spec",
+    "crates/fleetd-control-lifter",
+    "crates/fleetd-control-projection",
+    "crates/fleetd-interaction-plan",
+    "crates/fleetd-surface-lowering",
     "crates/gooir-analysis",
     "crates/gooir-core",
     "crates/lift-defeasible",
@@ -22,6 +26,7 @@ members = [
     "crates/semantics-data-model-v1",
     "crates/sql-ddl-lowering",
     "crates/semantics-effects-v1",
+    "crates/semantics-fleetd-control-v0",
     "crates/semantics-software-surface-v1",
     "crates/surface-completeness-analysis",
     "crates/workflow-dialect",
@@ -44,6 +49,10 @@ buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 buzz-surface-projection = { path = "crates/buzz-surface-projection" }
 data-model-convergence = { path = "crates/data-model-convergence" }
 entity-spec = { path = "crates/entity-spec" }
+fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }
+fleetd-control-projection = { path = "crates/fleetd-control-projection" }
+fleetd-interaction-plan = { path = "crates/fleetd-interaction-plan" }
+fleetd-surface-lowering = { path = "crates/fleetd-surface-lowering" }
 gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-core = { path = "crates/gooir-core" }
 lift-defeasible = { path = "crates/lift-defeasible" }
@@ -58,6 +67,7 @@ retry-safety-analysis = { path = "crates/retry-safety-analysis" }
 semantics-data-model-v1 = { path = "crates/semantics-data-model-v1" }
 sql-ddl-lowering = { path = "crates/sql-ddl-lowering" }
 semantics-effects-v1 = { path = "crates/semantics-effects-v1" }
+semantics-fleetd-control-v0 = { path = "crates/semantics-fleetd-control-v0" }
 semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" }
 surface-completeness-analysis = { path = "crates/surface-completeness-analysis" }
 serde = { version = "1", features = ["derive"] }

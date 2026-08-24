@@ -1,0 +1,19 @@
+[package]
+name = "fleetd-control-projection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fleetd-control-lifter.workspace = true
+fleetd-interaction-plan.workspace = true
+fleetd-surface-lowering.workspace = true
+lift-defeasible.workspace = true
+openapi-lifter.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semantics-fleetd-control-v0.workspace = true
+
+[[bin]]
+name = "fleetd-control-check"
+path = "src/bin/fleetd_control_check.rs"

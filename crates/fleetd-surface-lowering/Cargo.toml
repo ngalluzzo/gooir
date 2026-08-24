@@ -1,0 +1,13 @@
+[package]
+name = "fleetd-surface-lowering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fleetd-control-lifter.workspace = true
+fleetd-interaction-plan.workspace = true
+lift-defeasible.workspace = true
+semantics-fleetd-control-v0.workspace = true
+serde.workspace = true
+
