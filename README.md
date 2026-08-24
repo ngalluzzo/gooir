@@ -85,7 +85,7 @@ direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Twenty-five decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Twenty-six decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration

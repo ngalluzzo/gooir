@@ -6,6 +6,7 @@ use gooir_datamodel_pack::{
     AuthoredSpec, authored_entity_spec_fact, authored_fact, data_model_fact, openapi_surface_fact,
     postgres_ddl_fact, register, typescript_types_fact,
 };
+use lift_defeasible::Defeasible;
 
 const SPEC: &str = "\
 entity Team
@@ -124,4 +125,64 @@ fn openapi_lowering_declares_what_a_document_cannot_carry() {
     // JSON Schema cannot express identity, uniqueness, defaults or relations,
     // so the artifact is honestly partial rather than silently lossless.
     assert_eq!(report.target.coverage, FactCoverage::Partial);
+}
+
+#[test]
+fn the_checked_in_example_exercises_the_whole_authored_graph() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("workspace root");
+    let path = root.join("examples/tasks.entities");
+    let text = std::fs::read_to_string(&path).expect("checked-in example");
+    let source = authored_fact(path.display().to_string(), &text).expect("source fact");
+    let r = registry();
+
+    let model_plan = r
+        .plan([authored_entity_spec_fact()], &data_model_fact())
+        .expect("data model route");
+    let model = r
+        .execute(&model_plan, vec![source.clone()])
+        .expect("data model execution");
+    assert_eq!(model.target.coverage, FactCoverage::Complete);
+    let model: Defeasible<semantics_data_model_v1::DataModel> =
+        serde_json::from_value(model.target.payload).expect("data model payload");
+    assert_eq!(model.value.entities.len(), 3);
+
+    let ddl_plan = r
+        .plan([authored_entity_spec_fact()], &postgres_ddl_fact())
+        .expect("DDL route");
+    let ddl = r
+        .execute(&ddl_plan, vec![source.clone()])
+        .expect("DDL execution");
+    assert_eq!(ddl.target.coverage, FactCoverage::Complete);
+    let ddl: Defeasible<String> = serde_json::from_value(ddl.target.payload).expect("DDL payload");
+    assert_eq!(ddl.value.matches("CREATE TABLE").count(), 3);
+    assert_eq!(ddl.value.matches("CREATE TYPE").count(), 1);
+    assert_eq!(ddl.value.matches("FOREIGN KEY").count(), 3);
+
+    let openapi_plan = r
+        .plan([authored_entity_spec_fact()], &openapi_surface_fact())
+        .expect("OpenAPI route");
+    let openapi = r
+        .execute(&openapi_plan, vec![source])
+        .expect("OpenAPI execution");
+    assert_eq!(openapi.target.coverage, FactCoverage::Partial);
+    let openapi: Defeasible<serde_json::Value> =
+        serde_json::from_value(openapi.target.payload).expect("OpenAPI payload");
+    assert_eq!(openapi.value["paths"].as_object().unwrap().len(), 6);
+    assert_eq!(
+        openapi.value["components"]["schemas"]
+            .as_object()
+            .unwrap()
+            .len(),
+        13
+    );
+
+    let missing = r
+        .plan([authored_entity_spec_fact()], &typescript_types_fact())
+        .expect("TypeScript route");
+    assert!(!missing.is_executable());
+    assert_eq!(missing.needs.len(), 1);
+    assert_eq!(missing.needs[0].produces, vec![typescript_types_fact()]);
 }

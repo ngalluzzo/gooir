@@ -28,7 +28,3 @@ path = "src/round_trip_bin.rs"
 [[bin]]
 name = "ddl-round-trip"
 path = "src/ddl_bin.rs"
-
-[[bin]]
-name = "openapi-round-trip"
-path = "src/openapi_bin.rs"

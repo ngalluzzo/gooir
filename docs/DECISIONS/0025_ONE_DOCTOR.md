@@ -71,7 +71,7 @@ wrong: the scanner must not count itself. It once matched its own search
 strings, so the needles are split with `concat!`. The test checks the outcome
 rather than trusting the trick.
 
-## Deliberately not done
+## Follow-up
 
 Ten binaries remain besides `gooir`: round-trip harnesses, conformance checks,
 and the app runtime. Seven are cited by decision records, which makes them this
@@ -80,6 +80,11 @@ deterministic ones belong in `cargo test` — by the same argument that moved th
 source scan — is a real question, and one that needs each binary read rather
 than grepped. A first pass classified them by searching for `env::var` and
 `Command::new`, which is not a sound basis for deleting anything.
+
+[0026](0026_SDK_AND_EVIDENCE_FOLLOWUPS.md) reads all ten, deletes the two
+uncited duplicates whose claims are already asserted by `cargo test`, and
+measures the four multi-input providers rather than generalising from their
+count.
 
 ## State
 
