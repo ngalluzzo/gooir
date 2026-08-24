@@ -264,13 +264,21 @@
         "version": "0.1.0",
         "config_digest": "fixture-config:v1"
       },
-      "source_roots": ["crates/buzz-core/src", "crates/buzz-relay/src/handlers"],
+      "source_roots": [".", "crates/buzz-core/src", "crates/buzz-relay/src"],
       "mechanism": "relay_ingest_allowlist",
       "completeness": "exhaustive",
       "included_artifacts": [
+        "Cargo.toml",
+        "Cargo.lock",
+        ".cargo/config.toml",
+        "crates/buzz-relay/Cargo.toml",
+        "crates/buzz-relay/src/lib.rs",
+        "crates/buzz-relay/src/handlers/mod.rs",
         "crates/buzz-relay/src/handlers/ingest.rs",
-        "crates/buzz-core/src/kind.rs",
-        "crates/buzz-relay/src/handlers/push_lease.rs"
+        "crates/buzz-relay/src/handlers/push_lease.rs",
+        "crates/buzz-core/Cargo.toml",
+        "crates/buzz-core/src/lib.rs",
+        "crates/buzz-core/src/kind.rs"
       ]
     },
     {

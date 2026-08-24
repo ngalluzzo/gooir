@@ -50,11 +50,22 @@ The native output remains separate from software-surface contracts. `buzz-surfac
 ## Closed relay-ingest lifter
 
 `buzz-relay-lifter` consumes the pinned `buzz-protocol-lifter` output plus the
-exact `kind.rs`, `ingest.rs`, and sibling `push_lease.rs` bytes. It checks that
-the kind-source digest matches the upstream lift, resolves direct constants and
-named `matches!` predicates, evaluates every preceding match arm for each lifted
-job-kind value, and proves a direct top-level `required_scope_for_kind` match
-gate inside `ingest_event_inner`. Exhaustive coverage requires that every
+exact Buzz source root. It reads the workspace manifest and lockfile, checked-in
+Cargo configuration, relay and core manifests, crate roots, relay handler parent
+module, `kind.rs`, `ingest.rs`, and sibling `push_lease.rs`. It proves exact
+workspace membership, the reviewed Cargo resolver and Rust edition, package and
+dependency bindings, the checksummed `nostr` lock entry, and unconditional
+out-of-line module edges from the selected crate roots to each evaluated source.
+Ancestor name introductions are audited so a local item, import, extern-crate
+alias, or macro cannot redirect a modeled crate path. Inline modules, path or
+configuration attributes, macros, aliases, target-specific dependency tables,
+source/compiler overrides, alternate package paths, or lock ambiguity make
+coverage partial. After binding that compilation graph, it checks that the
+kind-source digest matches the upstream lift, resolves direct constants and
+named `matches!` predicates, evaluates every preceding match arm for each
+lifted job-kind value, and proves a direct top-level
+`required_scope_for_kind` match gate inside `ingest_event_inner`. Exhaustive
+coverage requires that every
 unqualified kind constant have one exact unconditional `buzz_core::kind`
 import, every evaluated predicate resolve to its exact supported declaration in
 the consumed kind source, and the qualified push-lease pattern resolve to the
@@ -110,22 +121,19 @@ The pinned run is checked in as
 
 ```text
 cargo run -q -p buzz-relay-lifter -- \
-  <buzz-root>/crates/buzz-relay/src/handlers/ingest.rs \
-  <buzz-root>/crates/buzz-core/src/kind.rs \
-  <buzz-root>/crates/buzz-relay/src/handlers/push_lease.rs \
+  <buzz-root> \
   fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json \
-  crates/buzz-relay/src/handlers/ingest.rs \
-  crates/buzz-relay/src/handlers/push_lease.rs \
   github:block/buzz \
   39f8b46935736334cdd7045a4e4b5d7eb1a33888
 ```
 
 All six values reach the wildcard error `restricted: unknown event kind`; the
-native witness records the push-lease declaration at lines 18–19, scope function
-at lines 342–455, fallback at line 453, and production gate call at line 2157.
-An unresolved constant, predicate, or guard makes the affected decisions unknown
-and the coverage partial, so textual resemblance cannot be promoted into an
-exhaustive rejection.
+native witness records two resolved package edges, four resolved module edges,
+the locked `nostr` package, the push-lease declaration at lines 18–19, scope
+function at lines 342–455, fallback at line 453, and production gate call at
+line 2157. An unresolved compilation edge, constant, predicate, or guard makes
+the affected decisions unknown and the coverage partial, so textual resemblance
+cannot be promoted into an exhaustive rejection.
 
 ## Closed CLI command-tree lifter
 

@@ -21,22 +21,41 @@ use syn::{
 
 pub const EXTRACTOR_PACKAGE: &str = "org.gooi.lifter.buzz_relay";
 pub const EXTRACTOR_VERSION: &str = "0.1.0";
+pub const WORKSPACE_MANIFEST_ARTIFACT: &str = "Cargo.toml";
+pub const WORKSPACE_LOCK_ARTIFACT: &str = "Cargo.lock";
+pub const CARGO_CONFIG_ARTIFACT: &str = ".cargo/config.toml";
+pub const RELAY_MANIFEST_ARTIFACT: &str = "crates/buzz-relay/Cargo.toml";
+pub const RELAY_CRATE_ROOT_ARTIFACT: &str = "crates/buzz-relay/src/lib.rs";
+pub const RELAY_HANDLERS_MODULE_ARTIFACT: &str = "crates/buzz-relay/src/handlers/mod.rs";
+pub const RELAY_INGEST_ARTIFACT: &str = "crates/buzz-relay/src/handlers/ingest.rs";
+pub const RELAY_PUSH_LEASE_ARTIFACT: &str = "crates/buzz-relay/src/handlers/push_lease.rs";
+pub const CORE_MANIFEST_ARTIFACT: &str = "crates/buzz-core/Cargo.toml";
+pub const CORE_CRATE_ROOT_ARTIFACT: &str = "crates/buzz-core/src/lib.rs";
+pub const CORE_KIND_ARTIFACT: &str = "crates/buzz-core/src/kind.rs";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RelaySourceInputs<'a> {
+pub struct RelaySemanticSources<'a> {
     pub ingest: &'a str,
     pub kind: &'a str,
     pub push_lease: &'a str,
 }
 
-impl<'a> RelaySourceInputs<'a> {
-    pub const fn new(ingest: &'a str, kind: &'a str, push_lease: &'a str) -> Self {
-        Self {
-            ingest,
-            kind,
-            push_lease,
-        }
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayCompilationSources<'a> {
+    pub workspace_manifest: &'a str,
+    pub workspace_lock: &'a str,
+    pub cargo_config: &'a str,
+    pub relay_manifest: &'a str,
+    pub relay_crate_root: &'a str,
+    pub relay_handlers_module: &'a str,
+    pub core_manifest: &'a str,
+    pub core_crate_root: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayInputs<'a> {
+    pub semantic: RelaySemanticSources<'a>,
+    pub compilation: RelayCompilationSources<'a>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -73,11 +92,45 @@ pub struct RelayCoverage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LockedDependency {
+    pub crate_name: String,
+    pub package: String,
+    pub version: String,
+    pub source: String,
+    pub checksum: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResolvedModuleEdge {
+    pub module_path: String,
+    pub parent_artifact: String,
+    pub declaration: SourceSpan,
+    pub child_artifact: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ResolvedPackageEdge {
+    pub dependent_package: String,
+    pub crate_name: String,
+    pub dependency_package: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RelayCompilationEvidence {
+    pub sources: Vec<SourceArtifact>,
+    pub package_edges: Vec<ResolvedPackageEdge>,
+    pub module_edges: Vec<ResolvedModuleEdge>,
+    pub locked_dependencies: Vec<LockedDependency>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RelayIngestLift {
     pub source: SourceArtifact,
     pub protocol_source: SourceArtifact,
     pub push_lease_source: SourceArtifact,
     pub push_lease_constant: Option<SourceSpan>,
+    pub compilation: RelayCompilationEvidence,
     pub scope_function: SourceSpan,
     pub gate_call: SourceSpan,
     pub fallback: SourceSpan,
@@ -135,18 +188,20 @@ impl fmt::Display for LiftError {
 impl std::error::Error for LiftError {}
 
 pub fn lift_relay_ingest(
-    sources: RelaySourceInputs<'_>,
+    inputs: RelayInputs<'_>,
     protocol: &ProtocolLift,
     authority: impl Into<String>,
-    artifact: impl Into<String>,
-    push_lease_artifact: impl Into<String>,
     revision: impl Into<String>,
 ) -> Result<RelayIngestLift, LiftError> {
-    let RelaySourceInputs {
-        ingest: ingest_source,
-        kind: kind_source,
-        push_lease: push_lease_source,
-    } = sources;
+    let RelayInputs {
+        semantic:
+            RelaySemanticSources {
+                ingest: ingest_source,
+                kind: kind_source,
+                push_lease: push_lease_source,
+            },
+        compilation,
+    } = inputs;
     let actual_kind_digest = sha256(kind_source.as_bytes());
     if actual_kind_digest != protocol.source.sha256 {
         return Err(LiftError::ProtocolSourceDigestMismatch {
@@ -167,9 +222,23 @@ pub fn lift_relay_ingest(
     let kind_predicates = named_predicates(&kind_file, &kind_constants);
     let predicates = resolved_predicate_values(&kind_predicates);
     let authority = authority.into();
-    let artifact = artifact.into();
-    let push_lease_artifact = push_lease_artifact.into();
     let revision = revision.into();
+    let (compilation, mut compilation_reason) = compilation_evidence(
+        compilation,
+        &authority,
+        &revision,
+        ingest_source,
+        kind_source,
+        push_lease_source,
+    )?;
+    if protocol.source.artifact != CORE_KIND_ARTIFACT
+        || protocol.source.authority != authority
+        || protocol.source.revision != revision
+    {
+        compilation_reason = Some(
+            "protocol kind source is not the core module selected by this compilation".to_owned(),
+        );
+    }
     let scope_function = find_function(&ingest_file, "required_scope_for_kind")
         .ok_or(LiftError::MissingScopeFunction)?;
     let scope_match = direct_scope_match(scope_function).ok_or(LiftError::MissingScopeMatch)?;
@@ -182,8 +251,8 @@ pub fn lift_relay_ingest(
         &kind_constants,
         &kind_predicates,
         push_lease_constant,
-        &artifact,
-        &push_lease_artifact,
+        RELAY_INGEST_ARTIFACT,
+        RELAY_PUSH_LEASE_ARTIFACT,
     );
 
     let ingest = find_function(&ingest_file, "ingest_event_inner");
@@ -213,6 +282,9 @@ pub fn lift_relay_ingest(
     if let Some(reason) = &scope_symbol_reason {
         unresolved.push(reason.clone());
     }
+    if let Some(reason) = &compilation_reason {
+        unresolved.push(reason.clone());
+    }
     let job_decisions = protocol
         .job_kinds
         .iter()
@@ -235,6 +307,11 @@ pub fn lift_relay_ingest(
                     format!(
                         "required_scope_for_kind symbols could not be resolved exactly: {reason}"
                     ),
+                )
+            } else if let Some(reason) = &compilation_reason {
+                (
+                    IngestDecisionKind::Unknown,
+                    format!("compiled source resolution could not be proven: {reason}"),
                 )
             } else {
                 evaluate_match(scope_match, job.value, &constants, &predicates)
@@ -262,18 +339,19 @@ pub fn lift_relay_ingest(
     Ok(RelayIngestLift {
         source: SourceArtifact {
             authority: authority.clone(),
-            artifact: artifact.clone(),
+            artifact: RELAY_INGEST_ARTIFACT.to_owned(),
             revision: revision.clone(),
             sha256: sha256(ingest_source.as_bytes()),
         },
         protocol_source: protocol.source.clone(),
         push_lease_source: SourceArtifact {
-            authority,
-            artifact: push_lease_artifact.clone(),
-            revision,
+            authority: authority.clone(),
+            artifact: RELAY_PUSH_LEASE_ARTIFACT.to_owned(),
+            revision: revision.clone(),
             sha256: sha256(push_lease_source.as_bytes()),
         },
         push_lease_constant,
+        compilation,
         scope_function: source_span(ingest_source, scope_function.span(), "scope function")?,
         gate_call: source_span(ingest_source, gate.span, "gate call")?,
         fallback: source_span(ingest_source, fallback_arm.span(), "fallback")?,
@@ -289,12 +367,640 @@ pub fn lift_relay_ingest(
                 NativeCompleteness::Partial
             },
             included_artifacts: vec![
-                artifact,
+                WORKSPACE_MANIFEST_ARTIFACT.to_owned(),
+                WORKSPACE_LOCK_ARTIFACT.to_owned(),
+                CARGO_CONFIG_ARTIFACT.to_owned(),
+                RELAY_MANIFEST_ARTIFACT.to_owned(),
+                RELAY_CRATE_ROOT_ARTIFACT.to_owned(),
+                RELAY_HANDLERS_MODULE_ARTIFACT.to_owned(),
+                RELAY_INGEST_ARTIFACT.to_owned(),
+                RELAY_PUSH_LEASE_ARTIFACT.to_owned(),
+                CORE_MANIFEST_ARTIFACT.to_owned(),
+                CORE_CRATE_ROOT_ARTIFACT.to_owned(),
                 protocol.source.artifact.clone(),
-                push_lease_artifact,
             ],
             unresolved,
         },
+    })
+}
+
+fn compilation_evidence(
+    sources: RelayCompilationSources<'_>,
+    authority: &str,
+    revision: &str,
+    ingest_source: &str,
+    kind_source: &str,
+    push_lease_source: &str,
+) -> Result<(RelayCompilationEvidence, Option<String>), LiftError> {
+    let source_artifacts = vec![
+        source_artifact(
+            authority,
+            WORKSPACE_MANIFEST_ARTIFACT,
+            revision,
+            sources.workspace_manifest,
+        ),
+        source_artifact(
+            authority,
+            WORKSPACE_LOCK_ARTIFACT,
+            revision,
+            sources.workspace_lock,
+        ),
+        source_artifact(
+            authority,
+            CARGO_CONFIG_ARTIFACT,
+            revision,
+            sources.cargo_config,
+        ),
+        source_artifact(
+            authority,
+            RELAY_MANIFEST_ARTIFACT,
+            revision,
+            sources.relay_manifest,
+        ),
+        source_artifact(
+            authority,
+            RELAY_CRATE_ROOT_ARTIFACT,
+            revision,
+            sources.relay_crate_root,
+        ),
+        source_artifact(
+            authority,
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+            revision,
+            sources.relay_handlers_module,
+        ),
+        source_artifact(
+            authority,
+            CORE_MANIFEST_ARTIFACT,
+            revision,
+            sources.core_manifest,
+        ),
+        source_artifact(
+            authority,
+            CORE_CRATE_ROOT_ARTIFACT,
+            revision,
+            sources.core_crate_root,
+        ),
+    ];
+
+    let resolution =
+        prove_compilation_resolution(sources, ingest_source, kind_source, push_lease_source);
+    let (package_edges, module_edges, locked_dependencies, unresolved) = match resolution {
+        Ok((package_edges, module_edges, locked_dependency)) => {
+            (package_edges, module_edges, vec![locked_dependency], None)
+        }
+        Err(reason) => (Vec::new(), Vec::new(), Vec::new(), Some(reason)),
+    };
+
+    Ok((
+        RelayCompilationEvidence {
+            sources: source_artifacts,
+            package_edges,
+            module_edges,
+            locked_dependencies,
+        },
+        unresolved,
+    ))
+}
+
+fn source_artifact(
+    authority: &str,
+    artifact: &str,
+    revision: &str,
+    source: &str,
+) -> SourceArtifact {
+    SourceArtifact {
+        authority: authority.to_owned(),
+        artifact: artifact.to_owned(),
+        revision: revision.to_owned(),
+        sha256: sha256(source.as_bytes()),
+    }
+}
+
+fn prove_compilation_resolution(
+    sources: RelayCompilationSources<'_>,
+    ingest_source: &str,
+    kind_source: &str,
+    push_lease_source: &str,
+) -> Result<
+    (
+        Vec<ResolvedPackageEdge>,
+        Vec<ResolvedModuleEdge>,
+        LockedDependency,
+    ),
+    String,
+> {
+    let workspace = toml::from_str::<toml::Table>(sources.workspace_manifest)
+        .map(toml::Value::Table)
+        .map_err(|error| format!("workspace manifest is not valid TOML: {error}"))?;
+    let relay_manifest = toml::from_str::<toml::Table>(sources.relay_manifest)
+        .map(toml::Value::Table)
+        .map_err(|error| format!("relay manifest is not valid TOML: {error}"))?;
+    let core_manifest = toml::from_str::<toml::Table>(sources.core_manifest)
+        .map(toml::Value::Table)
+        .map_err(|error| format!("core manifest is not valid TOML: {error}"))?;
+    let lockfile = toml::from_str::<toml::Table>(sources.workspace_lock)
+        .map(toml::Value::Table)
+        .map_err(|error| format!("workspace lockfile is not valid TOML: {error}"))?;
+    let cargo_config = toml::from_str::<toml::Table>(sources.cargo_config)
+        .map(toml::Value::Table)
+        .map_err(|error| format!("Cargo configuration is not valid TOML: {error}"))?;
+
+    prove_workspace_manifest(&workspace)?;
+    prove_cargo_config(&cargo_config)?;
+    prove_package_manifest(
+        &relay_manifest,
+        "buzz-relay",
+        &[("buzz-core", "buzz_core"), ("nostr", "nostr")],
+    )?;
+    prove_package_manifest(&core_manifest, "buzz-core", &[])?;
+    let locked_nostr = locked_registry_dependency(&workspace, &lockfile, "nostr")?;
+
+    let relay_root = syn::parse_file(sources.relay_crate_root)
+        .map_err(|error| format!("relay crate root is not valid Rust: {error}"))?;
+    let handlers_module = syn::parse_file(sources.relay_handlers_module)
+        .map_err(|error| format!("relay handlers module is not valid Rust: {error}"))?;
+    let core_root = syn::parse_file(sources.core_crate_root)
+        .map_err(|error| format!("core crate root is not valid Rust: {error}"))?;
+
+    prove_ancestor_scope(
+        &relay_root,
+        "relay crate root",
+        &[
+            "buzz_core",
+            "buzz_deletion",
+            "chrono",
+            "nostr",
+            "std",
+            "tokio",
+            "tracing",
+        ],
+    )?;
+    prove_ancestor_scope(
+        &handlers_module,
+        "relay handlers module",
+        &[
+            "buzz_core",
+            "buzz_deletion",
+            "chrono",
+            "nostr",
+            "std",
+            "tokio",
+            "tracing",
+        ],
+    )?;
+    prove_ancestor_scope(&core_root, "core crate root", &["nostr"])?;
+
+    let handlers = exact_out_of_line_module(&relay_root, "handlers")
+        .ok_or_else(|| "relay crate root does not select one exact `handlers` module".to_owned())?;
+    let ingest = exact_out_of_line_module(&handlers_module, "ingest")
+        .ok_or_else(|| "handlers module does not select one exact `ingest` module".to_owned())?;
+    let push_lease = exact_out_of_line_module(&handlers_module, "push_lease").ok_or_else(|| {
+        "handlers module does not select one exact `push_lease` module".to_owned()
+    })?;
+    let kind = exact_out_of_line_module(&core_root, "kind")
+        .ok_or_else(|| "core crate root does not select one exact `kind` module".to_owned())?;
+
+    if ingest_source.is_empty() || kind_source.is_empty() || push_lease_source.is_empty() {
+        return Err("a selected semantic module source is empty".to_owned());
+    }
+
+    let edges = vec![
+        resolved_module_edge(
+            sources.relay_crate_root,
+            handlers,
+            "buzz_relay::handlers",
+            RELAY_CRATE_ROOT_ARTIFACT,
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+        )?,
+        resolved_module_edge(
+            sources.relay_handlers_module,
+            ingest,
+            "buzz_relay::handlers::ingest",
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+            RELAY_INGEST_ARTIFACT,
+        )?,
+        resolved_module_edge(
+            sources.relay_handlers_module,
+            push_lease,
+            "buzz_relay::handlers::push_lease",
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+            RELAY_PUSH_LEASE_ARTIFACT,
+        )?,
+        resolved_module_edge(
+            sources.core_crate_root,
+            kind,
+            "buzz_core::kind",
+            CORE_CRATE_ROOT_ARTIFACT,
+            CORE_KIND_ARTIFACT,
+        )?,
+    ];
+    let package_edges = vec![
+        ResolvedPackageEdge {
+            dependent_package: "buzz-relay".to_owned(),
+            crate_name: "buzz_core".to_owned(),
+            dependency_package: "buzz-core".to_owned(),
+            source: "path:crates/buzz-core".to_owned(),
+        },
+        ResolvedPackageEdge {
+            dependent_package: "buzz-relay".to_owned(),
+            crate_name: "nostr".to_owned(),
+            dependency_package: "nostr".to_owned(),
+            source: format!("{}#nostr@{}", locked_nostr.source, locked_nostr.version),
+        },
+    ];
+    Ok((package_edges, edges, locked_nostr))
+}
+
+fn prove_workspace_manifest(workspace: &toml::Value) -> Result<(), String> {
+    let workspace_table = toml_table(workspace, &["workspace"])
+        .ok_or_else(|| "workspace table is missing".to_owned())?;
+    if workspace_table
+        .get("resolver")
+        .and_then(toml::Value::as_str)
+        != Some("2")
+        || toml_table(workspace, &["workspace", "package"])
+            .and_then(|package| package.get("edition"))
+            .and_then(toml::Value::as_str)
+            != Some("2021")
+    {
+        return Err("workspace does not pin the reviewed resolver and Rust edition".to_owned());
+    }
+    let members = workspace_table
+        .get("members")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "workspace member list is missing".to_owned())?;
+    for package_path in ["crates/buzz-relay", "crates/buzz-core"] {
+        if !members
+            .iter()
+            .any(|member| member.as_str() == Some(package_path))
+        {
+            return Err(format!(
+                "workspace does not select `{package_path}` as an exact member"
+            ));
+        }
+    }
+    if workspace_table
+        .get("exclude")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|excluded| {
+            excluded.iter().filter_map(toml::Value::as_str).any(|path| {
+                path.contains('*')
+                    || path.contains('?')
+                    || matches!(path, "crates/buzz-relay" | "crates/buzz-core")
+            })
+        })
+    {
+        return Err("workspace exclusion can alter a selected package".to_owned());
+    }
+
+    let dependencies = toml_table(workspace, &["workspace", "dependencies"])
+        .ok_or_else(|| "workspace dependencies are missing".to_owned())?;
+    let core = dependencies
+        .get("buzz-core")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "workspace `buzz-core` dependency is not a table".to_owned())?;
+    if core.get("path").and_then(toml::Value::as_str) != Some("crates/buzz-core")
+        || core.keys().any(|key| key != "path")
+    {
+        return Err(
+            "workspace `buzz-core` does not resolve exactly to `crates/buzz-core`".to_owned(),
+        );
+    }
+
+    let nostr = dependencies
+        .get("nostr")
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "workspace `nostr` dependency is not a table".to_owned())?;
+    if nostr.get("version").and_then(toml::Value::as_str).is_none()
+        || nostr
+            .keys()
+            .any(|key| !matches!(key.as_str(), "version" | "features" | "default-features"))
+    {
+        return Err("workspace `nostr` dependency has unmodeled source selection".to_owned());
+    }
+
+    if toml_table(workspace, &["replace"]).is_some_and(|replace| !replace.is_empty())
+        || patch_targets_package(workspace, "nostr")
+        || patch_targets_package(workspace, "buzz-core")
+    {
+        return Err("workspace patch or replacement can redirect a modeled dependency".to_owned());
+    }
+    Ok(())
+}
+
+fn prove_cargo_config(config: &toml::Value) -> Result<(), String> {
+    let table = config
+        .as_table()
+        .ok_or_else(|| "Cargo configuration is not a table".to_owned())?;
+    if table
+        .keys()
+        .any(|key| !matches!(key.as_str(), "profile" | "env"))
+    {
+        return Err(
+            "Cargo configuration contains unmodeled resolution or compiler settings".to_owned(),
+        );
+    }
+    if toml_table(config, &["env"]).is_some_and(|environment| {
+        environment.keys().any(|name| {
+            let upper = name.to_ascii_uppercase();
+            upper.starts_with("CARGO") || upper.starts_with("RUST")
+        })
+    }) {
+        return Err("Cargo configuration injects unmodeled Cargo or Rust settings".to_owned());
+    }
+    Ok(())
+}
+
+fn prove_package_manifest(
+    manifest: &toml::Value,
+    package: &str,
+    required_dependencies: &[(&str, &str)],
+) -> Result<(), String> {
+    let package_table = toml_table(manifest, &["package"])
+        .ok_or_else(|| format!("package `{package}` manifest has no package table"))?;
+    if package_table.get("name").and_then(toml::Value::as_str) != Some(package)
+        || package_table.get("autolib").and_then(toml::Value::as_bool) == Some(false)
+        || package_table.contains_key("workspace")
+        || package_table.contains_key("build")
+        || package_table.contains_key("links")
+        || manifest.get("workspace").is_some()
+    {
+        return Err(format!(
+            "package manifest does not define the expected workspace `{package}` library"
+        ));
+    }
+    let edition = package_table.get("edition").and_then(toml::Value::as_table);
+    if edition.is_none_or(|edition| {
+        edition.get("workspace").and_then(toml::Value::as_bool) != Some(true)
+            || edition.keys().any(|key| key != "workspace")
+    }) {
+        return Err(format!(
+            "package `{package}` does not inherit the reviewed Rust edition"
+        ));
+    }
+    if toml_table(manifest, &["lib"]).is_some() {
+        return Err(format!(
+            "package `{package}` has an unmodeled library target override"
+        ));
+    }
+
+    let dependencies = toml_table(manifest, &["dependencies"]);
+    for (dependency, crate_name) in required_dependencies {
+        let dependencies =
+            dependencies.ok_or_else(|| format!("package `{package}` has no dependency table"))?;
+        let matching = dependencies
+            .iter()
+            .filter(|(name, _)| normalize_crate_name(name) == *crate_name)
+            .collect::<Vec<_>>();
+        if matching.len() != 1 || matching[0].0.as_str() != *dependency {
+            return Err(format!(
+                "package `{package}` has ambiguous `{crate_name}` dependency naming"
+            ));
+        }
+        let Some(specification) = matching[0].1.as_table() else {
+            return Err(format!(
+                "package `{package}` dependency `{dependency}` is not a table"
+            ));
+        };
+        if specification
+            .get("workspace")
+            .and_then(toml::Value::as_bool)
+            != Some(true)
+            || specification.keys().any(|key| key != "workspace")
+        {
+            return Err(format!(
+                "package `{package}` dependency `{dependency}` is not the exact workspace binding"
+            ));
+        }
+    }
+    if toml_table(manifest, &["target"]).is_some() {
+        return Err(format!(
+            "package `{package}` has unmodeled target-specific dependency selection"
+        ));
+    }
+    if toml_table(manifest, &["build-dependencies"])
+        .is_some_and(|dependencies| !dependencies.is_empty())
+    {
+        return Err(format!(
+            "package `{package}` has an unmodeled build dependency boundary"
+        ));
+    }
+    Ok(())
+}
+
+fn locked_registry_dependency(
+    workspace: &toml::Value,
+    lockfile: &toml::Value,
+    package: &str,
+) -> Result<LockedDependency, String> {
+    let requirement = toml_table(workspace, &["workspace", "dependencies"])
+        .and_then(|dependencies| dependencies.get(package))
+        .and_then(toml::Value::as_table)
+        .and_then(|specification| specification.get("version"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("workspace `{package}` version requirement is missing"))?;
+    let packages = lockfile
+        .get("package")
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| "workspace lockfile has no package array".to_owned())?;
+    let mut matching = packages.iter().filter_map(|entry| {
+        let table = entry.as_table()?;
+        let name = table.get("name")?.as_str()?;
+        let version = table.get("version")?.as_str()?;
+        (name == package && version_matches_requirement(version, requirement)).then_some(table)
+    });
+    let locked = matching
+        .next()
+        .ok_or_else(|| format!("no locked `{package}` package matches `{requirement}`"))?;
+    if matching.next().is_some() {
+        return Err(format!(
+            "multiple locked `{package}` packages match `{requirement}`"
+        ));
+    }
+    let version = locked
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("locked `{package}` version is missing"))?;
+    let source = locked
+        .get("source")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("locked `{package}` source is missing"))?;
+    let checksum = locked
+        .get("checksum")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| format!("locked `{package}` checksum is missing"))?;
+    if source != "registry+https://github.com/rust-lang/crates.io-index"
+        || checksum.len() != 64
+        || !checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(format!(
+            "locked `{package}` is not an exact checksummed crates.io package"
+        ));
+    }
+    Ok(LockedDependency {
+        crate_name: normalize_crate_name(package),
+        package: package.to_owned(),
+        version: version.to_owned(),
+        source: source.to_owned(),
+        checksum: checksum.to_owned(),
+    })
+}
+
+fn version_matches_requirement(version: &str, requirement: &str) -> bool {
+    version == requirement
+        || version
+            .strip_prefix(requirement)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+fn patch_targets_package(workspace: &toml::Value, package: &str) -> bool {
+    let Some(patches) = toml_table(workspace, &["patch"]) else {
+        return false;
+    };
+    patches.values().any(|registry| {
+        registry.as_table().is_some_and(|entries| {
+            entries.iter().any(|(name, specification)| {
+                name == package
+                    || specification
+                        .as_table()
+                        .and_then(|table| table.get("package"))
+                        .and_then(toml::Value::as_str)
+                        == Some(package)
+            })
+        })
+    })
+}
+
+fn toml_table<'a>(
+    value: &'a toml::Value,
+    path: &[&str],
+) -> Option<&'a toml::map::Map<String, toml::Value>> {
+    path.iter()
+        .try_fold(value, |current, segment| current.get(*segment))?
+        .as_table()
+}
+
+fn normalize_crate_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+fn exact_out_of_line_module<'a>(file: &'a syn::File, name: &str) -> Option<&'a syn::ItemMod> {
+    if file
+        .attrs
+        .iter()
+        .any(|attribute| !module_graph_attribute_is_inert(attribute))
+        || file
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::Macro(_) | Item::Verbatim(_)))
+    {
+        return None;
+    }
+    let mut introducing = file
+        .items
+        .iter()
+        .filter(|item| item_introduces_name(item, name));
+    let Item::Mod(module) = introducing.next()? else {
+        return None;
+    };
+    (introducing.next().is_none()
+        && module.content.is_none()
+        && module.attrs.iter().all(module_graph_attribute_is_inert))
+    .then_some(module)
+}
+
+fn prove_ancestor_scope(file: &syn::File, label: &str, reserved: &[&str]) -> Result<(), String> {
+    let mut visitor = AncestorScopeVisitor {
+        reserved,
+        reason: None,
+    };
+    visitor.visit_file(file);
+    visitor.reason.map_or(Ok(()), Err).map_err(|reason| {
+        format!("{label} does not preserve modeled crate-name resolution: {reason}")
+    })
+}
+
+struct AncestorScopeVisitor<'a> {
+    reserved: &'a [&'a str],
+    reason: Option<String>,
+}
+
+impl Visit<'_> for AncestorScopeVisitor<'_> {
+    fn visit_item(&mut self, item: &Item) {
+        if self.reason.is_some() {
+            return;
+        }
+        if matches!(item, Item::Macro(_) | Item::Verbatim(_)) {
+            self.reason = Some("an item macro can alter the module namespace".to_owned());
+            return;
+        }
+        if matches!(item, Item::ExternCrate(_)) {
+            self.reason = Some("an extern-crate item can redirect a crate name".to_owned());
+            return;
+        }
+        if let Some(name) = self
+            .reserved
+            .iter()
+            .find(|name| item_introduces_name(item, name))
+        {
+            self.reason = Some(format!("an item introduces reserved name `{name}`"));
+            return;
+        }
+        if item_attrs(item)
+            .iter()
+            .any(|attribute| attribute.path().is_ident("macro_use"))
+        {
+            self.reason = Some("a macro-use attribute can alter macro resolution".to_owned());
+            return;
+        }
+        visit::visit_item(self, item);
+    }
+}
+
+fn item_attrs(item: &Item) -> &[syn::Attribute] {
+    match item {
+        Item::Const(item) => &item.attrs,
+        Item::Enum(item) => &item.attrs,
+        Item::ExternCrate(item) => &item.attrs,
+        Item::Fn(item) => &item.attrs,
+        Item::ForeignMod(item) => &item.attrs,
+        Item::Impl(item) => &item.attrs,
+        Item::Macro(item) => &item.attrs,
+        Item::Mod(item) => &item.attrs,
+        Item::Static(item) => &item.attrs,
+        Item::Struct(item) => &item.attrs,
+        Item::Trait(item) => &item.attrs,
+        Item::TraitAlias(item) => &item.attrs,
+        Item::Type(item) => &item.attrs,
+        Item::Union(item) => &item.attrs,
+        Item::Use(item) => &item.attrs,
+        Item::Verbatim(_) => &[],
+        _ => &[],
+    }
+}
+
+fn module_graph_attribute_is_inert(attribute: &syn::Attribute) -> bool {
+    matches!(
+        path_name(attribute.path()).as_str(),
+        "doc" | "allow" | "warn" | "deny" | "forbid"
+    )
+}
+
+fn resolved_module_edge(
+    source: &str,
+    module: &syn::ItemMod,
+    module_path: &str,
+    parent_artifact: &str,
+    child_artifact: &str,
+) -> Result<ResolvedModuleEdge, String> {
+    let declaration = source_span(source, module.span(), "module declaration")
+        .map_err(|error| error.to_string())?;
+    Ok(ResolvedModuleEdge {
+        module_path: module_path.to_owned(),
+        parent_artifact: parent_artifact.to_owned(),
+        declaration,
+        child_artifact: child_artifact.to_owned(),
     })
 }
 
@@ -2957,9 +3663,58 @@ mod tests {
     use buzz_protocol_lifter::lift_job_protocol;
 
     use super::{
-        IngestDecisionKind, LiftError, NativeCompleteness, PUSH_LEASE_CONSTANT_PATH,
-        RelaySourceInputs, lift_relay_ingest,
+        CORE_KIND_ARTIFACT, IngestDecisionKind, LiftError, NativeCompleteness,
+        PUSH_LEASE_CONSTANT_PATH, RelayCompilationSources, RelayInputs, RelaySemanticSources,
+        lift_relay_ingest,
     };
+
+    const WORKSPACE_MANIFEST: &str = r#"[workspace]
+members = ["crates/buzz-core", "crates/buzz-relay"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+buzz-core = { path = "crates/buzz-core" }
+nostr = { version = "0.44", features = ["nip44"] }
+"#;
+
+    const WORKSPACE_LOCK: &str = r#"version = 4
+
+[[package]]
+name = "nostr"
+version = "0.44.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d3d987ea7078dc36947cde532637c472a229426702e4331dd7667325378bd9"
+"#;
+
+    const CARGO_CONFIG: &str = r#"[profile.dev]
+debug = "line-tables-only"
+
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+"#;
+
+    const RELAY_MANIFEST: &str = r#"[package]
+name = "buzz-relay"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+buzz-core = { workspace = true }
+nostr = { workspace = true }
+"#;
+
+    const CORE_MANIFEST: &str = r#"[package]
+name = "buzz-core"
+version = "0.1.0"
+edition.workspace = true
+"#;
+
+    const RELAY_CRATE_ROOT: &str = "pub mod handlers;\n";
+    const RELAY_HANDLERS_MODULE: &str = "pub mod ingest;\npub mod push_lease;\n";
+    const CORE_CRATE_ROOT: &str = "pub mod kind;\n";
 
     const KIND_SOURCE: &str = r#"
 pub const KIND_MESSAGE: u32 = 1;
@@ -3000,18 +3755,45 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
 "#;
 
     fn fixture_protocol() -> buzz_protocol_lifter::ProtocolLift {
-        lift_job_protocol(KIND_SOURCE, "fixture", "kind.rs", "revision")
+        lift_job_protocol(KIND_SOURCE, "fixture", CORE_KIND_ARTIFACT, "revision")
             .expect("protocol fixture lifts")
+    }
+
+    fn fixture_inputs<'a>(ingest: &'a str, kind: &'a str, push_lease: &'a str) -> RelayInputs<'a> {
+        fixture_inputs_with_handlers(ingest, kind, push_lease, RELAY_HANDLERS_MODULE)
+    }
+
+    fn fixture_inputs_with_handlers<'a>(
+        ingest: &'a str,
+        kind: &'a str,
+        push_lease: &'a str,
+        relay_handlers_module: &'a str,
+    ) -> RelayInputs<'a> {
+        RelayInputs {
+            semantic: RelaySemanticSources {
+                ingest,
+                kind,
+                push_lease,
+            },
+            compilation: RelayCompilationSources {
+                workspace_manifest: WORKSPACE_MANIFEST,
+                workspace_lock: WORKSPACE_LOCK,
+                cargo_config: CARGO_CONFIG,
+                relay_manifest: RELAY_MANIFEST,
+                relay_crate_root: RELAY_CRATE_ROOT,
+                relay_handlers_module,
+                core_manifest: CORE_MANIFEST,
+                core_crate_root: CORE_CRATE_ROOT,
+            },
+        }
     }
 
     #[test]
     fn closed_fallback_rejects_job_kinds_after_resolving_named_guard() {
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("relay fixture lifts");
@@ -3026,6 +3808,135 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
         assert_eq!(lift.gate_call.line_start, 14);
+        assert_eq!(lift.compilation.package_edges.len(), 2);
+        assert_eq!(lift.compilation.module_edges.len(), 4);
+        assert_eq!(lift.compilation.locked_dependencies.len(), 1);
+    }
+
+    #[test]
+    fn inline_or_macro_selected_modules_make_compilation_partial() {
+        let mut inline = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inline.compilation.relay_handlers_module =
+            "pub mod ingest;\npub mod push_lease { pub const KIND_PUSH_LEASE: u32 = 43_001; }\n";
+        assert_unproven_compilation_is_partial(inline, "exact `push_lease` module");
+
+        let mut expanded = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        expanded.compilation.relay_handlers_module = "declare_ingest_and_push_lease!();\n";
+        assert_unproven_compilation_is_partial(expanded, "item macro");
+    }
+
+    #[test]
+    fn configured_module_paths_make_compilation_partial() {
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.relay_handlers_module =
+            "pub mod ingest;\n#[path = \"alternate.rs\"]\npub mod push_lease;\n";
+        assert_unproven_compilation_is_partial(inputs, "exact `push_lease` module");
+    }
+
+    #[test]
+    fn alternate_workspace_core_paths_make_compilation_partial() {
+        let alternate = WORKSPACE_MANIFEST.replace(
+            "buzz-core = { path = \"crates/buzz-core\" }",
+            "buzz-core = { path = \"crates/alternate-core\" }",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.workspace_manifest = &alternate;
+        assert_unproven_compilation_is_partial(inputs, "does not resolve exactly");
+    }
+
+    #[test]
+    fn selected_packages_must_be_exact_workspace_members() {
+        let alternate = WORKSPACE_MANIFEST.replace(
+            "members = [\"crates/buzz-core\", \"crates/buzz-relay\"]",
+            "members = [\"crates/buzz-core\"]",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.workspace_manifest = &alternate;
+        assert_unproven_compilation_is_partial(inputs, "exact member");
+
+        let excluded = WORKSPACE_MANIFEST.replace(
+            "resolver = \"2\"",
+            "resolver = \"2\"\nexclude = [\"crates/buzz-relay\"]",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.workspace_manifest = &excluded;
+        assert_unproven_compilation_is_partial(inputs, "exclusion");
+    }
+
+    #[test]
+    fn nested_workspaces_and_library_overrides_make_compilation_partial() {
+        let alternate = RELAY_MANIFEST.replace(
+            "version = \"0.1.0\"",
+            "version = \"0.1.0\"\nworkspace = \"../alternate\"",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.relay_manifest = &alternate;
+        assert_unproven_compilation_is_partial(inputs, "expected workspace");
+
+        let alternate = format!("{CORE_MANIFEST}\n[lib]\npath = \"src/alternate.rs\"\n");
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.core_manifest = &alternate;
+        assert_unproven_compilation_is_partial(inputs, "library target override");
+    }
+
+    #[test]
+    fn ancestor_modules_cannot_redirect_modeled_crate_names() {
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.relay_crate_root =
+            "extern crate alternate as buzz_core;\npub mod handlers;\n";
+        assert_unproven_compilation_is_partial(inputs, "extern-crate item");
+
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.relay_handlers_module =
+            "pub use alternate as nostr;\npub mod ingest;\npub mod push_lease;\n";
+        assert_unproven_compilation_is_partial(inputs, "reserved name `nostr`");
+
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.core_crate_root = "#[macro_use]\nmod alternate;\npub mod kind;\n";
+        assert_unproven_compilation_is_partial(inputs, "macro-use attribute");
+    }
+
+    #[test]
+    fn aliased_relay_dependencies_make_compilation_partial() {
+        let alternate = RELAY_MANIFEST.replace(
+            "buzz-core = { workspace = true }",
+            "buzz_core = { package = \"alternate-core\", path = \"../alternate-core\" }",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.relay_manifest = &alternate;
+        assert_unproven_compilation_is_partial(inputs, "ambiguous `buzz_core` dependency");
+    }
+
+    #[test]
+    fn dependency_patches_make_compilation_partial() {
+        let patched = format!(
+            "{WORKSPACE_MANIFEST}\n[patch.crates-io]\nnostr = {{ path = \"crates/alternate-nostr\" }}\n"
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.workspace_manifest = &patched;
+        assert_unproven_compilation_is_partial(inputs, "patch or replacement");
+    }
+
+    #[test]
+    fn cargo_source_or_compiler_overrides_make_compilation_partial() {
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.cargo_config = "[source.crates-io]\nreplace-with = \"alternate\"\n";
+        assert_unproven_compilation_is_partial(inputs, "unmodeled resolution");
+
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.cargo_config = "[env]\nRUSTFLAGS = \"--cfg alternate\"\n";
+        assert_unproven_compilation_is_partial(inputs, "unmodeled Cargo or Rust settings");
+    }
+
+    #[test]
+    fn lockfile_must_bind_the_selected_registry_package() {
+        let altered = WORKSPACE_LOCK.replace(
+            "c7d3d987ea7078dc36947cde532637c472a229426702e4331dd7667325378bd9",
+            "missing",
+        );
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.workspace_lock = &altered;
+        assert_unproven_compilation_is_partial(inputs, "checksummed crates.io package");
     }
 
     #[test]
@@ -3035,11 +3946,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "k if third_party_guard(k)",
         );
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("unresolved relay fixture still lifts");
@@ -3097,11 +4006,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "/// Select the required scope.\nfn required_scope_for_kind",
         );
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&documented, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&documented, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("documented scope function lifts");
@@ -3118,11 +4025,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         let protocol = lift_job_protocol(&kind_source, "fixture", "kind.rs", "revision")
             .expect("modified protocol fixture lifts");
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(INGEST_SOURCE, &kind_source, PUSH_LEASE_SOURCE),
+            fixture_inputs(INGEST_SOURCE, &kind_source, PUSH_LEASE_SOURCE),
             &protocol,
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("unresolved predicate fixture still lifts");
@@ -3187,11 +4092,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 "buzz_core::kind::is_moderation_command_kind(k)",
             );
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("qualified predicate fixture lifts");
@@ -3208,11 +4111,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
         let push_source = PUSH_LEASE_SOURCE.replace("30_350", "43_001");
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, &push_source),
+            fixture_inputs(&source, KIND_SOURCE, &push_source),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("qualified push lease fixture lifts");
@@ -3230,11 +4131,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "        super::push_lease::KIND_PUSH_LEASE => Ok(Scope::MessagesWrite),\n        _ => Err(\"restricted: unknown event kind\"),",
         );
         let missing = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, "pub const OTHER_KIND: u32 = 30_350;"),
+            fixture_inputs(&source, KIND_SOURCE, "pub const OTHER_KIND: u32 = 30_350;"),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("missing push declaration remains visible");
@@ -3248,11 +4147,14 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         );
 
         let misidentified = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs_with_handlers(
+                &source,
+                KIND_SOURCE,
+                PUSH_LEASE_SOURCE,
+                "#[path = \"other.rs\"]\npub mod push_lease;\npub mod ingest;\n",
+            ),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "other.rs",
             "revision",
         )
         .expect("misidentified push source remains visible");
@@ -3272,11 +4174,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift_job_protocol(&attributed_kind, "fixture", "kind.rs", "revision")
                 .expect("attributed protocol fixture lifts");
         let attributed = lift_relay_ingest(
-            RelaySourceInputs::new(INGEST_SOURCE, &attributed_kind, PUSH_LEASE_SOURCE),
+            fixture_inputs(INGEST_SOURCE, &attributed_kind, PUSH_LEASE_SOURCE),
             &attributed_protocol,
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("attributed predicate remains visible");
@@ -3293,11 +4193,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             lift_job_protocol(&effectful_kind, "fixture", "kind.rs", "revision")
                 .expect("effectful protocol fixture lifts");
         let effectful = lift_relay_ingest(
-            RelaySourceInputs::new(INGEST_SOURCE, &effectful_kind, PUSH_LEASE_SOURCE),
+            fixture_inputs(INGEST_SOURCE, &effectful_kind, PUSH_LEASE_SOURCE),
             &effectful_protocol,
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("effectful predicate remains visible");
@@ -3306,14 +4204,32 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
 
     fn assert_unproven_gate_is_partial(source: &str, expected_reason: &str) {
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("unproven gate remains visible as a partial lift");
+
+        assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
+        assert!(
+            lift.job_decisions
+                .iter()
+                .all(|decision| decision.decision == IngestDecisionKind::Unknown)
+        );
+        assert!(
+            lift.coverage
+                .unresolved
+                .iter()
+                .any(|reason| reason.contains(expected_reason)),
+            "{:?}",
+            lift.coverage.unresolved
+        );
+    }
+
+    fn assert_unproven_compilation_is_partial(inputs: RelayInputs<'_>, expected_reason: &str) {
+        let lift = lift_relay_ingest(inputs, &fixture_protocol(), "fixture", "revision")
+            .expect("unproven compilation remains visible as a partial lift");
 
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Partial);
         assert!(
@@ -3445,11 +4361,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             .replace("event: &Event", "event: &nostr::Event")
             .replace("event: Event", "event: nostr::Event");
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("qualified nostr::Event fixture lifts");
@@ -4079,11 +4993,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 "let event = std::sync::Arc::new(event);\n    let event_for_verify = std::sync::Arc::clone(&event);\n    let verify_result = tokio::task::spawn_blocking(move || verify_event(&event_for_verify)).await;\n    let required = match required_scope_for_kind(kind_u32, &event) {",
             );
         let lift = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect("pinned verification callback still lifts");
@@ -4179,11 +5091,9 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
             "fn required_scope_for_kind(kind: u32, event: &Event) -> Result<Scope, &'static str> {\n    store_event(event);",
         );
         let error = lift_relay_ingest(
-            RelaySourceInputs::new(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
+            fixture_inputs(&source, KIND_SOURCE, PUSH_LEASE_SOURCE),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect_err("scope helper effects outside the match must fail closed");
@@ -4194,15 +5104,13 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
     #[test]
     fn mismatched_protocol_source_is_rejected() {
         let error = lift_relay_ingest(
-            RelaySourceInputs::new(
+            fixture_inputs(
                 INGEST_SOURCE,
                 &KIND_SOURCE.replace("43001", "43002"),
                 PUSH_LEASE_SOURCE,
             ),
             &fixture_protocol(),
             "fixture",
-            "ingest.rs",
-            "push_lease.rs",
             "revision",
         )
         .expect_err("source mismatch must not be laundered");
@@ -4244,6 +5152,10 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 .all(|decision| decision.decision == IngestDecisionKind::Rejected)
         );
         assert_eq!(lift.coverage.completeness, NativeCompleteness::Exhaustive);
-        assert_eq!(lift.coverage.included_artifacts.len(), 3);
+        assert_eq!(lift.coverage.included_artifacts.len(), 11);
+        assert_eq!(lift.compilation.sources.len(), 8);
+        assert_eq!(lift.compilation.package_edges.len(), 2);
+        assert_eq!(lift.compilation.module_edges.len(), 4);
+        assert_eq!(lift.compilation.locked_dependencies.len(), 1);
     }
 }

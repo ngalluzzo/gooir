@@ -23,6 +23,127 @@
     "line_start": 18,
     "line_end": 19
   },
+  "compilation": {
+    "sources": [
+      {
+        "authority": "github:block/buzz",
+        "artifact": "Cargo.toml",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:cbf055820093a0b3d4bc0d9bc0d01e7f497cb419099a69cb4e964dab8860dd41"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "Cargo.lock",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:d410718a49cd29121bb883ab9ecc2b20dca777e2eaab35cebccf90d8769a19e5"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": ".cargo/config.toml",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:ad0cf42c69d46041d43851c01a98bf40f82eb14ac38681eeb74a372499ba4024"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "crates/buzz-relay/Cargo.toml",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:4eaea23d07c05dbe8c4cdf7a15f350eba28fcb9a5a9d8fdd3e0b75ce41aa1a37"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "crates/buzz-relay/src/lib.rs",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:90afdfd0f43a615db186799838a13e618c9663985c248c3e3d26755b4d61b9a0"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "crates/buzz-relay/src/handlers/mod.rs",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:a9613930860843199a4a6fde2bc600c74044b9412d43328c0cb620c0049c85a9"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "crates/buzz-core/Cargo.toml",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:9c896db21e98ae72510477cd1b36a8fabb1df59508215564501fdfe4801a8d8d"
+      },
+      {
+        "authority": "github:block/buzz",
+        "artifact": "crates/buzz-core/src/lib.rs",
+        "revision": "39f8b46935736334cdd7045a4e4b5d7eb1a33888",
+        "sha256": "sha256:16588e4f9af6f1a951046e82738492770a7aa5e76ea0ec566cd9545e42b528b9"
+      }
+    ],
+    "package_edges": [
+      {
+        "dependent_package": "buzz-relay",
+        "crate_name": "buzz_core",
+        "dependency_package": "buzz-core",
+        "source": "path:crates/buzz-core"
+      },
+      {
+        "dependent_package": "buzz-relay",
+        "crate_name": "nostr",
+        "dependency_package": "nostr",
+        "source": "registry+https://github.com/rust-lang/crates.io-index#nostr@0.44.7"
+      }
+    ],
+    "module_edges": [
+      {
+        "module_path": "buzz_relay::handlers",
+        "parent_artifact": "crates/buzz-relay/src/lib.rs",
+        "declaration": {
+          "byte_start": 641,
+          "byte_end": 717,
+          "line_start": 22,
+          "line_end": 23
+        },
+        "child_artifact": "crates/buzz-relay/src/handlers/mod.rs"
+      },
+      {
+        "module_path": "buzz_relay::handlers::ingest",
+        "parent_artifact": "crates/buzz-relay/src/handlers/mod.rs",
+        "declaration": {
+          "byte_start": 552,
+          "byte_end": 615,
+          "line_start": 17,
+          "line_end": 18
+        },
+        "child_artifact": "crates/buzz-relay/src/handlers/ingest.rs"
+      },
+      {
+        "module_path": "buzz_relay::handlers::push_lease",
+        "parent_artifact": "crates/buzz-relay/src/handlers/mod.rs",
+        "declaration": {
+          "byte_start": 958,
+          "byte_end": 1011,
+          "line_start": 27,
+          "line_end": 28
+        },
+        "child_artifact": "crates/buzz-relay/src/handlers/push_lease.rs"
+      },
+      {
+        "module_path": "buzz_core::kind",
+        "parent_artifact": "crates/buzz-core/src/lib.rs",
+        "declaration": {
+          "byte_start": 916,
+          "byte_end": 992,
+          "line_start": 25,
+          "line_end": 26
+        },
+        "child_artifact": "crates/buzz-core/src/kind.rs"
+      }
+    ],
+    "locked_dependencies": [
+      {
+        "crate_name": "nostr",
+        "package": "nostr",
+        "version": "0.44.7",
+        "source": "registry+https://github.com/rust-lang/crates.io-index",
+        "checksum": "c7d3d987ea7078dc36947cde532637c472a229426702e4331dd7667325378bd9"
+      }
+    ]
+  },
   "scope_function": {
     "byte_start": 13126,
     "byte_end": 18700,
@@ -86,9 +207,17 @@
     "mechanism": "rust_closed_required_scope_match_and_proven_ingest_gate",
     "completeness": "exhaustive",
     "included_artifacts": [
+      "Cargo.toml",
+      "Cargo.lock",
+      ".cargo/config.toml",
+      "crates/buzz-relay/Cargo.toml",
+      "crates/buzz-relay/src/lib.rs",
+      "crates/buzz-relay/src/handlers/mod.rs",
       "crates/buzz-relay/src/handlers/ingest.rs",
-      "crates/buzz-core/src/kind.rs",
-      "crates/buzz-relay/src/handlers/push_lease.rs"
+      "crates/buzz-relay/src/handlers/push_lease.rs",
+      "crates/buzz-core/Cargo.toml",
+      "crates/buzz-core/src/lib.rs",
+      "crates/buzz-core/src/kind.rs"
     ],
     "unresolved": []
   }

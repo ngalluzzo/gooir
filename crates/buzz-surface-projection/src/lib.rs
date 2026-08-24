@@ -30,6 +30,14 @@ pub const CONFORMANCE_SUITE: &str =
 pub const KIND_ARTIFACT: &str = "crates/buzz-core/src/kind.rs";
 pub const RELAY_ARTIFACT: &str = "crates/buzz-relay/src/handlers/ingest.rs";
 pub const PUSH_LEASE_ARTIFACT: &str = "crates/buzz-relay/src/handlers/push_lease.rs";
+pub const WORKSPACE_MANIFEST_ARTIFACT: &str = "Cargo.toml";
+pub const WORKSPACE_LOCK_ARTIFACT: &str = "Cargo.lock";
+pub const CARGO_CONFIG_ARTIFACT: &str = ".cargo/config.toml";
+pub const RELAY_MANIFEST_ARTIFACT: &str = "crates/buzz-relay/Cargo.toml";
+pub const RELAY_CRATE_ROOT_ARTIFACT: &str = "crates/buzz-relay/src/lib.rs";
+pub const RELAY_HANDLERS_MODULE_ARTIFACT: &str = "crates/buzz-relay/src/handlers/mod.rs";
+pub const CORE_MANIFEST_ARTIFACT: &str = "crates/buzz-core/Cargo.toml";
+pub const CORE_CRATE_ROOT_ARTIFACT: &str = "crates/buzz-core/src/lib.rs";
 pub const CLI_ARTIFACT: &str = "crates/buzz-cli/src/lib.rs";
 pub const KIND_SHA256: &str =
     "sha256:74533cfc1ac016dcb1a83279c2b06f93807f29489604cdccefc46b645acfce97";
@@ -37,12 +45,28 @@ pub const RELAY_SHA256: &str =
     "sha256:6f5ecbac1056c64ce161e72bc9d4b0fabc2c8d8648fb41b3812a655121f194a5";
 pub const PUSH_LEASE_SHA256: &str =
     "sha256:297f7f59a7e141cdd5acf3a2ba6395ed4a34035050fab4d17d698d043b389ce0";
+pub const WORKSPACE_MANIFEST_SHA256: &str =
+    "sha256:cbf055820093a0b3d4bc0d9bc0d01e7f497cb419099a69cb4e964dab8860dd41";
+pub const WORKSPACE_LOCK_SHA256: &str =
+    "sha256:d410718a49cd29121bb883ab9ecc2b20dca777e2eaab35cebccf90d8769a19e5";
+pub const CARGO_CONFIG_SHA256: &str =
+    "sha256:ad0cf42c69d46041d43851c01a98bf40f82eb14ac38681eeb74a372499ba4024";
+pub const RELAY_MANIFEST_SHA256: &str =
+    "sha256:4eaea23d07c05dbe8c4cdf7a15f350eba28fcb9a5a9d8fdd3e0b75ce41aa1a37";
+pub const RELAY_CRATE_ROOT_SHA256: &str =
+    "sha256:90afdfd0f43a615db186799838a13e618c9663985c248c3e3d26755b4d61b9a0";
+pub const RELAY_HANDLERS_MODULE_SHA256: &str =
+    "sha256:a9613930860843199a4a6fde2bc600c74044b9412d43328c0cb620c0049c85a9";
+pub const CORE_MANIFEST_SHA256: &str =
+    "sha256:9c896db21e98ae72510477cd1b36a8fabb1df59508215564501fdfe4801a8d8d";
+pub const CORE_CRATE_ROOT_SHA256: &str =
+    "sha256:16588e4f9af6f1a951046e82738492770a7aa5e76ea0ec566cd9545e42b528b9";
 pub const CLI_SHA256: &str =
     "sha256:a4a6829515e23851822ce5b1c3e7b341c32e2997b17b3b4f74f8aad994ab6310";
 pub const PROTOCOL_LIFT_DOCUMENT_SHA256: &str =
     "sha256:b6e82cee8d19e6eff421cd38a85f1d240a1f483c7ce40ea87bba5ed7f0c9d290";
 pub const RELAY_LIFT_DOCUMENT_SHA256: &str =
-    "sha256:ace236222ab94cccf1c70e384883b51e3d2df9506c9c4cdd49524058b9ebf5b7";
+    "sha256:c408f05b299600451c8313e6e32d676ff73b1bcc5ff72b39e569f187442ec80a";
 pub const CLI_LIFT_DOCUMENT_SHA256: &str =
     "sha256:053f343a9cd354487cd1a945f5ca94f69483030ad6bc9ef0f2443631f0fb6a91";
 
@@ -163,6 +187,7 @@ fn project_reviewed_job_surface(
             actual: "missing".to_owned(),
         });
     }
+    validate_relay_compilation(relay)?;
     validate_source("cli", &cli.source, CLI_ARTIFACT, CLI_SHA256)?;
     if relay.protocol_source != protocol.source {
         return Err(ProjectionError::ProtocolSourceMismatch);
@@ -387,6 +412,139 @@ fn validate_source(
     Ok(())
 }
 
+fn validate_relay_compilation(relay: &RelayIngestLift) -> Result<(), ProjectionError> {
+    let expected_sources = [
+        (WORKSPACE_MANIFEST_ARTIFACT, WORKSPACE_MANIFEST_SHA256),
+        (WORKSPACE_LOCK_ARTIFACT, WORKSPACE_LOCK_SHA256),
+        (CARGO_CONFIG_ARTIFACT, CARGO_CONFIG_SHA256),
+        (RELAY_MANIFEST_ARTIFACT, RELAY_MANIFEST_SHA256),
+        (RELAY_CRATE_ROOT_ARTIFACT, RELAY_CRATE_ROOT_SHA256),
+        (RELAY_HANDLERS_MODULE_ARTIFACT, RELAY_HANDLERS_MODULE_SHA256),
+        (CORE_MANIFEST_ARTIFACT, CORE_MANIFEST_SHA256),
+        (CORE_CRATE_ROOT_ARTIFACT, CORE_CRATE_ROOT_SHA256),
+    ];
+    if relay.compilation.sources.len() != expected_sources.len() {
+        return Err(ProjectionError::SourceMismatch {
+            component: "relay compilation".to_owned(),
+            field: "source count".to_owned(),
+            expected: expected_sources.len().to_string(),
+            actual: relay.compilation.sources.len().to_string(),
+        });
+    }
+    for (source, (artifact, digest)) in relay.compilation.sources.iter().zip(expected_sources) {
+        validate_source("relay compilation", source, artifact, digest)?;
+    }
+
+    let expected_packages = [
+        (
+            "buzz-relay",
+            "buzz_core",
+            "buzz-core",
+            "path:crates/buzz-core",
+        ),
+        (
+            "buzz-relay",
+            "nostr",
+            "nostr",
+            "registry+https://github.com/rust-lang/crates.io-index#nostr@0.44.7",
+        ),
+    ];
+    let actual_packages = relay
+        .compilation
+        .package_edges
+        .iter()
+        .map(|edge| {
+            (
+                edge.dependent_package.as_str(),
+                edge.crate_name.as_str(),
+                edge.dependency_package.as_str(),
+                edge.source.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if actual_packages != expected_packages {
+        return Err(ProjectionError::SourceMismatch {
+            component: "relay compilation".to_owned(),
+            field: "package edges".to_owned(),
+            expected: format!("{expected_packages:?}"),
+            actual: format!("{actual_packages:?}"),
+        });
+    }
+
+    let expected_edges = [
+        (
+            "buzz_relay::handlers",
+            RELAY_CRATE_ROOT_ARTIFACT,
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+        ),
+        (
+            "buzz_relay::handlers::ingest",
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+            RELAY_ARTIFACT,
+        ),
+        (
+            "buzz_relay::handlers::push_lease",
+            RELAY_HANDLERS_MODULE_ARTIFACT,
+            PUSH_LEASE_ARTIFACT,
+        ),
+        ("buzz_core::kind", CORE_CRATE_ROOT_ARTIFACT, KIND_ARTIFACT),
+    ];
+    let actual_edges = relay
+        .compilation
+        .module_edges
+        .iter()
+        .map(|edge| {
+            (
+                edge.module_path.as_str(),
+                edge.parent_artifact.as_str(),
+                edge.child_artifact.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if actual_edges != expected_edges {
+        return Err(ProjectionError::SourceMismatch {
+            component: "relay compilation".to_owned(),
+            field: "module edges".to_owned(),
+            expected: format!("{expected_edges:?}"),
+            actual: format!("{actual_edges:?}"),
+        });
+    }
+
+    let [nostr] = relay.compilation.locked_dependencies.as_slice() else {
+        return Err(ProjectionError::SourceMismatch {
+            component: "relay compilation".to_owned(),
+            field: "locked dependencies".to_owned(),
+            expected: "one exact nostr dependency".to_owned(),
+            actual: format!("{} entries", relay.compilation.locked_dependencies.len()),
+        });
+    };
+    for (field, expected, actual) in [
+        ("crate_name", "nostr", nostr.crate_name.as_str()),
+        ("package", "nostr", nostr.package.as_str()),
+        ("version", "0.44.7", nostr.version.as_str()),
+        (
+            "source",
+            "registry+https://github.com/rust-lang/crates.io-index",
+            nostr.source.as_str(),
+        ),
+        (
+            "checksum",
+            "c7d3d987ea7078dc36947cde532637c472a229426702e4331dd7667325378bd9",
+            nostr.checksum.as_str(),
+        ),
+    ] {
+        if actual != expected {
+            return Err(ProjectionError::SourceMismatch {
+                component: "relay compilation".to_owned(),
+                field: format!("nostr {field}"),
+                expected: expected.to_owned(),
+                actual: actual.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_native_document(
     component: &str,
     bytes: &[u8],
@@ -563,6 +721,28 @@ fn protocol_coverage(protocol: &ProtocolLift) -> CoverageWitness {
 }
 
 fn relay_coverage(relay: &RelayIngestLift) -> CoverageWitness {
+    let compilation_digest_material = relay
+        .compilation
+        .sources
+        .iter()
+        .map(|source| source.sha256.as_str())
+        .chain(
+            relay
+                .compilation
+                .locked_dependencies
+                .iter()
+                .flat_map(|dependency| {
+                    [
+                        dependency.crate_name.as_str(),
+                        dependency.package.as_str(),
+                        dependency.version.as_str(),
+                        dependency.source.as_str(),
+                        dependency.checksum.as_str(),
+                    ]
+                }),
+        )
+        .collect::<Vec<_>>()
+        .join("\n");
     CoverageWitness {
         build_scope_id: SOURCE_SCOPE_ID.to_owned(),
         extractor: ExtractorId {
@@ -570,17 +750,19 @@ fn relay_coverage(relay: &RelayIngestLift) -> CoverageWitness {
             version: relay.coverage.extractor_version.clone(),
             config_digest: sha256(
                 format!(
-                    "{}\n{}\n{}",
+                    "{}\n{}\n{}\n{}",
                     relay.source.sha256,
                     relay.protocol_source.sha256,
-                    relay.push_lease_source.sha256
+                    relay.push_lease_source.sha256,
+                    compilation_digest_material
                 )
                 .as_bytes(),
             ),
         },
         source_roots: vec![
+            ".".to_owned(),
             "crates/buzz-core/src".to_owned(),
-            "crates/buzz-relay/src/handlers".to_owned(),
+            "crates/buzz-relay/src".to_owned(),
         ],
         mechanism: "relay_ingest_allowlist".to_owned(),
         completeness: map_relay_completeness(relay.coverage.completeness),
@@ -928,6 +1110,48 @@ mod tests {
             declaration_error
                 .to_string()
                 .contains("relay push lease constant mismatch")
+        );
+    }
+
+    #[test]
+    fn typed_relay_projection_requires_the_pinned_compilation_graph() {
+        let (protocol, relay, cli) = pinned_documents();
+        let protocol: buzz_protocol_lifter::ProtocolLift =
+            serde_json::from_slice(protocol).expect("protocol fixture is valid");
+        let mut relay: buzz_relay_lifter::RelayIngestLift =
+            serde_json::from_slice(relay).expect("relay fixture is valid");
+        let cli: buzz_cli_lifter::CommandTreeLift =
+            serde_json::from_slice(cli).expect("CLI fixture is valid");
+
+        relay.compilation.sources[0].sha256 = "sha256:changed".to_owned();
+        let source_error = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect_err("alternate compilation source must not project");
+        assert!(
+            source_error
+                .to_string()
+                .contains("relay compilation sha256 mismatch")
+        );
+
+        relay.compilation.sources[0].sha256 = super::WORKSPACE_MANIFEST_SHA256.to_owned();
+        relay.compilation.module_edges.pop();
+        let edge_error = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect_err("incomplete module resolution must not project");
+        assert!(
+            edge_error
+                .to_string()
+                .contains("relay compilation module edges mismatch")
+        );
+
+        let (_, relay, _) = pinned_documents();
+        let mut relay: buzz_relay_lifter::RelayIngestLift =
+            serde_json::from_slice(relay).expect("relay fixture is valid");
+        relay.compilation.package_edges.pop();
+        let package_error = project_reviewed_job_surface(&protocol, &relay, &cli)
+            .expect_err("incomplete package resolution must not project");
+        assert!(
+            package_error
+                .to_string()
+                .contains("relay compilation package edges mismatch")
         );
     }
 

@@ -1,4 +1,4 @@
-use std::{env, fs, process};
+use std::{env, fs, path::Path, process};
 
 fn main() {
     if let Err(error) = run() {
@@ -9,24 +9,27 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
-    let ingest_path = arguments.next().ok_or_else(usage)?;
-    let kind_path = arguments.next().ok_or_else(usage)?;
-    let push_lease_path = arguments.next().ok_or_else(usage)?;
+    let source_root = arguments.next().ok_or_else(usage)?;
     let protocol_lift_path = arguments.next().ok_or_else(usage)?;
-    let artifact = arguments.next().ok_or_else(usage)?;
-    let push_lease_artifact = arguments.next().ok_or_else(usage)?;
     let authority = arguments.next().ok_or_else(usage)?;
     let revision = arguments.next().ok_or_else(usage)?;
     if arguments.next().is_some() {
         return Err(usage());
     }
 
-    let ingest_source = fs::read_to_string(&ingest_path)
-        .map_err(|error| format!("failed to read {ingest_path}: {error}"))?;
-    let kind_source = fs::read_to_string(&kind_path)
-        .map_err(|error| format!("failed to read {kind_path}: {error}"))?;
-    let push_lease_source = fs::read_to_string(&push_lease_path)
-        .map_err(|error| format!("failed to read {push_lease_path}: {error}"))?;
+    let source_root = Path::new(&source_root);
+    let workspace_manifest = read_source(source_root, "Cargo.toml")?;
+    let workspace_lock = read_source(source_root, "Cargo.lock")?;
+    let cargo_config = read_source(source_root, ".cargo/config.toml")?;
+    let relay_manifest = read_source(source_root, "crates/buzz-relay/Cargo.toml")?;
+    let relay_crate_root = read_source(source_root, "crates/buzz-relay/src/lib.rs")?;
+    let relay_handlers_module = read_source(source_root, "crates/buzz-relay/src/handlers/mod.rs")?;
+    let ingest_source = read_source(source_root, "crates/buzz-relay/src/handlers/ingest.rs")?;
+    let push_lease_source =
+        read_source(source_root, "crates/buzz-relay/src/handlers/push_lease.rs")?;
+    let core_manifest = read_source(source_root, "crates/buzz-core/Cargo.toml")?;
+    let core_crate_root = read_source(source_root, "crates/buzz-core/src/lib.rs")?;
+    let kind_source = read_source(source_root, "crates/buzz-core/src/kind.rs")?;
     let protocol_lift: buzz_protocol_lifter::ProtocolLift = serde_json::from_slice(
         &fs::read(&protocol_lift_path)
             .map_err(|error| format!("failed to read {protocol_lift_path}: {error}"))?,
@@ -34,14 +37,28 @@ fn run() -> Result<(), String> {
     .map_err(|error| format!("failed to parse {protocol_lift_path}: {error}"))?;
 
     let lift = buzz_relay_lifter::lift_relay_ingest(
-        buzz_relay_lifter::RelaySourceInputs::new(&ingest_source, &kind_source, &push_lease_source),
+        buzz_relay_lifter::RelayInputs {
+            semantic: buzz_relay_lifter::RelaySemanticSources {
+                ingest: &ingest_source,
+                kind: &kind_source,
+                push_lease: &push_lease_source,
+            },
+            compilation: buzz_relay_lifter::RelayCompilationSources {
+                workspace_manifest: &workspace_manifest,
+                workspace_lock: &workspace_lock,
+                cargo_config: &cargo_config,
+                relay_manifest: &relay_manifest,
+                relay_crate_root: &relay_crate_root,
+                relay_handlers_module: &relay_handlers_module,
+                core_manifest: &core_manifest,
+                core_crate_root: &core_crate_root,
+            },
+        },
         &protocol_lift,
         authority,
-        artifact,
-        push_lease_artifact,
         revision,
     )
-    .map_err(|error| format!("failed to lift {ingest_path}: {error}"))?;
+    .map_err(|error| format!("failed to lift relay package: {error}"))?;
     let output = serde_json::to_string_pretty(&lift)
         .map_err(|error| format!("failed to serialize lift: {error}"))?;
     println!("{output}");
@@ -49,5 +66,10 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: buzz-relay-lifter <ingest-source> <kind-source> <push-lease-source> <protocol-lift-json> <artifact-id> <push-lease-artifact-id> <authority> <revision>".to_owned()
+    "usage: buzz-relay-lifter <source-root> <protocol-lift-json> <authority> <revision>".to_owned()
+}
+
+fn read_source(root: &Path, relative: &str) -> Result<String, String> {
+    let path = root.join(relative);
+    fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))
 }
