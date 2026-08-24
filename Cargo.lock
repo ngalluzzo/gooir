@@ -297,6 +297,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-datamodel-pack"
+version = "0.1.0"
+dependencies = [
+ "entity-spec",
+ "fleetd-capability-pack",
+ "gooir-capability",
+ "lift-defeasible",
+ "openapi-lowering",
+ "semantics-data-model-v1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sql-ddl-lowering",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

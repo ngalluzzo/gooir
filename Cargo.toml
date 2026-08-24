@@ -17,6 +17,7 @@ members = [
     "crates/gooir-analysis",
     "crates/gooir-capability",
     "crates/gooir-core",
+    "crates/gooir-datamodel-pack",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
     "crates/openapi-lowering",
@@ -59,6 +60,7 @@ fleetd-surface-lowering = { path = "crates/fleetd-surface-lowering" }
 gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-capability = { path = "crates/gooir-capability" }
 gooir-core = { path = "crates/gooir-core" }
+gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
 openapi-lifter = { path = "crates/openapi-lifter" }

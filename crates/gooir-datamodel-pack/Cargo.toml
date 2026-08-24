@@ -1,0 +1,27 @@
+[package]
+name = "gooir-datamodel-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+entity-spec = { workspace = true }
+gooir-capability = { workspace = true }
+lift-defeasible = { workspace = true }
+openapi-lowering = { workspace = true }
+semantics-data-model-v1 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sql-ddl-lowering = { workspace = true }
+
+# Test-only, so the neutral pack does not build-depend on a product pack. It
+# exists so a divergence between the two declarations of the data-model fact
+# identity fails a test instead of silently splitting the graph in two.
+[dev-dependencies]
+fleetd-capability-pack = { workspace = true }
+
+[[bin]]
+name = "gooir-datamodel-check"
+path = "src/main.rs"
