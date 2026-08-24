@@ -112,6 +112,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-model-convergence"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "postgres-catalog-lifter",
+ "prisma-schema-lifter",
+ "semantics-data-model-v1",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -188,6 +198,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "lift-defeasible"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -199,6 +216,24 @@ version = "0.1.0"
 dependencies = [
  "gooir-core",
  "semantics-effects-v1",
+]
+
+[[package]]
+name = "postgres-catalog-lifter"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "semantics-data-model-v1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "prisma-schema-lifter"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "semantics-data-model-v1",
 ]
 
 [[package]]
@@ -229,6 +264,14 @@ dependencies = [
  "semantics-effects-v1",
  "serde_json",
  "workflow-dialect",
+]
+
+[[package]]
+name = "semantics-data-model-v1"
+version = "0.1.0"
+dependencies = [
+ "gooir-core",
+ "serde",
 ]
 
 [[package]]
