@@ -1,0 +1,21 @@
+[package]
+name = "gooir-doctor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gooir-capability = { workspace = true }
+
+# The library is pure: it analyses any registry. The binary additionally knows
+# *this workspace's installed set*, which is what "installed" means for a tool.
+fleetd-capability-pack = { workspace = true }
+gooir-datamodel-pack = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[bin]]
+name = "gooir-doctor"
+path = "src/main.rs"
