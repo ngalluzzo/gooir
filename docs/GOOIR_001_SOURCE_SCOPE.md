@@ -194,15 +194,15 @@ claims and `buzz-surface-profile`, the pinned result is:
   dispatch, whose native coverage lifters have not landed.
 
 The deterministic report is checked in at
-`fixtures/buzz/desktop-v0.5.18/job-surface.analysis.json` and can be reproduced
-with:
+`fixtures/buzz/desktop-v0.5.18/job-surface.analysis.json`. The product view uses
+the same reviewed inputs and analysis through one clean-checkout command:
 
-```text
-cargo run -q -p buzz-surface-check -- \
-  fixtures/buzz/desktop-v0.5.18/job-protocol.lift.json \
-  fixtures/buzz/desktop-v0.5.18/job-relay.lift.json \
-  fixtures/buzz/desktop-v0.5.18/job-cli.lift.json
+```bash
+cargo run -q -p buzz-surface-check
 ```
+
+Pass `--json` to reproduce the complete machine-readable report. The former
+three-path form remains supported for exact-input and evidence-mutation checks.
 
 This is a checked local admission policy, not a claim of cryptographic proof.
 The staging snapshot remains outside the trusted execution path.

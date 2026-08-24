@@ -31,6 +31,14 @@ The microkernel does not know `page`, `entity`, `retry`, React, Postgres, or Buz
 
 `GOOIR-001` now has source-derived protocol, relay, and CLI lifts plus a generic contract-only completeness analyzer. Exact local admission produces six relay-ingest contradictions and one exhaustive CLI gap; SDK and runtime absences remain unknown until their coverage-witnessed lifters land. The hand-authored staging snapshot stays outside the trusted path.
 
+Run the first real-software product slice from a clean checkout:
+
+```bash
+cargo run -q -p buzz-surface-check
+```
+
+The one-screen default view marks the behavior `BROKEN`, follows one Buzz agent-job event from declaration through production, relay acceptance, and runtime consumption, explains the impact and next action, and names the boundaries that remain unknown. Use `--details` for exact evidence or `--json` for the complete machine-readable report. See the [ten-minute Slice 1 demo](docs/SLICE_1_DEMO.md) for the evidence-mutation trust check and product gate.
+
 See the [project brief](docs/PROJECT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), and [milestones](docs/MILESTONES.md).
 
 ## Development
