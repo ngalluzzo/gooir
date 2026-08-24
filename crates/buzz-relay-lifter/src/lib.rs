@@ -41,6 +41,31 @@ pub struct RelaySemanticSources<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelayModuleLayouts {
+    pub relay_handlers_file_layout: bool,
+    pub relay_handlers_dir_layout: bool,
+    pub ingest_file_layout: bool,
+    pub ingest_dir_layout: bool,
+    pub push_lease_file_layout: bool,
+    pub push_lease_dir_layout: bool,
+    pub core_kind_file_layout: bool,
+    pub core_kind_dir_layout: bool,
+}
+
+impl RelayModuleLayouts {
+    pub const UNAMBIGUOUS: Self = Self {
+        relay_handlers_file_layout: false,
+        relay_handlers_dir_layout: true,
+        ingest_file_layout: true,
+        ingest_dir_layout: false,
+        push_lease_file_layout: true,
+        push_lease_dir_layout: false,
+        core_kind_file_layout: true,
+        core_kind_dir_layout: false,
+    };
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayCompilationSources<'a> {
     pub workspace_manifest: &'a str,
     pub workspace_lock: &'a str,
@@ -50,6 +75,7 @@ pub struct RelayCompilationSources<'a> {
     pub relay_handlers_module: &'a str,
     pub core_manifest: &'a str,
     pub core_crate_root: &'a str,
+    pub layouts: RelayModuleLayouts,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -508,6 +534,7 @@ fn prove_compilation_resolution(
 
     prove_workspace_manifest(&workspace)?;
     prove_cargo_config(&cargo_config)?;
+    prove_module_layouts(sources.layouts)?;
     prove_package_manifest(
         &relay_manifest,
         "buzz-relay",
@@ -708,6 +735,53 @@ fn prove_cargo_config(config: &toml::Value) -> Result<(), String> {
         })
     }) {
         return Err("Cargo configuration injects unmodeled Cargo or Rust settings".to_owned());
+    }
+    Ok(())
+}
+
+fn prove_module_layouts(layouts: RelayModuleLayouts) -> Result<(), String> {
+    let pairs = [
+        (
+            "handlers",
+            layouts.relay_handlers_file_layout,
+            layouts.relay_handlers_dir_layout,
+        ),
+        (
+            "ingest",
+            layouts.ingest_file_layout,
+            layouts.ingest_dir_layout,
+        ),
+        (
+            "push_lease",
+            layouts.push_lease_file_layout,
+            layouts.push_lease_dir_layout,
+        ),
+        (
+            "kind",
+            layouts.core_kind_file_layout,
+            layouts.core_kind_dir_layout,
+        ),
+    ];
+    for (module, file_layout, dir_layout) in pairs {
+        if file_layout && dir_layout {
+            return Err(format!(
+                "module `{module}` has ambiguous file layouts (`{module}.rs` and `{module}/mod.rs`); \
+                 the compiler could not select a definition for this tree"
+            ));
+        }
+    }
+    let consumed = [
+        ("handlers", layouts.relay_handlers_dir_layout),
+        ("ingest", layouts.ingest_file_layout),
+        ("push_lease", layouts.push_lease_file_layout),
+        ("kind", layouts.core_kind_file_layout),
+    ];
+    for (module, present) in consumed {
+        if !present {
+            return Err(format!(
+                "consumed layout of module `{module}` is absent from the source root"
+            ));
+        }
     }
     Ok(())
 }
@@ -3664,8 +3738,8 @@ mod tests {
 
     use super::{
         CORE_KIND_ARTIFACT, IngestDecisionKind, LiftError, NativeCompleteness,
-        PUSH_LEASE_CONSTANT_PATH, RelayCompilationSources, RelayInputs, RelaySemanticSources,
-        lift_relay_ingest,
+        PUSH_LEASE_CONSTANT_PATH, RelayCompilationSources, RelayInputs, RelayModuleLayouts,
+        RelaySemanticSources, lift_relay_ingest,
     };
 
     const WORKSPACE_MANIFEST: &str = r#"[workspace]
@@ -3784,6 +3858,7 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
                 relay_handlers_module,
                 core_manifest: CORE_MANIFEST,
                 core_crate_root: CORE_CRATE_ROOT,
+                layouts: RelayModuleLayouts::UNAMBIGUOUS,
             },
         }
     }
@@ -3831,6 +3906,21 @@ async fn ingest_event_inner(kind_u32: u32, event: Event) -> Result<(), Error> {
         inputs.compilation.relay_handlers_module =
             "pub mod ingest;\n#[path = \"alternate.rs\"]\npub mod push_lease;\n";
         assert_unproven_compilation_is_partial(inputs, "exact `push_lease` module");
+    }
+
+    #[test]
+    fn ambiguous_module_file_layouts_make_compilation_partial() {
+        let mut ambiguous = RelayModuleLayouts::UNAMBIGUOUS;
+        ambiguous.core_kind_dir_layout = true;
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.layouts = ambiguous;
+        assert_unproven_compilation_is_partial(inputs, "ambiguous file layouts");
+
+        let mut alternate_only = RelayModuleLayouts::UNAMBIGUOUS;
+        alternate_only.core_kind_file_layout = false;
+        let mut inputs = fixture_inputs(INGEST_SOURCE, KIND_SOURCE, PUSH_LEASE_SOURCE);
+        inputs.compilation.layouts = alternate_only;
+        assert_unproven_compilation_is_partial(inputs, "consumed layout of module `kind`");
     }
 
     #[test]

@@ -30,6 +30,22 @@ fn run() -> Result<(), String> {
     let core_manifest = read_source(source_root, "crates/buzz-core/Cargo.toml")?;
     let core_crate_root = read_source(source_root, "crates/buzz-core/src/lib.rs")?;
     let kind_source = read_source(source_root, "crates/buzz-core/src/kind.rs")?;
+    let layouts = buzz_relay_lifter::RelayModuleLayouts {
+        relay_handlers_file_layout: source_exists(source_root, "crates/buzz-relay/src/handlers.rs"),
+        relay_handlers_dir_layout: true,
+        ingest_file_layout: true,
+        ingest_dir_layout: source_exists(
+            source_root,
+            "crates/buzz-relay/src/handlers/ingest/mod.rs",
+        ),
+        push_lease_file_layout: true,
+        push_lease_dir_layout: source_exists(
+            source_root,
+            "crates/buzz-relay/src/handlers/push_lease/mod.rs",
+        ),
+        core_kind_file_layout: true,
+        core_kind_dir_layout: source_exists(source_root, "crates/buzz-core/src/kind/mod.rs"),
+    };
     let protocol_lift: buzz_protocol_lifter::ProtocolLift = serde_json::from_slice(
         &fs::read(&protocol_lift_path)
             .map_err(|error| format!("failed to read {protocol_lift_path}: {error}"))?,
@@ -52,6 +68,7 @@ fn run() -> Result<(), String> {
                 relay_handlers_module: &relay_handlers_module,
                 core_manifest: &core_manifest,
                 core_crate_root: &core_crate_root,
+                layouts,
             },
         },
         &protocol_lift,
@@ -72,4 +89,8 @@ fn usage() -> String {
 fn read_source(root: &Path, relative: &str) -> Result<String, String> {
     let path = root.join(relative);
     fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))
+}
+
+fn source_exists(root: &Path, relative: &str) -> bool {
+    root.join(relative).exists()
 }

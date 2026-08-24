@@ -59,7 +59,9 @@ out-of-line module edges from the selected crate roots to each evaluated source.
 Ancestor name introductions are audited so a local item, import, extern-crate
 alias, or macro cannot redirect a modeled crate path. Inline modules, path or
 configuration attributes, macros, aliases, target-specific dependency tables,
-source/compiler overrides, alternate package paths, or lock ambiguity make
+source/compiler overrides, alternate package paths, lock ambiguity, or an
+ambiguous module file layout (both `<name>.rs` and `<name>/mod.rs` beside the
+parent, which the compiler rejects with E0761) make
 coverage partial. After binding that compilation graph, it checks that the
 kind-source digest matches the upstream lift, resolves direct constants and
 named `matches!` predicates, evaluates every preceding match arm for each
