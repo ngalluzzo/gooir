@@ -1,0 +1,15 @@
+[package]
+name = "prisma-schema-lowering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lift-defeasible = { workspace = true }
+semantics-data-model-v1 = { workspace = true }
+
+# Lifting is the opposite direction and must not be a build dependency of a
+# lowering. It is needed only to state the round-trip law in tests.
+[dev-dependencies]
+prisma-schema-lifter = { workspace = true }

@@ -197,17 +197,15 @@ pub fn compare(left: &DataModel, right: &DataModel) -> Report {
         }
     }
 
-    let key = |from: &str, to: &str| (normalize(from), normalize(to));
-    let lrel: Vec<_> = left
-        .relations
-        .iter()
-        .map(|e| key(&e.from_entity, &e.to_entity))
-        .collect();
-    let rrel: Vec<_> = right
-        .relations
-        .iter()
-        .map(|e| key(&e.from_entity, &e.to_entity))
-        .collect();
+    // The carrying fields are part of a relation's identity. Comparing only the
+    // endpoints would let a relation that names a nonexistent field pass.
+    let key = |e: &semantics_data_model_v1::RelationEdge| {
+        let mut f: Vec<String> = e.from_fields.iter().map(|x| normalize(x)).collect();
+        f.sort();
+        (normalize(&e.from_entity), normalize(&e.to_entity), f)
+    };
+    let lrel: Vec<_> = left.relations.iter().map(key).collect();
+    let rrel: Vec<_> = right.relations.iter().map(key).collect();
     for (i, k) in lrel.iter().enumerate() {
         if !rrel.contains(k) {
             r.divergences.push(Divergence::Relation {

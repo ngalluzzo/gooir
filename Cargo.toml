@@ -13,6 +13,7 @@ members = [
     "crates/payments-dialect",
     "crates/postgres-catalog-lifter",
     "crates/prisma-schema-lifter",
+    "crates/prisma-schema-lowering",
     "crates/retry-safety-analysis",
     "crates/semantics-data-model-v1",
     "crates/semantics-effects-v1",
@@ -43,6 +44,7 @@ heck = "0.5"
 payments-dialect = { path = "crates/payments-dialect" }
 postgres-catalog-lifter = { path = "crates/postgres-catalog-lifter" }
 prisma-schema-lifter = { path = "crates/prisma-schema-lifter" }
+prisma-schema-lowering = { path = "crates/prisma-schema-lowering" }
 retry-safety-analysis = { path = "crates/retry-safety-analysis" }
 semantics-data-model-v1 = { path = "crates/semantics-data-model-v1" }
 semantics-effects-v1 = { path = "crates/semantics-effects-v1" }

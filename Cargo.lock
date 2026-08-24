@@ -118,6 +118,7 @@ dependencies = [
  "lift-defeasible",
  "postgres-catalog-lifter",
  "prisma-schema-lifter",
+ "prisma-schema-lowering",
  "semantics-data-model-v1",
 ]
 
@@ -233,6 +234,15 @@ name = "prisma-schema-lifter"
 version = "0.1.0"
 dependencies = [
  "lift-defeasible",
+ "semantics-data-model-v1",
+]
+
+[[package]]
+name = "prisma-schema-lowering"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "prisma-schema-lifter",
  "semantics-data-model-v1",
 ]
 

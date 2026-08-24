@@ -244,6 +244,25 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
     let is_model = |n: &str| model_names.iter().any(|m| m == n);
     // A relation names a *model*; the waist names entities by their mapped name,
     // so the target must be resolved the same way the entity itself was.
+    // Field names inside @relation(fields:/references:) name *model fields*; the
+    // waist names fields by their mapped storage name, so they must be resolved
+    // the same way. Leaving them raw makes a relation point at a field name the
+    // entity does not have -- an inconsistency a symmetric round trip cannot see.
+    let mapped_fields = |model: &str, names: &[String]| -> Vec<String> {
+        let Some(m) = models.iter().find(|m| m.name == model) else {
+            return names.to_vec();
+        };
+        names
+            .iter()
+            .map(|n| {
+                m.fields
+                    .iter()
+                    .find(|f| &f.name == n)
+                    .and_then(|f| quoted_arg(&f.attrs, "@map"))
+                    .unwrap_or_else(|| n.clone())
+            })
+            .collect()
+    };
     let mapped_name = |model: &str| -> String {
         models
             .iter()
@@ -305,9 +324,9 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
                 if !from_fields.is_empty() {
                     out.relations.push(RelationEdge {
                         from_entity: entity_name.clone(),
-                        from_fields,
+                        from_fields: mapped_fields(&m.name, &from_fields),
                         to_entity: mapped_name(&f.type_name),
-                        to_fields,
+                        to_fields: mapped_fields(&f.type_name, &to_fields),
                     });
                 } else if f.list {
                     // Either the inverse of a 1-n, or an implicit m-n whose join
@@ -470,6 +489,13 @@ model Post {
         );
         assert_eq!(l.value.relations.len(), 1);
         assert_eq!(l.value.relations[0].to_entity, "User");
+        // the relation must name fields that actually exist on the entities
+        for c in &l.value.relations[0].from_fields {
+            assert!(
+                post.field(c).is_some(),
+                "relation names a missing field {c}"
+            );
+        }
     }
 
     #[test]
@@ -502,6 +528,27 @@ model A { id String @id }
             l.defeats_of(DefeatKind::OutOfScope)
                 .any(|d| d.subject.contains("relationMode"))
         );
+    }
+
+    #[test]
+    fn relation_field_names_are_mapped_like_the_fields_they_name() {
+        let src = r#"
+model Post {
+  id       String @id
+  authorId String @map("author_id")
+  author   User   @relation(fields: [authorId], references: [userId])
+}
+model User {
+  userId String @id @map("user_id")
+  posts  Post[]
+}
+"#;
+        let l = lift_prisma_schema(src);
+        let r = &l.value.relations[0];
+        assert_eq!(r.from_fields, vec!["author_id".to_owned()]);
+        assert_eq!(r.to_fields, vec!["user_id".to_owned()]);
+        assert!(l.value.entity("Post").unwrap().field("author_id").is_some());
+        assert!(l.value.entity("User").unwrap().field("user_id").is_some());
     }
 
     #[test]

@@ -124,6 +124,41 @@ fn entity_and_relation_divergence_is_always_accounted_for_by_a_defeat() {
 }
 
 #[test]
+fn every_relation_names_fields_that_exist_on_its_entities() {
+    for c in cases() {
+        for (label, model) in [("prisma", &c.left.value), ("catalog", &c.right.value)] {
+            for rel in &model.relations {
+                let from = model
+                    .entity(&rel.from_entity)
+                    .unwrap_or_else(|| panic!("{}/{label}: missing {}", c.app, rel.from_entity));
+                for f in &rel.from_fields {
+                    assert!(
+                        from.field(f).is_some(),
+                        "{}/{label}: relation {} -> {} names field `{f}`, which {} does not have",
+                        c.app,
+                        rel.from_entity,
+                        rel.to_entity,
+                        rel.from_entity
+                    );
+                }
+                if let Some(to) = model.entity(&rel.to_entity) {
+                    for f in &rel.to_fields {
+                        assert!(
+                            to.field(f).is_some(),
+                            "{}/{label}: relation {} -> {} references field `{f}`, which {} does not have",
+                            c.app,
+                            rel.from_entity,
+                            rel.to_entity,
+                            rel.to_entity
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn no_lift_claims_exhaustiveness_without_naming_its_defeater_set() {
     for c in cases() {
         assert!(!c.left.defeater_set.is_empty(), "{}", c.app);
