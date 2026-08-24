@@ -79,6 +79,7 @@ serde_json = "1"
 serde_json_canonicalizer = "0.3.2"
 sha2 = "0.10"
 syn = { version = "3", features = ["full", "visit"] }
+tempfile = "3"
 toml = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 workflow-dialect = { path = "crates/workflow-dialect" }

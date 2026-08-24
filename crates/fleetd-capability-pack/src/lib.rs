@@ -23,6 +23,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+mod conformance;
+
+pub use conformance::{
+    ArtifactFile, GitArtifactSource, RUNNABLE_WEB_ARTIFACT_SCHEMA, RunnableWebArtifact,
+    RunnableWebConformanceProvider,
+};
+
 pub const PACK_VERSION: &str = "0.1.0";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

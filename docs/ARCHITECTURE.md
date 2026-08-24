@@ -73,6 +73,17 @@ is not universal proof.
 See [decision 0011](DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 See [decision 0012](DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
 
+The first concrete implementation of this boundary is deliberately outside
+the generic crate. `fleetd-capability-pack` defines Fleetd's runnable-web
+artifact schema and conformance provider. The candidate names an exact trusted
+Git revision and content-addressed served assets; the verifier independently
+checks out that revision and injects its own black-box behavioral test. The
+served `/operator/contract.json` must equal the exact web target IR, so source
+meaning, generated UI, and runtime verification share one center without
+teaching `gooir-core` about pages, JavaScript, Fleetd, or HTTP.
+
+See [decision 0013](DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
+
 ## Multiple semantic waists
 
 GOOIR does not flatten every software domain into one universal semantic

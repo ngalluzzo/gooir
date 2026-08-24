@@ -78,8 +78,23 @@ provider implementation, input, and conformance-result identities in their
 derivation; a failing suite produces a durable report and no admitted facts.
 The checked-in cross-repository fixture intentionally fails conformance to
 prove that successful transport cannot masquerade as a runnable artifact.
+
+The first real suite is now implemented in the product-specific Fleetd pack.
+Its artifact contract binds the exact target fact to a trusted Fleetd Git
+revision, a fixed operator entrypoint, and a SHA-256 manifest of served assets.
+The verifier checks out that revision itself and injects a verifier-owned
+black-box test of the public surface, exact served target contract,
+authentication boundary, and both resolution effects:
+
+```bash
+cargo run -q -p fleetd-capability-pack \
+  --bin fleetd-runnable-web-conformance -- \
+  /path/to/fleetd request.json candidate.json
+```
+
 See [decision 0011](docs/DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
 See also [decision 0012](docs/DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
+See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
 
 ## Development
 

@@ -48,7 +48,11 @@ attempt. The generic return path now works: Fleetd strictly extracts an exact
 candidate, both repositories agree on its content identity, and GOOIR admits
 facts only through a separately identified matching conformance provider.
 
-The current cross-repository fixture intentionally fails the named runnable-web
-suite and therefore admits no facts. The next product step is the real
-`dev.fleetd.conformance.runnable_web_surface@0.1.0` implementation and a genuine
-agent-produced artifact, followed by re-planning with the admitted fact.
+The transport-only cross-repository fixture still intentionally fails the
+named runnable-web suite and therefore admits no facts. The real
+`dev.fleetd.conformance.runnable_web_surface@0.1.0` provider now defines an
+exact artifact manifest, checks out the proposed Fleetd revision from an
+operator-trusted repository, verifies its assets, and injects a verifier-owned
+black-box test. The remaining proof is a genuine agent-produced artifact,
+durable Fleetd attempt extraction, passing admission, and re-planning with the
+admitted fact.
