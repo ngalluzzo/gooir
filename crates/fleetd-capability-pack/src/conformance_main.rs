@@ -4,7 +4,8 @@ use fleetd_capability_pack::{
     RunnableWebConformanceProvider, registry, runnable_web_artifact_fact,
 };
 use gooir_capability::{
-    CapabilityCandidate, CapabilityRequest, DerivationPlan, FactType, verify_and_admit,
+    AdmissionPolicy, CapabilityCandidate, CapabilityConformanceProvider, CapabilityRequest,
+    DerivationPlan, FactType, verify_and_admit,
 };
 use serde::Serialize;
 
@@ -27,11 +28,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let request: CapabilityRequest = serde_json::from_slice(&fs::read(request_path)?)?;
     let candidate: CapabilityCandidate = serde_json::from_slice(&fs::read(candidate_path)?)?;
-    let admission = verify_and_admit(
-        &request,
-        &candidate,
-        &RunnableWebConformanceProvider::new(repository),
-    )?;
+    let verifier = RunnableWebConformanceProvider::new(repository);
+
+    // This command *is* the host, so it states which attester it accepts
+    // rather than accepting whichever one it was handed. The exact identity,
+    // suite, and implementation digest bind together: admitting an identity
+    // alone would let a different build inherit the decision.
+    let mut policy = AdmissionPolicy::default();
+    policy.admit_attester(verifier.descriptor());
+
+    let admission = verify_and_admit(&request, &candidate, &verifier, &policy)?;
+    if let Some(reason) = admission.withheld {
+        eprintln!("facts withheld: {reason:?}");
+    }
     let mut available = request
         .body
         .inputs

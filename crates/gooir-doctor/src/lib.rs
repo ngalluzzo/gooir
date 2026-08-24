@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use gooir_capability::{CapabilityId, CapabilityRegistry, FactType, ProviderId};
+use gooir_capability::{AdmissionPolicy, CapabilityId, CapabilityRegistry, FactType, ProviderId};
 
 /// A fact type nothing produces. Whoever runs a derivation must supply it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,6 +78,9 @@ pub struct Report {
     pub unreachable: Vec<UnreachableFact>,
     pub ambiguous: Vec<AmbiguousFact>,
     pub unadmitted: Vec<UnadmittedProvider>,
+    /// Attesters this host admits results from. Zero means no produced fact can
+    /// become an admitted one, whatever a verifier reports.
+    pub admitted_attesters: usize,
 }
 
 impl Report {
@@ -105,7 +108,13 @@ impl Report {
     }
 }
 
+/// Diagnoses against an empty admission policy: the honest default for a host
+/// that has not stated one.
 pub fn diagnose(registry: &CapabilityRegistry) -> Report {
+    diagnose_with_policy(registry, &AdmissionPolicy::default())
+}
+
+pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPolicy) -> Report {
     let mut produced_by: BTreeMap<FactType, Vec<CapabilityId>> = BTreeMap::new();
     let mut required_by: BTreeMap<FactType, Vec<CapabilityId>> = BTreeMap::new();
     let mut all: BTreeSet<FactType> = BTreeSet::new();
@@ -219,5 +228,6 @@ pub fn diagnose(registry: &CapabilityRegistry) -> Report {
         unreachable,
         ambiguous,
         unadmitted,
+        admitted_attesters: policy.admitted().len(),
     }
 }

@@ -1,6 +1,7 @@
 use gooir_capability::{
-    CapabilityCandidate, CapabilityConformanceProvider, CapabilityRequest, ConformanceCheck,
-    ConformanceOutcome, ConformanceProviderDescriptor, ProviderId, verify_and_admit,
+    AdmissionPolicy, CapabilityCandidate, CapabilityConformanceProvider, CapabilityRequest,
+    ConformanceCheck, ConformanceOutcome, ConformanceProviderDescriptor, ProviderId,
+    verify_and_admit,
 };
 use serde_json::json;
 
@@ -53,7 +54,9 @@ fn fleetd_candidate_round_trips_but_cannot_bypass_conformance() {
         "sha256:a2262fbc6ce8af0f59b33c0ec67af7cec2398670b1c7ebb837ab8d256beb802e"
     );
 
-    let admission = verify_and_admit(&request, &candidate, &FixtureRunnableWebSuite)
+    let mut policy = AdmissionPolicy::default();
+    policy.admit_attester(FixtureRunnableWebSuite.descriptor());
+    let admission = verify_and_admit(&request, &candidate, &FixtureRunnableWebSuite, &policy)
         .expect("failing conformance remains a valid exact result");
     assert_eq!(
         admission.conformance.body.outcome,

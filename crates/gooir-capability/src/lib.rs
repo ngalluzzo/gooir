@@ -383,18 +383,68 @@ pub struct CapabilityConformanceResult {
     pub body: CapabilityConformanceBody,
 }
 
+/// Why an admission produced no facts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactsWithheld {
+    /// The attester reported at least one failing check.
+    ConformanceFailed,
+    /// The attester reported success, but this host does not admit it.
+    AttesterNotAdmitted,
+}
+
 /// A conformance result plus any facts it made eligible for graph admission.
-/// Failed conformance is a valid report with an empty fact set.
+/// A failed or unadmitted result is a valid report with an empty fact set.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CapabilityAdmission {
     pub conformance: CapabilityConformanceResult,
     pub facts: Vec<FactInstance>,
+    /// Set when `facts` is empty. A conformance result is evidence either way;
+    /// whether it counts is a separate decision.
+    pub withheld: Option<FactsWithheld>,
+}
+
+/// Which attesters this host accepts conformance results from.
+///
+/// Default-deny, and deliberately separate from the conformance run itself.
+/// Structural independence from the provider is necessary but not sufficient:
+/// without this, any caller could supply an independent-looking verifier and
+/// mint admitted facts, which is the laundering hole
+/// [decision 0002](../../../docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md)
+/// closed for transported attestations. An attestation produced in-process is
+/// no more self-certifying than one that arrived over a wire.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AdmissionPolicy {
+    admitted: Vec<ConformanceProviderDescriptor>,
+}
+
+impl AdmissionPolicy {
+    /// Records one exact attester binding: identity, suite, and implementation
+    /// digest together.
+    ///
+    /// The host is responsible for establishing that verifier's authority
+    /// before calling this. Admitting an identity alone would let a different
+    /// implementation inherit the decision, so all three parts bind.
+    pub fn admit_attester(&mut self, descriptor: ConformanceProviderDescriptor) {
+        if !self.admitted.contains(&descriptor) {
+            self.admitted.push(descriptor);
+        }
+    }
+
+    pub fn admits(&self, descriptor: &ConformanceProviderDescriptor) -> bool {
+        self.admitted.contains(descriptor)
+    }
+
+    pub fn admitted(&self) -> &[ConformanceProviderDescriptor] {
+        &self.admitted
+    }
 }
 
 pub fn verify_and_admit(
     request: &CapabilityRequest,
     candidate: &CapabilityCandidate,
     verifier: &dyn CapabilityConformanceProvider,
+    policy: &AdmissionPolicy,
 ) -> Result<CapabilityAdmission, CapabilityAdmissionError> {
     candidate
         .validate(request)
@@ -433,6 +483,7 @@ pub fn verify_and_admit(
     } else {
         ConformanceOutcome::Failed
     };
+    let admitted_descriptor = descriptor.clone();
     let body = CapabilityConformanceBody {
         request_id: request.request_id.clone(),
         candidate_id: candidate.candidate_id.clone(),
@@ -445,12 +496,25 @@ pub fn verify_and_admit(
     let result_id = canonical_digest(&body)
         .map_err(|error| CapabilityAdmissionError::Serialization(error.to_string()))?;
     let conformance = CapabilityConformanceResult { result_id, body };
-    let facts = if outcome == ConformanceOutcome::Passed {
+    // Two independent conditions. The attester must have passed, and this host
+    // must accept the attester. Either alone is insufficient.
+    let withheld = if outcome != ConformanceOutcome::Passed {
+        Some(FactsWithheld::ConformanceFailed)
+    } else if !policy.admits(&admitted_descriptor) {
+        Some(FactsWithheld::AttesterNotAdmitted)
+    } else {
+        None
+    };
+    let facts = if withheld.is_none() {
         admitted_facts(request, candidate, &conformance)?
     } else {
         Vec::new()
     };
-    Ok(CapabilityAdmission { conformance, facts })
+    Ok(CapabilityAdmission {
+        conformance,
+        facts,
+        withheld,
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1540,11 +1604,21 @@ mod tests {
         ));
     }
 
+    /// A policy admitting exactly the attester supplied. Real hosts establish
+    /// authority out of band; tests state it directly.
+    fn admitting(verifier: &dyn CapabilityConformanceProvider) -> AdmissionPolicy {
+        let mut policy = AdmissionPolicy::default();
+        policy.admit_attester(verifier.descriptor());
+        policy
+    }
+
     #[test]
     fn independent_passing_conformance_admits_exact_candidate_facts() {
         let (request, candidate) = external_candidate();
+        let attester = verifier(ConformanceOutcome::Passed);
         let admission =
-            verify_and_admit(&request, &candidate, &verifier(ConformanceOutcome::Passed)).unwrap();
+            verify_and_admit(&request, &candidate, &attester, &admitting(&attester)).unwrap();
+        assert!(admission.withheld.is_none());
 
         assert_eq!(
             admission.conformance.body.outcome,
@@ -1591,14 +1665,53 @@ mod tests {
     #[test]
     fn failed_conformance_is_preserved_without_admitting_facts() {
         let (request, candidate) = external_candidate();
+        let attester = verifier(ConformanceOutcome::Failed);
         let admission =
-            verify_and_admit(&request, &candidate, &verifier(ConformanceOutcome::Failed)).unwrap();
+            verify_and_admit(&request, &candidate, &attester, &admitting(&attester)).unwrap();
 
         assert_eq!(
             admission.conformance.body.outcome,
             ConformanceOutcome::Failed
         );
         assert!(admission.facts.is_empty());
+        assert_eq!(admission.withheld, Some(FactsWithheld::ConformanceFailed));
+    }
+
+    /// A host that admits nothing gets nothing, even from a passing attester.
+    /// Structural independence is necessary and not sufficient.
+    #[test]
+    fn a_passing_attester_this_host_does_not_admit_yields_no_facts() {
+        let (request, candidate) = external_candidate();
+        let attester = verifier(ConformanceOutcome::Passed);
+        let admission =
+            verify_and_admit(&request, &candidate, &attester, &AdmissionPolicy::default()).unwrap();
+
+        assert_eq!(
+            admission.conformance.body.outcome,
+            ConformanceOutcome::Passed,
+            "the result is still evidence"
+        );
+        assert!(admission.facts.is_empty());
+        assert_eq!(admission.withheld, Some(FactsWithheld::AttesterNotAdmitted));
+    }
+
+    #[test]
+    fn admission_binds_the_implementation_not_just_the_identity() {
+        let (request, candidate) = external_candidate();
+        let attester = verifier(ConformanceOutcome::Passed);
+
+        // Same identity and suite, different build.
+        let mut other = attester.descriptor();
+        other.implementation_digest = format!("sha256:{}", "e".repeat(64));
+        let mut policy = AdmissionPolicy::default();
+        policy.admit_attester(other);
+
+        let admission = verify_and_admit(&request, &candidate, &attester, &policy).unwrap();
+        assert_eq!(
+            admission.withheld,
+            Some(FactsWithheld::AttesterNotAdmitted),
+            "a different implementation must not inherit the decision"
+        );
     }
 
     #[test]
@@ -1614,8 +1727,14 @@ mod tests {
         };
 
         assert_eq!(
-            verify_and_admit(&request, &candidate, &self_verifier),
-            Err(CapabilityAdmissionError::VerifierNotIndependent)
+            verify_and_admit(
+                &request,
+                &candidate,
+                &self_verifier,
+                &admitting(&self_verifier)
+            ),
+            Err(CapabilityAdmissionError::VerifierNotIndependent),
+            "independence is checked before this host's policy is consulted"
         );
     }
 }

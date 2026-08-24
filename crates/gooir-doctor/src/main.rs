@@ -93,12 +93,20 @@ fn print_graph(r: &Report) {
         }
     }
 
+    println!("\nadmission");
     println!(
-        "\nunadmitted providers ({}) — registration is not conformance",
+        "  {} attester(s) admitted by this host",
+        r.admitted_attesters
+    );
+    println!(
+        "  {} provider(s) whose outputs are not admissible yet",
         r.unadmitted.len()
     );
+    if r.admitted_attesters == 0 && !r.unadmitted.is_empty() {
+        println!("  -> no produced fact can become admitted, whatever a verifier reports");
+    }
     for u in &r.unadmitted {
-        println!("  {} needs {}", u.provider.name, u.conformance_suite);
+        println!("    {} needs {}", u.provider.name, u.conformance_suite);
     }
 }
 
