@@ -12,8 +12,8 @@ use fleetd_interaction_plan::{BlockedDeliveryInteractionPlan, derive_blocked_del
 use fleetd_surface_lowering::{TerminalSurface, WebSurface, lower_terminal, lower_web};
 use gooir_capability::{
     CapabilityId, CapabilityProvider, CapabilityRegistry, CapabilitySpec, FactCoverage,
-    FactInstance, FactType, ProducedFact, ProviderDescriptor, ProviderId, RegistryError,
-    Requirement,
+    FactInstance, FactType, PackManifestError, ProducedFact, ProviderDescriptor, ProviderId,
+    RegistryError, register_pack,
 };
 use lift_defeasible::Defeasible;
 use openapi_lifter::lift_openapi;
@@ -129,73 +129,11 @@ pub fn runnable_web_capability() -> CapabilityId {
     )
 }
 
-pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
-    let specs = [
-        CapabilitySpec {
-            id: openapi_data_capability(),
-            requires: vec![Requirement::complete(openapi_source_fact())],
-            produces: vec![data_model_fact()],
-            default_conformance_suite: "org.gooi.conformance.openapi_data_model@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: fleetd_native_capability(),
-            requires: vec![
-                Requirement::complete(openapi_source_fact()),
-                Requirement::complete(api_rust_source_fact()),
-                Requirement::complete(model_rust_source_fact()),
-                Requirement::complete(delivery_rust_source_fact()),
-            ],
-            produces: vec![fleetd_control_native_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.control_native@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: fleetd_control_projection_capability(),
-            requires: vec![Requirement::partial_allowed(fleetd_control_native_fact())],
-            produces: vec![fleetd_control_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.control_projection@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: fleetd_interaction_capability(),
-            requires: vec![
-                Requirement::partial_allowed(data_model_fact()),
-                Requirement::partial_allowed(fleetd_control_fact()),
-            ],
-            produces: vec![fleetd_interaction_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.interaction_projection@0.1.0"
-                .to_owned(),
-        },
-        CapabilitySpec {
-            id: web_target_capability(),
-            requires: vec![
-                Requirement::complete(fleetd_interaction_fact()),
-                Requirement::complete(fleetd_control_native_fact()),
-            ],
-            produces: vec![web_target_ir_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.web_target_ir@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: terminal_target_capability(),
-            requires: vec![
-                Requirement::complete(fleetd_interaction_fact()),
-                Requirement::complete(fleetd_control_native_fact()),
-            ],
-            produces: vec![terminal_target_ir_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.terminal_target_ir@0.1.0".to_owned(),
-        },
-        // This specification intentionally has no provider. It is the first
-        // machine-readable capability need for Fleetd to assign.
-        CapabilitySpec {
-            id: runnable_web_capability(),
-            requires: vec![Requirement::complete(web_target_ir_fact())],
-            produces: vec![runnable_web_artifact_fact()],
-            default_conformance_suite: "dev.fleetd.conformance.runnable_web_surface@0.1.0"
-                .to_owned(),
-        },
-    ];
-    for spec in specs {
-        registry.register_spec(spec)?;
-    }
-    Ok(())
+/// The capabilities this pack declares, as data.
+pub const MANIFEST: &str = include_str!("../pack.json");
+
+pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), PackManifestError> {
+    register_pack(registry, MANIFEST)
 }
 
 pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
@@ -208,10 +146,10 @@ pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), Regis
     Ok(())
 }
 
-pub fn registry() -> Result<CapabilityRegistry, RegistryError> {
+pub fn registry() -> Result<CapabilityRegistry, PackManifestError> {
     let mut registry = CapabilityRegistry::default();
     register_specs(&mut registry)?;
-    register_providers(&mut registry)?;
+    register_providers(&mut registry).map_err(PackManifestError::Registry)?;
     Ok(registry)
 }
 

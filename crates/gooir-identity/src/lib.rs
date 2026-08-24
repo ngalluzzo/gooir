@@ -11,6 +11,34 @@
 //!
 //! Every identity type in GOOIR is now generated from here.
 
+/// Why an identity could not be read from its display form.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IdentityParseError {
+    pub text: String,
+    pub reason: &'static str,
+}
+
+impl IdentityParseError {
+    pub fn new(text: impl Into<String>, reason: &'static str) -> Self {
+        Self {
+            text: text.into(),
+            reason,
+        }
+    }
+}
+
+impl std::fmt::Display for IdentityParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "`{}` is not an exact identity: {}",
+            self.text, self.reason
+        )
+    }
+}
+
+impl std::error::Error for IdentityParseError {}
+
 /// Declares an exact identity type.
 ///
 /// ```
@@ -59,6 +87,24 @@ macro_rules! exact_identity {
                     && self.version != other.version
             }
 
+            /// Reads the display form, `package/name@version`.
+            ///
+            /// Exactness is the whole point, so this refuses anything it
+            /// cannot read rather than filling in a default part.
+            pub fn parse(text: &str) -> Result<Self, $crate::IdentityParseError> {
+                let (package, rest) = text.split_once('/').ok_or_else(|| {
+                    $crate::IdentityParseError::new(text, "expected package/name@version")
+                })?;
+                let (name, version) = rest.split_once('@').ok_or_else(|| {
+                    $crate::IdentityParseError::new(text, "expected a @version")
+                })?;
+                let id = Self::new(package, name, version);
+                if !id.is_well_formed() {
+                    return Err($crate::IdentityParseError::new(text, "a part is blank"));
+                }
+                Ok(id)
+            }
+
             /// False when any part is blank. An identity with an empty part
             /// cannot be matched exactly, so it cannot mean anything.
             pub fn is_well_formed(&self) -> bool {
@@ -96,6 +142,26 @@ mod tests {
         assert!(a.is_other_version_of(&b));
         assert_ne!(a, b, "different versions are different identities");
         assert!(!a.is_other_version_of(&a));
+    }
+
+    #[test]
+    fn an_identity_round_trips_through_its_display_form() {
+        let id = TestId::new("org.example", "thing", "1.0.0");
+        assert_eq!(TestId::parse(&id.to_string()).unwrap(), id);
+    }
+
+    #[test]
+    fn a_malformed_identity_is_refused_rather_than_completed() {
+        for bad in [
+            "no-slash@1.0.0",
+            "pkg/no-version",
+            "/name@1.0.0",
+            "pkg/@1.0.0",
+            "pkg/name@",
+            "",
+        ] {
+            assert!(TestId::parse(bad).is_err(), "`{bad}` must not parse");
+        }
     }
 
     #[test]

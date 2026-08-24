@@ -1,0 +1,120 @@
+{
+  "protocol": "org.gooi.pack/v1",
+  "capabilities": [
+    {
+      "id": "dev.fleetd.capability/compose_interaction@0.1.0",
+      "requires": [
+        {
+          "fact": "org.gooi.semantics.data_model/model@1.0.0",
+          "acceptance": "partial_allowed"
+        },
+        {
+          "fact": "dev.fleetd.semantics.control/blocked_delivery_review@0.1.0",
+          "acceptance": "partial_allowed"
+        }
+      ],
+      "produces": [
+        "dev.fleetd.semantics.interaction/blocked_delivery_review@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.interaction_projection@0.1.0"
+    },
+    {
+      "id": "dev.fleetd.capability/generate_runnable_web_surface@0.1.0",
+      "requires": [
+        {
+          "fact": "org.gooi.target.web/fleetd_blocked_delivery@0.1.0",
+          "acceptance": "complete_only"
+        }
+      ],
+      "produces": [
+        "org.gooi.artifact.web/runnable_fleetd_surface@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.runnable_web_surface@0.1.0"
+    },
+    {
+      "id": "dev.fleetd.capability/lift_control_native@0.1.0",
+      "requires": [
+        {
+          "fact": "dev.fleetd.source/openapi@1.0.0",
+          "acceptance": "complete_only"
+        },
+        {
+          "fact": "dev.fleetd.source/api_rust@0.1.0",
+          "acceptance": "complete_only"
+        },
+        {
+          "fact": "dev.fleetd.source/model_rust@0.1.0",
+          "acceptance": "complete_only"
+        },
+        {
+          "fact": "dev.fleetd.source/delivery_rust@0.1.0",
+          "acceptance": "complete_only"
+        }
+      ],
+      "produces": [
+        "dev.fleetd.dialect.control_native/review@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.control_native@0.1.0"
+    },
+    {
+      "id": "dev.fleetd.capability/lower_terminal_target_ir@0.1.0",
+      "requires": [
+        {
+          "fact": "dev.fleetd.semantics.interaction/blocked_delivery_review@0.1.0",
+          "acceptance": "complete_only"
+        },
+        {
+          "fact": "dev.fleetd.dialect.control_native/review@0.1.0",
+          "acceptance": "complete_only"
+        }
+      ],
+      "produces": [
+        "org.gooi.target.terminal/fleetd_blocked_delivery@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.terminal_target_ir@0.1.0"
+    },
+    {
+      "id": "dev.fleetd.capability/lower_web_target_ir@0.1.0",
+      "requires": [
+        {
+          "fact": "dev.fleetd.semantics.interaction/blocked_delivery_review@0.1.0",
+          "acceptance": "complete_only"
+        },
+        {
+          "fact": "dev.fleetd.dialect.control_native/review@0.1.0",
+          "acceptance": "complete_only"
+        }
+      ],
+      "produces": [
+        "org.gooi.target.web/fleetd_blocked_delivery@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.web_target_ir@0.1.0"
+    },
+    {
+      "id": "dev.fleetd.capability/project_control@0.1.0",
+      "requires": [
+        {
+          "fact": "dev.fleetd.dialect.control_native/review@0.1.0",
+          "acceptance": "partial_allowed"
+        }
+      ],
+      "produces": [
+        "dev.fleetd.semantics.control/blocked_delivery_review@0.1.0"
+      ],
+      "default_conformance_suite": "dev.fleetd.conformance.control_projection@0.1.0"
+    },
+    {
+      "id": "org.gooi.capability/lift_openapi_data_model@0.1.0",
+      "requires": [
+        {
+          "fact": "dev.fleetd.source/openapi@1.0.0",
+          "acceptance": "complete_only"
+        }
+      ],
+      "produces": [
+        "org.gooi.semantics.data_model/model@1.0.0"
+      ],
+      "default_conformance_suite": "org.gooi.conformance.openapi_data_model@0.1.0"
+    }
+  ]
+}

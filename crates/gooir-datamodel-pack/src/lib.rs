@@ -14,8 +14,8 @@
 
 use gooir_capability::{
     CapabilityId, CapabilityProvider, CapabilityRegistry, CapabilitySpec, FactCoverage,
-    FactInstance, FactType, ProducedFact, ProviderDescriptor, ProviderId, RegistryError,
-    Requirement,
+    FactInstance, FactType, PackManifestError, ProducedFact, ProviderDescriptor, ProviderId,
+    RegistryError, register_pack,
 };
 use lift_defeasible::Defeasible;
 use semantics_data_model_v1::DataModel;
@@ -158,40 +158,11 @@ impl CapabilityProvider for OpenApiSurfaceProvider {
 
 // -------------------------------------------------------------- registration
 
-pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
-    let specs = [
-        CapabilitySpec {
-            id: author_data_model_capability(),
-            requires: vec![Requirement::complete(authored_entity_spec_fact())],
-            produces: vec![data_model_fact()],
-            default_conformance_suite: "org.gooi.conformance.authored_data_model@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: postgres_ddl_capability(),
-            requires: vec![Requirement::complete(data_model_fact())],
-            produces: vec![postgres_ddl_fact()],
-            default_conformance_suite: "org.gooi.conformance.postgres_ddl@0.1.0".to_owned(),
-        },
-        CapabilitySpec {
-            id: openapi_surface_capability(),
-            requires: vec![Requirement::complete(data_model_fact())],
-            produces: vec![openapi_surface_fact()],
-            default_conformance_suite: "org.gooi.conformance.openapi_crud_surface@0.1.0".to_owned(),
-        },
-        // Intentionally provider-less. Asking for typed clients yields an exact
-        // need that an external generator or agent seat can be assigned.
-        CapabilitySpec {
-            id: typescript_types_capability(),
-            requires: vec![Requirement::complete(data_model_fact())],
-            produces: vec![typescript_types_fact()],
-            default_conformance_suite: "org.gooi.conformance.typescript_model_types@0.1.0"
-                .to_owned(),
-        },
-    ];
-    for spec in specs {
-        registry.register_spec(spec)?;
-    }
-    Ok(())
+/// The capabilities this pack declares, as data.
+pub const MANIFEST: &str = include_str!("../pack.json");
+
+pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), PackManifestError> {
+    register_pack(registry, MANIFEST)
 }
 
 pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
@@ -202,9 +173,9 @@ pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), Regis
 }
 
 /// Specs and providers together.
-pub fn register(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
+pub fn register(registry: &mut CapabilityRegistry) -> Result<(), PackManifestError> {
     register_specs(registry)?;
-    register_providers(registry)
+    register_providers(registry).map_err(PackManifestError::Registry)
 }
 
 /// An authored specification as an initial fact.

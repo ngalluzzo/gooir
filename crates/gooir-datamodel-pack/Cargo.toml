@@ -19,3 +19,6 @@ sql-ddl-lowering = { workspace = true }
 [[bin]]
 name = "gooir-datamodel-check"
 path = "src/main.rs"
+
+[dev-dependencies]
+serde_json = { workspace = true }
