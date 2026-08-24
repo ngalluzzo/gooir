@@ -10,6 +10,8 @@ members = [
     "crates/gooir-analysis",
     "crates/gooir-core",
     "crates/lift-defeasible",
+    "crates/openapi-lifter",
+    "crates/openapi-lowering",
     "crates/payments-dialect",
     "crates/postgres-catalog-lifter",
     "crates/prisma-schema-lifter",
@@ -42,6 +44,8 @@ gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-core = { path = "crates/gooir-core" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
+openapi-lifter = { path = "crates/openapi-lifter" }
+openapi-lowering = { path = "crates/openapi-lowering" }
 payments-dialect = { path = "crates/payments-dialect" }
 postgres-catalog-lifter = { path = "crates/postgres-catalog-lifter" }
 prisma-schema-lifter = { path = "crates/prisma-schema-lifter" }

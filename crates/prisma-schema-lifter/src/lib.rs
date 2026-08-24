@@ -9,8 +9,8 @@
 
 use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::{
-    DataModel, DefaultOrigin, EntityShape, FieldShape, FieldType, Presence, RelationEdge,
-    ScalarType,
+    DataModel, DefaultOrigin, EntityShape, Enumeration, FieldShape, FieldType, Presence,
+    RelationEdge, ScalarType, Tri,
 };
 
 pub const DEFEATER_SET: &str = "org.gooi.lifter.prisma_schema/defeaters@1";
@@ -126,7 +126,8 @@ fn quoted_arg(attrs: &str, key: &str) -> Option<String> {
 pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
     let mut lifted = Defeasible::new(DataModel::default(), DEFEATER_SET);
 
-    let mut enums: Vec<String> = Vec::new();
+    // (declared name, enumeration as the store sees it)
+    let mut enums: Vec<(String, Enumeration)> = Vec::new();
     let mut models: Vec<RawModel> = Vec::new();
     let mut relation_mode: Option<String> = None;
 
@@ -151,7 +152,14 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
                     });
                 }
                 (Some("enum"), Some(name)) => {
-                    enums.push(name.trim_end_matches('{').to_owned());
+                    let declared = name.trim_end_matches('{').to_owned();
+                    enums.push((
+                        declared.clone(),
+                        Enumeration {
+                            name: declared,
+                            members: Vec::new(),
+                        },
+                    ));
                     block = Some("enum");
                 }
                 (Some("datasource"), _) => block = Some("datasource"),
@@ -186,6 +194,20 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
         }
 
         if let Some(kind) = block {
+            if kind == "enum" {
+                // An enum is renamed by @@map exactly like a model is. Members
+                // are bare identifiers; attribute lines are not.
+                if t.starts_with("@@map") {
+                    if let (Some(mapped), Some(e)) = (quoted_arg(t, "@@map"), enums.last_mut()) {
+                        e.1.name = mapped;
+                    }
+                } else if let (Some(member), Some(e)) = (
+                    t.split_whitespace().next().filter(|m| !m.starts_with('@')),
+                    enums.last_mut(),
+                ) {
+                    e.1.members.push(member.to_owned());
+                }
+            }
             if kind == "datasource" && t.starts_with("relationMode") {
                 relation_mode = t
                     .split('=')
@@ -275,7 +297,12 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
             })
             .unwrap_or_else(|| model.to_owned())
     };
-    let is_enum = |n: &str| enums.iter().any(|e| e == n);
+    let find_enum = |n: &str| {
+        enums
+            .iter()
+            .find(|(declared, _)| declared == n)
+            .map(|(_, e)| e.clone())
+    };
 
     // --- project into the waist ---
     let mut out = DataModel::default();
@@ -355,7 +382,7 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
 
             let ty = if let Some(s) = scalar(&f.type_name) {
                 FieldType::Scalar(refine_native(s, &f.attrs))
-            } else if is_enum(&f.type_name) {
+            } else if find_enum(&f.type_name).is_some() {
                 FieldType::Scalar(ScalarType::Enumeration)
             } else if f.type_name.starts_with("Unsupported") {
                 lifted.defeat(Defeat::new(
@@ -387,9 +414,12 @@ pub fn lift_prisma_schema(source: &str) -> Defeasible<DataModel> {
                     Presence::Required
                 },
                 list: f.list,
-                identity: f.attrs.contains("@id") || compound_id.contains(&f.name),
-                unique: f.attrs.contains("@unique") || singleton_uniques.contains(&f.name),
+                identity: Tri::known(f.attrs.contains("@id") || compound_id.contains(&f.name)),
+                unique: Tri::known(
+                    f.attrs.contains("@unique") || singleton_uniques.contains(&f.name),
+                ),
                 default: default_origin(&f.attrs),
+                enumeration: find_enum(&f.type_name),
             });
         }
         // Field names inside @@unique refer to model fields; map them the way the
@@ -562,6 +592,7 @@ model User {
                 .field("token")
                 .unwrap()
                 .unique
+                .is_yes()
         );
         assert!(l.value.entity("Session").unwrap().unique_sets.is_empty());
     }
@@ -587,6 +618,7 @@ model Data {
                 .field("dataId")
                 .unwrap()
                 .unique
+                .is_yes()
         );
         assert!(
             l.defeats_of(DefeatKind::LookedAndBlocked)
@@ -615,7 +647,35 @@ model User {
                 .field("authorId")
                 .unwrap()
                 .unique
+                .is_yes()
         );
+    }
+
+    #[test]
+    fn an_enum_is_renamed_by_its_own_map_attribute() {
+        let src = r#"
+enum PollStatus {
+  open
+  closed
+  @@map("poll_status")
+}
+model Poll {
+  id     String     @id
+  status PollStatus
+}
+"#;
+        let l = lift_prisma_schema(src);
+        let e = l
+            .value
+            .entity("Poll")
+            .unwrap()
+            .field("status")
+            .unwrap()
+            .enumeration
+            .clone()
+            .expect("enumeration carried");
+        assert_eq!(e.name, "poll_status", "the store-side name must be used");
+        assert_eq!(e.members, vec!["open".to_owned(), "closed".to_owned()]);
     }
 
     #[test]

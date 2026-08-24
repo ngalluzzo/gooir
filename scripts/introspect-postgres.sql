@@ -16,6 +16,15 @@ select json_build_object('tables', (
                 join pg_type et on et.oid=tt2.typelem
                 where tt2.oid=a.atttypid and tt2.typelem<>0
             ) q),
+          'enum_name', (
+            select tn.typname from pg_type tt3
+              join pg_type tn on tn.oid = (case when tt3.typelem<>0 then tt3.typelem else tt3.oid end)
+              where tt3.oid=a.atttypid and tn.typtype='e'),
+          'enum_members', (
+            select coalesce(json_agg(en.enumlabel order by en.enumsortorder), '[]'::json)
+            from pg_enum en where en.enumtypid = (
+              select (case when tt4.typelem<>0 then tt4.typelem else tt4.oid end)
+              from pg_type tt4 where tt4.oid=a.atttypid)),
           'unique_single', exists (
             select 1 from pg_index i where i.indrelid=c.oid and i.indisunique
               and i.indnatts=1 and not i.indisprimary and a.attnum = i.indkey[0]),

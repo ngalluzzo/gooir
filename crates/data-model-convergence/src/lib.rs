@@ -97,14 +97,24 @@ impl Report {
     }
 }
 
-fn attrs(f: &FieldShape) -> [(&'static str, String); 6] {
+fn attrs(f: &FieldShape) -> [(&'static str, String); 7] {
     [
         ("type", format!("{:?}", f.ty)),
         ("nullable", format!("{:?}", f.nullable)),
         ("list", f.list.to_string()),
-        ("identity", f.identity.to_string()),
-        ("unique", f.unique.to_string()),
+        ("identity", format!("{:?}", f.identity)),
+        ("unique", format!("{:?}", f.unique)),
         ("default", format!("{:?}", f.default)),
+        // Compared explicitly: a matching `type` of Enumeration says nothing
+        // about whether the name and members survived.
+        (
+            "enumeration",
+            match &f.enumeration {
+                None => "None".to_owned(),
+                // Membership compares; declaration order does not.
+                Some(e) => format!("{}({})", e.name, e.member_set().join("|")),
+            },
+        ),
     ]
 }
 
@@ -243,9 +253,10 @@ mod tests {
                     ty: FieldType::Scalar(ty),
                     nullable: semantics_data_model_v1::Presence::Required,
                     list: false,
-                    identity: false,
-                    unique: false,
+                    identity: semantics_data_model_v1::Tri::No,
+                    unique: semantics_data_model_v1::Tri::No,
                     default: semantics_data_model_v1::DefaultOrigin::None,
+                    enumeration: None,
                 }],
             }],
             relations: Vec::new(),

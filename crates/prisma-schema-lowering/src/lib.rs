@@ -14,9 +14,8 @@ use semantics_data_model_v1::{
 
 pub const LOWERING_ID: &str = "org.gooi.lowering.prisma_schema@1";
 
-/// A single placeholder-shaped enum stands in for every enumeration, because
-/// the waist does not carry member names at v1.
-pub const ENUM_NAME: &str = "GooiEnumeration";
+/// Fallback name for an enumeration whose name the waist did not carry.
+pub const ENUM_FALLBACK: &str = "GooiEnumeration";
 
 /// Something the waist could not supply, which the target requires.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,7 +48,7 @@ fn prisma_type(ty: FieldType) -> Option<&'static str> {
             ScalarType::Json => "Json",
             ScalarType::Bytes => "Bytes",
             ScalarType::Uuid => "String",
-            ScalarType::Enumeration => ENUM_NAME,
+            ScalarType::Enumeration => ENUM_FALLBACK,
             ScalarType::Other => "String",
         },
         FieldType::Unknown => return None,
@@ -121,18 +120,34 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
     writeln!(s, "  url      = env(\"DATABASE_URL\")").expect("string write");
     writeln!(s, "}}\n").expect("string write");
 
-    let needs_enum = model
-        .entities
-        .iter()
-        .flat_map(|e| &e.fields)
-        .any(|f| f.ty == FieldType::Scalar(ScalarType::Enumeration));
-    if needs_enum {
-        out.lossy.push(Lossy {
-            subject: "enumeration".to_owned(),
-            detail: "the waist carries no enum member names; one placeholder enum is emitted"
-                .to_owned(),
-        });
-        writeln!(s, "enum {ENUM_NAME} {{\n  PLACEHOLDER\n}}\n").expect("string write");
+    // One declaration per distinct enumeration, shared by every field using it.
+    let mut seen_enums: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in model.entities.iter().flat_map(|e| &e.fields) {
+        if f.ty != FieldType::Scalar(ScalarType::Enumeration) {
+            continue;
+        }
+        match &f.enumeration {
+            Some(e) if !e.members.is_empty() => {
+                seen_enums.insert(e.name.clone(), e.members.clone());
+            }
+            _ => {
+                out.lossy.push(Lossy {
+                    subject: "enumeration".to_owned(),
+                    detail: "an enumeration arrived without members; a placeholder is emitted"
+                        .to_owned(),
+                });
+                seen_enums
+                    .entry(ENUM_FALLBACK.to_owned())
+                    .or_insert_with(|| vec!["PLACEHOLDER".to_owned()]);
+            }
+        }
+    }
+    for (name, members) in &seen_enums {
+        writeln!(s, "enum {name} {{").expect("string write");
+        for m in members {
+            writeln!(s, "  {m}").expect("string write");
+        }
+        writeln!(s, "}}\n").expect("string write");
     }
 
     // Inverse sides, grouped by the entity that must host them.
@@ -149,7 +164,7 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
         let singular = rel
             .from_fields
             .iter()
-            .all(|c| from.field(c).map(|f| f.unique).unwrap_or(false));
+            .all(|c| from.field(c).map(|f| f.unique.is_yes()).unwrap_or(false));
         inverses
             .entry(rel.to_entity.clone())
             .or_default()
@@ -160,7 +175,11 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
         let ident = naming.ident(&entity.name);
         writeln!(s, "model {ident} {{").expect("string write");
 
-        let identity: Vec<&FieldShape> = entity.fields.iter().filter(|f| f.identity).collect();
+        let identity: Vec<&FieldShape> = entity
+            .fields
+            .iter()
+            .filter(|f| f.identity.is_yes())
+            .collect();
         let compound_id = identity.len() > 1;
 
         for field in &entity.fields {
@@ -179,7 +198,7 @@ pub fn lower_to_prisma(model: &DataModel) -> Lowered {
                     .map(|t| {
                         t.fields
                             .iter()
-                            .filter(|f| f.identity)
+                            .filter(|f| f.identity.is_yes())
                             .map(|f| f.name.clone())
                             .collect::<Vec<_>>()
                     })
@@ -279,7 +298,12 @@ fn emit_field(
     compound_id: bool,
     out: &mut Lowered,
 ) {
-    let Some(base) = prisma_type(field.ty) else {
+    let enum_name = field
+        .enumeration
+        .as_ref()
+        .filter(|e| !e.members.is_empty())
+        .map(|e| e.name.clone());
+    let Some(base) = enum_name.as_deref().or_else(|| prisma_type(field.ty)) else {
         out.lossy.push(Lossy {
             subject: format!("{}.{}", entity.name, field.name),
             detail: "field type is unknown and has no target representation".to_owned(),
@@ -297,10 +321,10 @@ fn emit_field(
     }
 
     let mut attrs: Vec<String> = Vec::new();
-    if field.identity && !compound_id {
+    if field.identity.is_yes() && !compound_id {
         attrs.push("@id".to_owned());
     }
-    if field.unique {
+    if field.unique.is_yes() {
         attrs.push("@unique".to_owned());
     }
     match field.default {
@@ -347,16 +371,17 @@ mod tests {
             ty: FieldType::Scalar(ty),
             nullable: Presence::Required,
             list: false,
-            identity: false,
-            unique: false,
+            identity: semantics_data_model_v1::Tri::No,
+            unique: semantics_data_model_v1::Tri::No,
             default: DefaultOrigin::None,
+            enumeration: None,
         }
     }
 
     #[test]
     fn emits_a_parseable_model_with_identity() {
         let mut id = field("id", ScalarType::Text);
-        id.identity = true;
+        id.identity = semantics_data_model_v1::Tri::Yes;
         let m = DataModel {
             entities: vec![EntityShape {
                 name: "User".to_owned(),

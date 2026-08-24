@@ -12,6 +12,9 @@ prisma-schema-lifter = { workspace = true }
 prisma-schema-lowering = { workspace = true }
 semantics-data-model-v1 = { workspace = true }
 sql-ddl-lowering = { workspace = true }
+openapi-lowering = { workspace = true }
+openapi-lifter = { workspace = true }
+serde_json = { workspace = true }
 
 [[bin]]
 name = "data-model-convergence"
@@ -24,3 +27,7 @@ path = "src/round_trip_bin.rs"
 [[bin]]
 name = "ddl-round-trip"
 path = "src/ddl_bin.rs"
+
+[[bin]]
+name = "openapi-round-trip"
+path = "src/openapi_bin.rs"

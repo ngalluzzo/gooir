@@ -10,8 +10,8 @@
 
 use lift_defeasible::{Defeasible, Defeat, DefeatKind};
 use semantics_data_model_v1::{
-    DataModel, DefaultOrigin, EntityShape, FieldShape, FieldType, Presence, RelationEdge,
-    ScalarType,
+    DataModel, DefaultOrigin, EntityShape, Enumeration, FieldShape, FieldType, Presence,
+    RelationEdge, ScalarType, Tri,
 };
 use serde::Deserialize;
 
@@ -44,6 +44,10 @@ pub struct Column {
     /// so the index is the authoritative source.
     #[serde(default)]
     pub unique_single: Option<bool>,
+    #[serde(default)]
+    pub enum_name: Option<String>,
+    #[serde(default)]
+    pub enum_members: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,10 +167,16 @@ pub fn lift(catalog: Catalog) -> Defeasible<DataModel> {
                     Presence::Optional
                 },
                 list,
-                identity: pk.contains(&col.name),
-                unique: col.unique_single.unwrap_or(false) || uniques.contains(&col.name),
+                identity: Tri::known(pk.contains(&col.name)),
+                unique: Tri::known(
+                    col.unique_single.unwrap_or(false) || uniques.contains(&col.name),
+                ),
                 // A catalog sees store-side defaults only. Absence of one is not
                 // evidence that nothing supplies a value.
+                enumeration: col.enum_name.as_ref().map(|n| Enumeration {
+                    name: n.clone(),
+                    members: col.enum_members.clone(),
+                }),
                 default: if col.has_default {
                     DefaultOrigin::Database
                 } else {
@@ -227,8 +237,8 @@ mod tests {
         assert!(l.is_exhaustive(), "unexpected defeats: {:?}", l.defeats);
         assert_eq!(l.value.entity_names(), vec!["posts", "users"]);
         let users = l.value.entity("users").unwrap();
-        assert!(users.field("id").unwrap().identity);
-        assert!(users.field("email").unwrap().unique);
+        assert!(users.field("id").unwrap().identity.is_yes());
+        assert!(users.field("email").unwrap().unique.is_yes());
         assert_eq!(users.field("id").unwrap().default, DefaultOrigin::Database);
         assert_eq!(
             users.field("email").unwrap().default,

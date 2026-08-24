@@ -48,6 +48,31 @@ pub enum ScalarType {
     Other,
 }
 
+/// A fact an authority may be unable to establish either way.
+///
+/// Every attribute in this waist needs this shape. A boolean forces a lifter to
+/// answer a question its authority cannot see -- a JSON Schema has no notion of
+/// a primary key, so reporting `false` would assert something never established.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tri {
+    Yes,
+    No,
+    Unknown,
+}
+
+impl Tri {
+    /// Lifts a boolean an authority *could* determine.
+    pub fn known(value: bool) -> Self {
+        if value { Self::Yes } else { Self::No }
+    }
+
+    /// True only when the fact was established affirmatively.
+    pub fn is_yes(self) -> bool {
+        self == Self::Yes
+    }
+}
+
 /// Whether a field must carry a value.
 ///
 /// Three-valued because authorities differ in what they can express. Prisma
@@ -90,6 +115,35 @@ pub enum FieldType {
     Unknown,
 }
 
+/// A closed set of named alternatives.
+///
+/// Carried by name *and* members: every authority in use can express both, and
+/// dropping the members leaves a target unable to validate a value or render a
+/// choice -- which is most of what makes a generated form useful.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Enumeration {
+    pub name: String,
+    /// Members in whatever order the source authority reported them.
+    ///
+    /// Order is **source-local and not portable**: a schema lists declaration
+    /// order while a store reports the order values were added, and real
+    /// schemas disagree on this while agreeing on membership. The order is kept
+    /// rather than normalised so nothing is destroyed, but membership is the
+    /// only part that compares across authorities -- see
+    /// [`Enumeration::member_set`].
+    pub members: Vec<String>,
+}
+
+impl Enumeration {
+    /// Membership in a canonical order, for comparison across authorities.
+    pub fn member_set(&self) -> Vec<String> {
+        let mut m = self.members.clone();
+        m.sort();
+        m.dedup();
+        m
+    }
+}
+
 /// One stored attribute of an entity.
 ///
 /// A field is always storage. A reference between entities is a
@@ -102,13 +156,16 @@ pub struct FieldShape {
     pub ty: FieldType,
     pub nullable: Presence,
     pub list: bool,
-    pub identity: bool,
-    /// True only when this field alone is unique. Uniqueness across a *set* of
+    pub identity: Tri,
+    /// Set only when this field alone is unique. Uniqueness across a *set* of
     /// fields is a property of the set, carried by
     /// [`EntityShape::unique_sets`] -- claiming it per field would assert
     /// something strictly stronger than the authority established.
-    pub unique: bool,
+    pub unique: Tri,
     pub default: DefaultOrigin,
+    /// Present exactly when `ty` is [`ScalarType::Enumeration`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enumeration: Option<Enumeration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -226,9 +283,10 @@ mod tests {
             ty: FieldType::Scalar(ScalarType::Text),
             nullable: Presence::Required,
             list: false,
-            identity: false,
-            unique: false,
+            identity: Tri::No,
+            unique: Tri::No,
             default: DefaultOrigin::None,
+            enumeration: None,
         };
         assert!(matches!(f.ty, FieldType::Scalar(_)));
     }
@@ -244,18 +302,20 @@ mod tests {
                     ty: FieldType::Scalar(ScalarType::Timestamp),
                     nullable: Presence::Required,
                     list: false,
-                    identity: false,
-                    unique: false,
+                    identity: Tri::No,
+                    unique: Tri::No,
                     default: DefaultOrigin::Database,
+                    enumeration: None,
                 },
                 FieldShape {
                     name: "created_at".to_owned(),
                     ty: FieldType::Scalar(ScalarType::Integer),
                     nullable: Presence::Optional,
                     list: false,
-                    identity: false,
-                    unique: false,
+                    identity: Tri::No,
+                    unique: Tri::No,
                     default: DefaultOrigin::None,
+                    enumeration: None,
                 },
             ],
         };
@@ -295,9 +355,10 @@ mod tests {
                     ty: FieldType::Scalar(ScalarType::Boolean),
                     nullable: Presence::Optional,
                     list: false,
-                    identity: false,
-                    unique: false,
+                    identity: Tri::No,
+                    unique: Tri::No,
                     default: DefaultOrigin::None,
+                    enumeration: None,
                 }],
             }],
             relations: Vec::new(),
