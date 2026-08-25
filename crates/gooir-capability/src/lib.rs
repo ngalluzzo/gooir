@@ -570,6 +570,119 @@ pub struct ExecutionReport {
     pub steps: Vec<PlanStep>,
 }
 
+/// One question at the door: the facts a caller holds, and the fact it wants.
+///
+/// These are exactly the arguments [`CapabilityRegistry::plan`] and
+/// [`CapabilityRegistry::execute`] already take. Naming them is the point —
+/// a request that can be written down can be sent, queued, and answered by
+/// something other than a terminal.
+///
+/// The request names a `FactType` and nothing else. There is no target kind,
+/// no host, no frontend selector: GOOIR does not need to know what end the
+/// caller is targeting.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DerivationRequest {
+    pub target: FactType,
+    pub inputs: Vec<FactInstance>,
+}
+
+/// Why a request could not be accepted as asked.
+///
+/// One cause today. It is a separate answer from [`Answer::Failed`] because
+/// the remedy belongs to the caller rather than to a provider.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestRefusal {
+    /// Two inputs declare the same fact type. Which one governs is the
+    /// caller's decision, and guessing would silently pick an authority.
+    AmbiguousInput(FactType),
+}
+
+/// Everything GOOIR has to say about one derivation request.
+///
+/// **There is no `Result` at the door.** A `Result` would sort outcomes into
+/// answers and errors, when the premise is that "I cannot" is an answer that
+/// names a remedy. Five variants exist because they imply five different next
+/// actions — the same reason `DefeatKind` is five-valued. Two variants that
+/// shared a remedy would mean one of them is not earning its place.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "answer", content = "detail")]
+pub enum Answer {
+    /// The fact exists. Its coverage says whether it is complete.
+    ///
+    /// Boxed because a report is far larger than the other four answers, and
+    /// every caller pays for the biggest variant.
+    Produced(Box<ExecutionReport>),
+    /// A route exists, but a capability on it has no provider. The plan's
+    /// `needs` are assignable work, not a failure — this is the one answer
+    /// that leaves the building.
+    Blocked(DerivationPlan),
+    /// No route at all. The remedy is a declared capability, not a provider.
+    Unreachable(PlanError),
+    /// The request could not be accepted as asked.
+    Refused(RequestRefusal),
+    /// A provider on an executable route failed while running.
+    Failed(ExecutionError),
+}
+
+impl Answer {
+    /// What the caller should do next.
+    ///
+    /// This is the justification for the variant set: if two of these strings
+    /// were ever equal, one of the variants would be redundant. A test holds
+    /// them distinct.
+    pub fn remedy(&self) -> &'static str {
+        match self {
+            Answer::Produced(_) => "use the fact; read its coverage before assuming it is complete",
+            Answer::Blocked(_) => "assign the open needs to a provider, an agent, or a person",
+            Answer::Unreachable(_) => "declare a capability that produces this fact",
+            Answer::Refused(_) => "fix the request",
+            Answer::Failed(_) => "fix or replace the provider that failed",
+        }
+    }
+
+    /// The assignable work this answer names, if any.
+    ///
+    /// Read from the plan rather than copied beside it: two lists of the same
+    /// needs would be two authorities on one meaning.
+    pub fn needs(&self) -> &[CapabilityNeed] {
+        match self {
+            Answer::Blocked(plan) => &plan.needs,
+            _ => &[],
+        }
+    }
+}
+
+/// Answers one derivation request. Never fails; every outcome is an [`Answer`].
+pub fn answer(registry: &CapabilityRegistry, request: &DerivationRequest) -> Answer {
+    let mut seen: BTreeSet<&FactType> = BTreeSet::new();
+    for input in &request.inputs {
+        if !seen.insert(&input.fact_type) {
+            return Answer::Refused(RequestRefusal::AmbiguousInput(input.fact_type.clone()));
+        }
+    }
+
+    let initial: Vec<FactType> = request
+        .inputs
+        .iter()
+        .map(|input| input.fact_type.clone())
+        .collect();
+    let plan = match registry.plan(initial, &request.target) {
+        Ok(plan) => plan,
+        Err(error) => return Answer::Unreachable(error),
+    };
+    if !plan.is_executable() {
+        return Answer::Blocked(plan);
+    }
+
+    match registry.execute(&plan, request.inputs.clone()) {
+        Ok(report) => Answer::Produced(Box::new(report)),
+        // `is_executable` already passed, so a disagreement here is the
+        // registry moving underneath the plan, not assignable work.
+        Err(error) => Answer::Failed(error),
+    }
+}
+
 #[derive(Default)]
 pub struct CapabilityRegistry {
     specs: BTreeMap<CapabilityId, CapabilitySpec>,
@@ -1165,7 +1278,8 @@ fn sha256_identity(bytes: &[u8]) -> String {
     output
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum RegistryError {
     DuplicateCapability(CapabilityId),
     DuplicateProvider(ProviderId),
@@ -1259,7 +1373,8 @@ impl fmt::Display for RegistryError {
 
 impl Error for RegistryError {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum PlanError {
     Unreachable(FactType),
 }
@@ -1272,7 +1387,8 @@ impl fmt::Display for PlanError {
 
 impl Error for PlanError {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum ExecutionError {
     PlanNotExecutable(Vec<CapabilityNeed>),
     AmbiguousInput,
@@ -1866,5 +1982,299 @@ mod tests {
             Err(CapabilityAdmissionError::VerifierNotIndependent),
             "independence is checked before this host's policy is consulted"
         );
+    }
+
+    // ---- the door -------------------------------------------------------
+
+    struct FailingProvider(ProviderDescriptor);
+
+    impl CapabilityProvider for FailingProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            self.0.clone()
+        }
+        fn invoke(
+            &self,
+            _: &CapabilitySpec,
+            _: &[FactInstance],
+        ) -> Result<Vec<ProducedFact>, String> {
+            Err("the upstream service was unreachable".to_owned())
+        }
+    }
+
+    /// `a -> make -> b`, with a provider unless `with_provider` is false.
+    fn one_hop(with_provider: bool) -> (CapabilityRegistry, FactType, FactType) {
+        let (a, b) = (fact("a"), fact("b"));
+        let spec = capability(
+            "make",
+            vec![Requirement::complete(a.clone())],
+            vec![b.clone()],
+        );
+        let mut registry = CapabilityRegistry::default();
+        registry.register_spec(spec.clone()).unwrap();
+        if with_provider {
+            register_copy(&mut registry, &spec, b.clone());
+        }
+        (registry, a, b)
+    }
+
+    fn held(fact_type: &FactType) -> FactInstance {
+        FactInstance::initial(
+            fact_type.clone(),
+            FactCoverage::Complete,
+            json!({"value": 1}),
+            "fixture",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn every_answer_variant_is_reachable() {
+        let (registry, a, b) = one_hop(true);
+        let produced = answer(
+            &registry,
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        assert!(matches!(produced, Answer::Produced(_)), "{produced:?}");
+
+        let (registry, a, b) = one_hop(false);
+        let blocked = answer(
+            &registry,
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        assert!(matches!(blocked, Answer::Blocked(_)), "{blocked:?}");
+        assert_eq!(
+            blocked.needs().len(),
+            1,
+            "a blocked answer names its assignable work"
+        );
+
+        let unreachable = answer(
+            &CapabilityRegistry::default(),
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        assert!(
+            matches!(unreachable, Answer::Unreachable(_)),
+            "{unreachable:?}"
+        );
+
+        let (registry, a, b) = one_hop(true);
+        let refused = answer(
+            &registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a), held(&a)],
+            },
+        );
+        assert!(
+            matches!(refused, Answer::Refused(RequestRefusal::AmbiguousInput(_))),
+            "{refused:?}"
+        );
+
+        let (a, b) = (fact("a"), fact("b"));
+        let spec = capability(
+            "make",
+            vec![Requirement::complete(a.clone())],
+            vec![b.clone()],
+        );
+        let mut registry = CapabilityRegistry::default();
+        registry.register_spec(spec.clone()).unwrap();
+        registry
+            .register_provider(FailingProvider(ProviderDescriptor {
+                id: ProviderId::new("test.provider", "make", "1"),
+                capability: spec.id.clone(),
+                implementation_digest: format!("sha256:{:064}", 1),
+            }))
+            .unwrap();
+        let failed = answer(
+            &registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a)],
+            },
+        );
+        assert!(matches!(failed, Answer::Failed(_)), "{failed:?}");
+    }
+
+    #[test]
+    fn a_fact_is_never_reported_produced_when_the_route_had_open_needs() {
+        let (registry, a, b) = one_hop(false);
+        let given = answer(
+            &registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a)],
+            },
+        );
+        // Asserting the variant, not merely "not Produced": `Failed` would also
+        // be wrong here, because it sends the caller to fix a provider that was
+        // never installed instead of to assign the work.
+        assert!(
+            matches!(given, Answer::Blocked(_)),
+            "a route with no provider is assignable work, not a produced fact \
+             and not a provider fault: {given:?}"
+        );
+    }
+
+    #[test]
+    fn work_is_never_reported_assignable_when_the_fact_was_actually_derivable() {
+        let (registry, a, b) = one_hop(true);
+        let given = answer(
+            &registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a)],
+            },
+        );
+        // `needs().is_empty()` alone would be vacuous: an executable plan has no
+        // needs by construction, so it holds whatever variant comes back. The
+        // variant is the property worth guarding.
+        assert!(
+            matches!(given, Answer::Produced(_)),
+            "publishing a need a local provider could already serve would send \
+             someone else to redo finished work: {given:?}"
+        );
+        assert!(given.needs().is_empty());
+    }
+
+    #[test]
+    fn the_five_remedies_are_distinct() {
+        let (registry, a, b) = one_hop(true);
+        let produced = answer(
+            &registry,
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        let (blocked_registry, _, _) = one_hop(false);
+        let blocked = answer(
+            &blocked_registry,
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        let unreachable = answer(
+            &CapabilityRegistry::default(),
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        let refused = answer(
+            &registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a), held(&a)],
+            },
+        );
+        let failed = Answer::Failed(ExecutionError::AmbiguousInput);
+
+        let remedies: BTreeSet<&str> = [&produced, &blocked, &unreachable, &refused, &failed]
+            .iter()
+            .map(|a| a.remedy())
+            .collect();
+        assert_eq!(
+            remedies.len(),
+            5,
+            "two variants sharing a remedy means one of them is not earning its place"
+        );
+    }
+
+    /// The orchestrator owns ownership, deadlines, and settlement; Fleetd's
+    /// `work.capability.attempt/v2` envelope already carries them. An answer
+    /// that repeated any of them would create two authorities on one meaning.
+    #[test]
+    fn an_answer_carries_no_field_the_orchestrator_owns() {
+        const ORCHESTRATOR_OWNED: [&str; 9] = [
+            "status",
+            "correlation_id",
+            "causation_id",
+            "usage",
+            "deadline",
+            "owner",
+            "session_persistence",
+            "invocation_id",
+            "stop_reason",
+        ];
+
+        fn walk(node: &Value, found: &mut Vec<String>) {
+            match node {
+                Value::Object(map) => {
+                    for (key, value) in map {
+                        if ORCHESTRATOR_OWNED.contains(&key.as_str()) {
+                            found.push(key.clone());
+                        }
+                        // A provider's payload is opaque to this rule: what a
+                        // fact says is the provider's business, not the door's.
+                        if key != "payload" {
+                            walk(value, found);
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| walk(item, found)),
+                _ => {}
+            }
+        }
+
+        let (registry, a, b) = one_hop(true);
+        let produced = answer(
+            &registry,
+            &DerivationRequest {
+                target: b.clone(),
+                inputs: vec![held(&a)],
+            },
+        );
+        let (blocked_registry, _, _) = one_hop(false);
+        let blocked = answer(
+            &blocked_registry,
+            &DerivationRequest {
+                target: b,
+                inputs: vec![held(&a)],
+            },
+        );
+
+        let mut found = Vec::new();
+        for given in [&produced, &blocked] {
+            walk(&serde_json::to_value(given).unwrap(), &mut found);
+        }
+        assert!(
+            found.is_empty(),
+            "the door restated orchestration state: {found:?}"
+        );
+    }
+
+    #[test]
+    fn an_answer_survives_the_wire() {
+        let (registry, a, b) = one_hop(true);
+        for given in [
+            answer(
+                &registry,
+                &DerivationRequest {
+                    target: b.clone(),
+                    inputs: vec![held(&a)],
+                },
+            ),
+            answer(
+                &CapabilityRegistry::default(),
+                &DerivationRequest {
+                    target: b,
+                    inputs: vec![held(&a)],
+                },
+            ),
+        ] {
+            let text = serde_json::to_string(&given).unwrap();
+            let back: Answer = serde_json::from_str(&text).unwrap();
+            assert_eq!(back, given, "an answer rides in structured_result.value");
+        }
     }
 }

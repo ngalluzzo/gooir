@@ -7,7 +7,9 @@
 
 use std::{fs, path::PathBuf, process};
 
-use gooir_capability::{CapabilityRegistry, FactInstance, FactType};
+use gooir_capability::{
+    Answer, CapabilityRegistry, DerivationRequest, FactInstance, FactType, RequestRefusal,
+};
 use gooir_cli::{known_facts, resolve};
 
 fn main() {
@@ -49,8 +51,6 @@ fn plugin_paths(args: &[String]) -> Vec<PathBuf> {
 fn installed(plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
     let mut registry = CapabilityRegistry::default();
     gooir_datamodel_pack::register(&mut registry).map_err(|e| e.to_string())?;
-    fleetd_capability_pack::register_specs(&mut registry).map_err(|e| e.to_string())?;
-    fleetd_capability_pack::register_providers(&mut registry).map_err(|e| e.to_string())?;
     for path in plugins {
         let provider = gooir_plugin_process::ProcessProvider::load(path)
             .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -79,6 +79,28 @@ fn authored_source(path: &PathBuf) -> Result<FactInstance, String> {
 /// A generated schema is text; showing it as a JSON string with escaped
 /// newlines would defeat the purpose of having one entry point. `--json` still
 /// gives the exact payload.
+/// Renders an answer that produced nothing, and says what to do about it.
+///
+/// Every branch ends in the answer's own remedy rather than a message written
+/// here, so a new variant cannot be rendered as a bare failure.
+fn print_answer(target: &FactType, given: &Answer) {
+    match given {
+        Answer::Produced(_) => unreachable!("rendered by the caller"),
+        Answer::Blocked(plan) => {
+            println!("cannot derive {target} yet:");
+            for need in &plan.needs {
+                println!("  need {}", need.capability);
+            }
+        }
+        Answer::Unreachable(error) => println!("no route to {target}: {error}"),
+        Answer::Refused(RequestRefusal::AmbiguousInput(fact)) => {
+            println!("refused: two inputs both declare {fact}");
+        }
+        Answer::Failed(error) => println!("a provider failed deriving {target}: {error}"),
+    }
+    println!("\n-> {}", given.remedy());
+}
+
 fn print_payload(payload: &serde_json::Value) {
     const TEXT_FIELDS: [&str; 4] = ["ddl", "text", "source", "content"];
 
@@ -269,35 +291,49 @@ fn run() -> Result<(), String> {
                 .map(PathBuf::from)
                 .ok_or("usage: gooir derive <target> --from FILE")?;
             let target = resolve(&registry, wanted)?;
-            let source = authored_source(&from)?;
-            let plan = registry
-                .plan([source.fact_type.clone()], &target)
-                .map_err(|e| e.to_string())?;
-            if !plan.is_executable() {
-                println!("cannot derive {target} yet:");
-                for need in &plan.needs {
-                    println!("  need {}", need.capability);
+            let request = DerivationRequest {
+                target: target.clone(),
+                inputs: vec![authored_source(&from)?],
+            };
+            // One call, and every outcome comes back as an answer. The CLI
+            // renders; it no longer decides what counts as a failure.
+            let given = gooir_capability::answer(&registry, &request);
+            let json = args.iter().any(|a| a == "--json");
+            match &given {
+                Answer::Produced(report) => {
+                    println!("{target}");
+                    println!("  id       {}", report.target.id);
+                    println!("  coverage {:?}", report.target.coverage);
+                    println!("  chain    {} fact(s)", report.facts.len());
+                    println!();
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report.target.payload)
+                                .unwrap_or_default()
+                        );
+                    } else {
+                        print_payload(&report.target.payload);
+                    }
+                    Ok(())
                 }
-                println!("\n`gooir needs` shows these as assignable work.");
-                process::exit(3);
+                other => {
+                    if json {
+                        // There is no payload to show, so the answer itself is
+                        // the document — the same one that rides a request.
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(other).unwrap_or_default()
+                        );
+                    } else {
+                        print_answer(&target, other);
+                    }
+                    process::exit(match other {
+                        Answer::Blocked(_) => 3,
+                        _ => 1,
+                    });
+                }
             }
-            let report = registry
-                .execute(&plan, vec![source])
-                .map_err(|e| e.to_string())?;
-            println!("{target}");
-            println!("  id       {}", report.target.id);
-            println!("  coverage {:?}", report.target.coverage);
-            println!("  chain    {} fact(s)", report.facts.len());
-            println!();
-            if args.iter().any(|a| a == "--json") {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report.target.payload).unwrap_or_default()
-                );
-            } else {
-                print_payload(&report.target.payload);
-            }
-            Ok(())
         }
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
     }
