@@ -133,6 +133,21 @@ or input realization. The requested target may be native source, a runnable
 artifact, or an observed behavior fact. No framework is the universal endpoint.
 See [decision 0027](DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
 
+### Representation is not a universal semantic container
+
+Production React, Vue, and Ink application sources do not share a source-
+attested `Screen` or `Document` identity. Route bindings, application/provider
+wrappers, host documents, render contributions, portals/outlets, guarded
+alternatives, terminal layouts, and stdout are distinct native facts owned by
+different authorities.
+
+A screen-like result may be requested, but it is a state-scoped derived
+observation over exact routing, configuration, permissions, layout, host, and
+runtime output. Generic analyzers must not consume React/Vue/Ink syntax as its
+meaning. Ecosystem-specific providers establish native facts and explicit
+semantic adapters project only independently earned contracts. See
+[decision 0028](DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
+
 ## Lifting
 
 Lifters should prefer authoritative representations such as Prisma DMMF, PostgreSQL catalogs, OpenAPI/Smithy models, Cedar schemas/ASTs, Terraform plan JSON, and `cargo metadata`. A native source dialect preserves target-specific information losslessly. Bridges into shared contracts are explicit and may be partial.

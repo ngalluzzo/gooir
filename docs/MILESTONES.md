@@ -90,3 +90,22 @@ activation through actual target revisions and authoritative builds, followed
 by verifier-owned browser or PTY stimulus and a lift of only the observed
 handler-dispatch subset. That proof, not source-shape code generation, earns
 the first lowering capability.
+
+## Experimental — Production representation-boundary probe
+
+Status: native corpus and negative generic result implemented on
+`gooir-ui-ecosystem-correction-v0`.
+
+Six current production products plus one historical production corroborator
+reject `Screen`, `Document`, and a universal component tree as GOOIR semantic
+contracts. The pinned corpus contains native route, composition,
+guarded-alternative, host-document, terminal, and stdout mechanisms. Its
+Babel/Vue-compiler inventory records syntax only, without treating provider
+behavior as projected or syntax as visibility and product meaning.
+
+The web subset retains a provider-backed navigation binding as a separate
+candidate. Gemini CLI and the historical TypeScript Codex CLI retain an
+agent-session/activity candidate, while Shopify CLI falsifies any inference
+from Ink itself. Neither candidate is admitted here. The next proof must bring
+the appropriate authoritative route providers or an independent current
+product/runtime lineage, then observe a real build under verifier-owned state.

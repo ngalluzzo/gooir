@@ -85,7 +85,7 @@ direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Twenty-seven decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Twenty-eight decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
@@ -96,6 +96,7 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0023](docs/DECISIONS/0023_PACK_MANIFEST.md) — a capability graph is declared as data
 - [0024](docs/DECISIONS/0024_PROVIDER_SDK.md) — a provider is its transformation; coverage is derived, never declared
 - [0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md) — interaction starts at observed activation, not a parallel component system
+- [0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md) — a screen is a state-scoped derived observation, not the semantic waist
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).
@@ -127,6 +128,21 @@ pinned Babel parser and deterministic ecosystem-specific lifters produce exact
 source spans; mutation tests revoke the fact when any positive path is broken.
 The recurrence suite then proves that every measured divergence remains
 preserved. See [decision 0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
+
+## Representation-boundary probe
+
+Production Grafana, Papermark, Directus, NocoDB, Gemini CLI, Shopify CLI, and
+historical TypeScript Codex sources reject a universal `Screen`, `Document`, or
+component-tree contract. The corpus pins sources containing native routing,
+wrapping, layout, outlet, portal, guarded-alternative, terminal, and stdout
+mechanisms. Its generic parser-backed inventory records only native syntax;
+provider behavior remains unprojected and is not renamed semantic UI.
+
+The web subset retains a narrower provider-backed route-binding candidate for
+a future navigation probe. Gemini and historical Codex retain a separate
+agent-session candidate—ordered human/agent/tool/system activity plus a current
+input or decision locus—but Shopify proves that Ink itself carries no such
+meaning. See [decision 0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
 
 ## Fleetd multi-dialect dogfood
 
