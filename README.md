@@ -147,11 +147,11 @@ meaning. See [decision 0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.m
 
 ## Activity-projection recurrence probe
 
-Exact reviewed selectors from Open WebUI and Hugging Face Chat UI now lower one
-closed native fixture into concrete `ActivityProjection` values and pass the
-Rust semantic verifier. LobeChat, LibreChat, Gemini CLI, and Codex join those two
-as static corroboration across six distinct current repositories; they do not
-yet count as concrete projections. A canonical transcript, backing branch
+Exact reviewed selectors from Open WebUI and Hugging Face Chat UI, plus Gemini
+CLI's exact `useHistory` hook under React 19.2.4, now lower closed native
+fixtures into concrete `ActivityProjection` values and pass the Rust semantic
+verifier. LobeChat, LibreChat, and Codex remain static corroboration across six
+distinct current repositories. A canonical transcript, backing branch
 graph, global chronology, actor enum, portable payload, singular input locus,
 and durable stream delta are rejected.
 
@@ -163,11 +163,14 @@ cargo test -p activity-projection-recurrence
 ```
 
 The source-specific projectors use pinned mature parsers, exact source spans,
-and separately reviewed positive-node digests. The two exact upstream selection
-functions execute in an isolated context and select the same ordered branch;
-their different malformed-topology behavior remains an unadmitted defeat. The
-checked Rust probe byte-binds the canonical generated document and verifies the
-concrete semantic values. Content, participant attribution, outstanding
+and separately reviewed positive-node digests. The two exact upstream branch
+selectors execute in an isolated context; the exact Gemini React hook executes
+without a handwritten reducer and proves a settled, nonchronological state
+vector addressed by projection-local keys. Gemini's exact normal App/layout
+chain binds that state to its downstream `npm:@jrichman/ink` lineage, but no
+terminal rendering is claimed. The checked Rust probe byte-binds the
+canonical generated document and verifies the concrete semantic values.
+Content, participant attribution, outstanding
 requests, interaction, streaming, and native rendering remain separate facts.
 See
 [decision 0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).

@@ -16,19 +16,21 @@ use std::path::{Component, Path, PathBuf};
 
 pub const LOCK_PROTOCOL: &str = "org.gooi.fixture.activity_projection_authorities/v1";
 pub const OBSERVATION_PROTOCOL: &str = "org.gooi.fixture.activity_projection_observations/v1";
-pub const BEHAVIOR_PROTOCOL: &str = "org.gooi.fixture.activity_projection_behavior/v1";
+pub const BEHAVIOR_PROTOCOL: &str = "org.gooi.fixture.activity_projection_behavior/v2";
 const GENERATOR_NAME: &str = "@gooir/activity-projection-lifters";
 const GENERATOR_VERSION: &str = "0.1.0";
 const ACTIVITY_CONTRACT: &str = "org.gooi.semantics.activity_projection/ordered_activity@0.1.0";
 const CANONICAL_OBSERVATION_SHA256: &str =
-    "53726caf7a23175a982ecf15a4d07f46af993e2ae23193c385d361c4042320dc";
-const GENERATOR_PATHS: [&str; 7] = [
+    "22a6ceae2e73da2f7d3cf964dd05cb4d9d865372e277a50afdceba8a9c889dd3";
+const GENERATOR_PATHS: [&str; 9] = [
     "package.json",
     "src/cli.mjs",
     "src/evidence.mjs",
     "src/lift.mjs",
     "src/parsers.mjs",
     "src/projectors.mjs",
+    "src/react-history.mjs",
+    "src/react-history-worker.mjs",
     "src/refresh.mjs",
 ];
 
@@ -461,7 +463,7 @@ fn verify_observations(
     verify_recurrence_authorities(recurrence, manifest)?;
     if recurrence.get("status")
         != Some(&json!(
-            "two_product_concrete_vertical_with_six_product_static_corroboration"
+            "three_product_concrete_vertical_with_six_product_static_corroboration"
         ))
     {
         return Err(ProbeError::InvalidObservation(
@@ -474,8 +476,8 @@ fn verify_observations(
     if contract_vertical
         != &json!({
             "contract": ACTIVITY_CONTRACT,
-            "products": ["open_webui", "chat_ui"],
-            "concrete_projection_count": 2
+            "products": ["open_webui", "chat_ui", "gemini_cli"],
+            "concrete_projection_count": 3
         })
     {
         return Err(ProbeError::InvalidObservation(
@@ -608,7 +610,7 @@ fn verify_generator(generator: &serde_json::Map<String, Value>) -> Result<(), Pr
         || generator.get("version") != Some(&json!(GENERATOR_VERSION))
         || generator.get("evidence_kind")
             != Some(&json!(
-                "static_product_state_corroboration_plus_reviewed_exact_isolated_function_execution"
+                "static_product_state_corroboration_plus_reviewed_exact_isolated_and_react_execution"
             ))
         || generator.get("parsers")
             != Some(&json!({
@@ -617,7 +619,9 @@ fn verify_generator(generator: &serde_json::Map<String, Value>) -> Result<(), Pr
                 "python": "tree-sitter-python@0.23.6",
                 "rust": "tree-sitter-rust@0.24.0",
                 "toml": "smol-toml@1.8.0",
-                "behavior_transpiler": "typescript@5.9.3"
+                "behavior_transpiler": "typescript@5.9.3",
+                "behavior_react": "react@19.2.4",
+                "behavior_react_renderer": "react-test-renderer@19.2.4"
             }))
     {
         return Err(ProbeError::GeneratorMismatch(
@@ -863,34 +867,111 @@ fn verify_behavior(value: &Value) -> Result<BTreeSet<String>, ProbeError> {
             actual: protocol.to_owned(),
         });
     }
-    if value.pointer("/fixture/selected") != Some(&json!("assistant_b"))
-        || value.pointer("/fixture/native_inputs/open_webui/currentId") != Some(&json!("b"))
-        || value.pointer("/fixture/native_inputs/open_webui/messages/b/parentId")
+    let cases = value
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| ProbeError::InvalidBehavior("behavior cases are missing".to_owned()))?;
+    if cases.len() != 2 {
+        return Err(ProbeError::InvalidBehavior(
+            "exactly two source-specific behavior cases are required".to_owned(),
+        ));
+    }
+    let branch_case = &cases[0];
+    if branch_case.get("id") != Some(&json!("selected_branch_to_ordered_projection"))
+        || branch_case.get("products") != Some(&json!(["open_webui", "chat_ui"]))
+        || branch_case.pointer("/fixture/selected") != Some(&json!("assistant_b"))
+        || branch_case.pointer("/fixture/native_inputs/open_webui/currentId") != Some(&json!("b"))
+        || branch_case.pointer("/fixture/native_inputs/open_webui/messages/b/parentId")
             != Some(&json!("u"))
-        || value.pointer("/fixture/native_inputs/chat_ui/rootMessageId") != Some(&json!("s"))
-        || value.pointer("/fixture/native_inputs/chat_ui/messages/3/ancestors")
+        || branch_case.pointer("/fixture/native_inputs/chat_ui/rootMessageId") != Some(&json!("s"))
+        || branch_case.pointer("/fixture/native_inputs/chat_ui/messages/3/ancestors")
             != Some(&json!(["s", "u"]))
     {
         return Err(ProbeError::InvalidBehavior(
             "the exact native selector inputs changed".to_owned(),
         ));
     }
+    if branch_case.get("alternate_selection")
+        != Some(&json!({
+            "selected": "assistant_a",
+            "open_webui": ["s", "u", "a"],
+            "chat_ui": ["s", "u", "a"]
+        }))
+        || branch_case.get("malformed_topology")
+            != Some(&json!({
+                "open_webui": {
+                    "result": ["b"],
+                    "classification": "partial_projection"
+                },
+                "chat_ui": {
+                    "error": "Ancestor not found",
+                    "classification": "blocking_unknown"
+                },
+                "admitted": false
+            }))
+    {
+        return Err(ProbeError::InvalidBehavior(
+            "alternate selection or malformed-topology defeat changed".to_owned(),
+        ));
+    }
+
+    let trace_digest = "d9b2bb6441cbc729e9b9b4536ad7921d7b5cffbf75ee13c2ced04ffa571bed6a";
+    let react_case = &cases[1];
+    if react_case
+        != &json!({
+            "id": "react_history_action_trace",
+            "products": ["gemini_cli"],
+            "fixture": {
+                "initial_history": [
+                    {"id": 20, "type": "info", "text": "loaded-first"},
+                    {"id": 10, "type": "user", "text": "same"}
+                ],
+                "actions": [
+                    {"kind": "add", "item": {"type": "user", "text": "same"}, "base_timestamp": 5},
+                    {"kind": "add", "item": {"type": "gemini", "text": "answer"}, "base_timestamp": 5},
+                    {"kind": "update", "id": 10, "updates": {"text": "same-updated"}}
+                ]
+            },
+            "fixture_sha256": trace_digest,
+            "allocated_ids": [21, 22],
+            "settled_history": [
+                {"id": 20, "type": "info", "text": "loaded-first"},
+                {"id": 10, "type": "user", "text": "same-updated"},
+                {"id": 22, "type": "gemini", "text": "answer"}
+            ],
+            "establishes": [
+                "load_preserves_vector_order",
+                "duplicate_add_allocates_but_does_not_emit",
+                "later_add_retains_id_gap",
+                "update_preserves_position"
+            ]
+        })
+    {
+        return Err(ProbeError::InvalidBehavior(
+            "Gemini React history action trace changed".to_owned(),
+        ));
+    }
+
     let observations = value
         .get("observations")
         .and_then(Value::as_array)
         .ok_or_else(|| ProbeError::InvalidBehavior("observations are missing".to_owned()))?;
-    let expected = json!(["s", "u", "b"]);
+    if observations.len() != 3 {
+        return Err(ProbeError::InvalidBehavior(
+            "exactly three concrete projections are required".to_owned(),
+        ));
+    }
+    let expected_source_ids = json!(["s", "u", "b"]);
+    let expected_projection_keys = json!(["20", "10", "22"]);
     let mut products = BTreeSet::new();
     for observation in observations {
         let product = observation
             .get("product_id")
             .and_then(Value::as_str)
             .ok_or_else(|| ProbeError::InvalidBehavior("product id is missing".to_owned()))?;
-        if observation.get("ordered_source_ids") != Some(&expected)
-            || !products.insert(product.to_owned())
-        {
+        if !products.insert(product.to_owned()) {
             return Err(ProbeError::InvalidBehavior(
-                "selected-branch outputs differ or repeat".to_owned(),
+                "behavioral product repeats".to_owned(),
             ));
         }
         let projection_value = observation.get("activity_projection").ok_or_else(|| {
@@ -909,75 +990,126 @@ fn verify_behavior(value: &Value) -> Result<BTreeSet<String>, ProbeError> {
                 "{product} ActivityProjection failed contract verification: {errors:?}"
             ))
         })?;
-        let projected_ids = projection
-            .entries
-            .iter()
-            .map(|entry| {
-                entry
-                    .source_refs
-                    .first()
-                    .map(|reference| reference.id.as_str())
-            })
-            .collect::<Option<Vec<_>>>();
-        let (expected_scope_namespaces, expected_selector) = match product {
-            "open_webui" => (
-                ["open_webui.history_root", "open_webui.history_head"],
-                "createMessagesList(history, history.currentId)",
-            ),
-            "chat_ui" => (
-                ["chat_ui.root_message", "chat_ui.selected_message"],
-                "buildSubtree(conversation, 'b')",
-            ),
+        if !projection.is_full()
+            || projection.extensions.get("source_product") != Some(&json!(product))
+        {
+            return Err(ProbeError::InvalidBehavior(format!(
+                "{product} concrete projection has the wrong extent or product"
+            )));
+        }
+
+        match product {
+            "open_webui" | "chat_ui" => {
+                if observation.get("ordered_source_ids") != Some(&expected_source_ids)
+                    || observation.get("ordered_projection_keys").is_some()
+                {
+                    return Err(ProbeError::InvalidBehavior(format!(
+                        "{product} selected-branch output changed"
+                    )));
+                }
+                let projected_ids = projection
+                    .entries
+                    .iter()
+                    .map(|entry| match entry.source_refs.as_slice() {
+                        [reference] if entry.projection_key.is_none() => {
+                            Some(reference.id.as_str())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let (expected_scope_namespaces, expected_selector) = if product == "open_webui" {
+                    (
+                        ["open_webui.history_root", "open_webui.history_head"],
+                        "createMessagesList(history, history.currentId)",
+                    )
+                } else {
+                    (
+                        ["chat_ui.root_message", "chat_ui.selected_message"],
+                        "buildSubtree(conversation, 'b')",
+                    )
+                };
+                let scope_namespaces: Vec<_> = projection
+                    .scope_refs
+                    .iter()
+                    .map(|reference| reference.namespace.as_str())
+                    .collect();
+                if projected_ids != Some(vec!["s", "u", "b"])
+                    || scope_namespaces != expected_scope_namespaces
+                    || projection.extensions.get("native_selector")
+                        != Some(&json!(expected_selector))
+                    || projection.extensions.get("verifier_fixture")
+                        != Some(&json!("selected_branch_to_ordered_projection/v1"))
+                {
+                    return Err(ProbeError::InvalidBehavior(format!(
+                        "{product} concrete projection differs from selector output"
+                    )));
+                }
+            }
+            "gemini_cli" => {
+                if observation.get("ordered_projection_keys") != Some(&expected_projection_keys)
+                    || observation.get("ordered_source_ids").is_some()
+                {
+                    return Err(ProbeError::InvalidBehavior(
+                        "Gemini settled history keys changed".to_owned(),
+                    ));
+                }
+                let projected_keys = projection
+                    .entries
+                    .iter()
+                    .map(|entry| {
+                        if entry.source_refs.is_empty() {
+                            entry.projection_key.as_deref()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let scope_is_exact = matches!(
+                    projection.scope_refs.as_slice(),
+                    [reference]
+                        if reference.namespace == "gemini_cli.useHistory_action_trace"
+                            && reference.id == trace_digest
+                            && reference.extensions.is_empty()
+                );
+                if projected_keys != Some(vec!["20", "10", "22"])
+                    || !scope_is_exact
+                    || projection.extensions.get("native_selector")
+                        != Some(&json!("useHistory settled UseHistoryManagerReturn.history"))
+                    || projection.extensions.get("verifier_fixture")
+                        != Some(&json!("react_history_action_trace/v1"))
+                    || projection.extensions.get("runtime") != Some(&json!("react@19.2.4"))
+                    || projection.extensions.get("renderer_lineage")
+                        != Some(&json!(
+                            "AppContainer UIState -> App normal branch -> DefaultAppLayout -> MainContent -> ink alias npm:@jrichman/ink@6.6.9"
+                        ))
+                    || observation.pointer("/source_node/source")
+                        != Some(&json!("gemini.history_manager"))
+                    || observation.pointer("/source_node/sha256")
+                        != Some(&json!(
+                            "01b769034ac7fb9ff1cb934ff6a1863b29efe02517657aa3ba70da3b0fa4dc3c"
+                        ))
+                {
+                    return Err(ProbeError::InvalidBehavior(
+                        "Gemini concrete projection differs from settled React history".to_owned(),
+                    ));
+                }
+            }
             _ => {
                 return Err(ProbeError::InvalidBehavior(format!(
                     "unexpected behavioral product `{product}`"
                 )));
             }
-        };
-        let scope_namespaces: Vec<_> = projection
-            .scope_refs
-            .iter()
-            .map(|reference| reference.namespace.as_str())
-            .collect();
-        if !projection.is_full()
-            || projected_ids != Some(vec!["s", "u", "b"])
-            || scope_namespaces != expected_scope_namespaces
-            || projection.extensions.get("native_selector") != Some(&json!(expected_selector))
-            || projection.extensions.get("source_product") != Some(&json!(product))
-            || projection.extensions.get("verifier_fixture")
-                != Some(&json!("selected_branch_to_ordered_projection/v1"))
-        {
-            return Err(ProbeError::InvalidBehavior(format!(
-                "{product} concrete projection differs from selector output"
-            )));
         }
     }
-    if products != BTreeSet::from(["chat_ui".to_owned(), "open_webui".to_owned()]) {
-        return Err(ProbeError::InvalidBehavior(
-            "unexpected behavioral product set".to_owned(),
-        ));
-    }
-    if value.get("alternate_selection")
-        != Some(&json!({
-            "selected": "assistant_a",
-            "open_webui": ["s", "u", "a"],
-            "chat_ui": ["s", "u", "a"]
-        }))
-        || value.get("malformed_topology")
-            != Some(&json!({
-                "open_webui": {
-                    "result": ["b"],
-                    "classification": "partial_projection"
-                },
-                "chat_ui": {
-                    "error": "Ancestor not found",
-                    "classification": "blocking_unknown"
-                },
-                "admitted": false
-            }))
+    if products
+        != BTreeSet::from([
+            "chat_ui".to_owned(),
+            "gemini_cli".to_owned(),
+            "open_webui".to_owned(),
+        ])
     {
         return Err(ProbeError::InvalidBehavior(
-            "alternate selection or malformed-topology defeat changed".to_owned(),
+            "unexpected behavioral product set".to_owned(),
         ));
     }
     Ok(products)
@@ -991,11 +1123,11 @@ mod tests {
     fn checked_in_probe_is_bound_to_sources_generator_and_behavior() {
         let probe = load_probe(default_corpus_root()).expect("checked-in activity probe verifies");
         assert_eq!(probe.report.product_count, 6);
-        assert_eq!(probe.manifest.authorities.len(), 27);
+        assert_eq!(probe.manifest.authorities.len(), 33);
         assert_eq!(probe.manifest.licenses.len(), 8);
         assert_eq!(probe.report.declared_governance_groups.len(), 6);
         assert_eq!(probe.report.declared_ecosystems.len(), 4);
-        assert_eq!(probe.report.verified_projection_products.len(), 2);
+        assert_eq!(probe.report.verified_projection_products.len(), 3);
         assert_eq!(probe.report.contract, ACTIVITY_CONTRACT);
         assert!(probe.report.rejected.contains("canonical_transcript"));
         assert!(probe.report.rejected.contains("universal_actor_enum"));
@@ -1042,5 +1174,54 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn gemini_projection_conformance_is_exact_not_merely_structural() {
+        fn projection(value: &mut Value) -> &mut Value {
+            value["observations"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|observation| observation["product_id"] == "gemini_cli")
+                .map(|observation| &mut observation["activity_projection"])
+                .unwrap()
+        }
+
+        fn rejected(value: &Value) {
+            assert!(matches!(
+                verify_behavior(value),
+                Err(ProbeError::InvalidBehavior(_))
+            ));
+        }
+
+        let probe = load_probe(default_corpus_root()).unwrap();
+        let behavior = probe.observations["behavior"].clone();
+
+        let mut swapped = behavior.clone();
+        projection(&mut swapped)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .swap(0, 1);
+        rejected(&swapped);
+
+        let mut omitted = behavior.clone();
+        projection(&mut omitted)["entries"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        rejected(&omitted);
+
+        let mut miskeyed = behavior.clone();
+        projection(&mut miskeyed)["entries"][1]["projection_key"] = json!("999");
+        rejected(&miskeyed);
+
+        let mut rescope = behavior.clone();
+        projection(&mut rescope)["scope_refs"][0]["id"] = json!("another-trace");
+        rejected(&rescope);
+
+        let mut windowed = behavior;
+        projection(&mut windowed)["extent"] = json!("windowed");
+        rejected(&windowed);
     }
 }

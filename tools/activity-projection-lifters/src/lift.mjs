@@ -28,6 +28,8 @@ const IMPLEMENTATION_PATHS = [
   'src/lift.mjs',
   'src/parsers.mjs',
   'src/projectors.mjs',
+  'src/react-history.mjs',
+  'src/react-history-worker.mjs',
   'src/refresh.mjs',
 ];
 const PRODUCT_FIELDS = new Set(['id', 'governance_group', 'declared_ecosystem', 'projector']);
@@ -216,6 +218,9 @@ async function createContext(root, lock) {
     ts(id, jsx = false) {
       return parse(id, jsx ? 'typescript_jsx' : 'typescript', source => parseTypescript(source, get(id).source_path, jsx));
     },
+    json(id) {
+      return parse(id, 'json', source => JSON.parse(source));
+    },
     svelte(id) {
       return parse(id, 'svelte', source => parseSvelteSource(source, get(id).source_path));
     },
@@ -272,15 +277,25 @@ function verifyConcreteProjections(behavior) {
     assertObject(projection, `${observation.product_id} activity_projection`);
     if (!Array.isArray(projection.scope_refs) || projection.scope_refs.length === 0) throw new Error(`${observation.product_id} projection has no scope`);
     if (projection.extent !== 'full') throw new Error(`${observation.product_id} verifier fixture must establish its exact selected scope`);
-    if (!Array.isArray(projection.entries) || projection.entries.length !== observation.ordered_source_ids.length) throw new Error(`${observation.product_id} projection entry count differs from selector output`);
-    const ids = projection.entries.map((entry, index) => {
-      if (!Array.isArray(entry.source_refs) || entry.source_refs.length !== 1 || entry.projection_key !== undefined) throw new Error(`${observation.product_id} projection entry ${index} has no exact source join`);
-      const reference = entry.source_refs[0];
-      string(reference.namespace, `${observation.product_id} entry namespace`);
-      string(reference.id, `${observation.product_id} entry id`);
-      return reference.id;
-    });
-    if (JSON.stringify(ids) !== JSON.stringify(observation.ordered_source_ids)) throw new Error(`${observation.product_id} concrete projection reordered selector output`);
+    if (!Array.isArray(projection.entries)) throw new Error(`${observation.product_id} projection entries are missing`);
+    if (observation.product_id === 'gemini_cli') {
+      if (!Array.isArray(observation.ordered_projection_keys) || projection.entries.length !== observation.ordered_projection_keys.length) throw new Error('Gemini projection entry count differs from settled React history');
+      const keys = projection.entries.map((entry, index) => {
+        if (entry.source_refs !== undefined || typeof entry.projection_key !== 'string' || entry.projection_key.length === 0) throw new Error(`Gemini projection entry ${index} has no exact projection-local key`);
+        return entry.projection_key;
+      });
+      if (JSON.stringify(keys) !== JSON.stringify(observation.ordered_projection_keys)) throw new Error('Gemini concrete projection reordered settled React history');
+    } else {
+      if (!Array.isArray(observation.ordered_source_ids) || projection.entries.length !== observation.ordered_source_ids.length) throw new Error(`${observation.product_id} projection entry count differs from selector output`);
+      const ids = projection.entries.map((entry, index) => {
+        if (!Array.isArray(entry.source_refs) || entry.source_refs.length !== 1 || entry.projection_key !== undefined) throw new Error(`${observation.product_id} projection entry ${index} has no exact source join`);
+        const reference = entry.source_refs[0];
+        string(reference.namespace, `${observation.product_id} entry namespace`);
+        string(reference.id, `${observation.product_id} entry id`);
+        return reference.id;
+      });
+      if (JSON.stringify(ids) !== JSON.stringify(observation.ordered_source_ids)) throw new Error(`${observation.product_id} concrete projection reordered selector output`);
+    }
     for (const reference of projection.scope_refs) {
       string(reference.namespace, `${observation.product_id} scope namespace`);
       string(reference.id, `${observation.product_id} scope id`);
@@ -317,11 +332,13 @@ export async function liftCorpus(corpusRoot = defaultCorpusRoot()) {
         rust: 'tree-sitter-rust@0.24.0',
         toml: 'smol-toml@1.8.0',
         behavior_transpiler: 'typescript@5.9.3',
+        behavior_react: 'react@19.2.4',
+        behavior_react_renderer: 'react-test-renderer@19.2.4',
       },
-      evidence_kind: 'static_product_state_corroboration_plus_reviewed_exact_isolated_function_execution',
+      evidence_kind: 'static_product_state_corroboration_plus_reviewed_exact_isolated_and_react_execution',
     },
     recurrence: {
-      status: 'two_product_concrete_vertical_with_six_product_static_corroboration',
+      status: 'three_product_concrete_vertical_with_six_product_static_corroboration',
       declared_governance_groups: observations.map(observation => observation.governance_group),
       declared_ecosystems: observations.map(observation => observation.declared_ecosystem),
       contract_vertical: {

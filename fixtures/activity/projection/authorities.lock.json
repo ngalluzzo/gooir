@@ -284,12 +284,78 @@
     {
       "id": "gemini.history_manager",
       "product_id": "gemini_cli",
-      "role": "consumer_source",
+      "role": "state_source",
       "parser_variant": "typescript",
       "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
       "source_path": "packages/cli/src/ui/hooks/useHistoryManager.ts",
       "snapshot_path": "gemini-cli/history-manager.ts",
       "sha256": "a1a47a5bd21051f976b89da1386cab7b653d8c88fdcf3ad09b1f5b1d67c73d7a",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.app_container",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/AppContainer.tsx",
+      "snapshot_path": "gemini-cli/app-container.tsx",
+      "sha256": "a86c0e7108ca4e8222f156a3b9e0701a2e64eadae72371da6497da92c0c9c761",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.main_content",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/components/MainContent.tsx",
+      "snapshot_path": "gemini-cli/main-content.tsx",
+      "sha256": "3e7667d77e704d67b805c275beb4311b3ca93bdb95fc32053b39ba672655eb34",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.ui_state_context",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/contexts/UIStateContext.tsx",
+      "snapshot_path": "gemini-cli/ui-state-context.tsx",
+      "sha256": "8f10c5c8c7bc459cf6f36ab386c9c2bde21d5cdfee423570d2e9e1d2c280a9a9",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.app",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/App.tsx",
+      "snapshot_path": "gemini-cli/app.tsx",
+      "sha256": "a595be0f2abff0d065315e7d50a66ecb81dc429a4a352fe98eec11d88ab94370",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.default_app_layout",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/layouts/DefaultAppLayout.tsx",
+      "snapshot_path": "gemini-cli/default-app-layout.tsx",
+      "sha256": "367e9b4d0ea77994d1d554e82506fe6736bba6c6680d9708683790ced517e858",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini.history_item_display",
+      "product_id": "gemini_cli",
+      "role": "consumer_source",
+      "parser_variant": "typescript_jsx",
+      "repository": {"url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8"},
+      "source_path": "packages/cli/src/ui/components/HistoryItemDisplay.tsx",
+      "snapshot_path": "gemini-cli/history-item-display.tsx",
+      "sha256": "680d928744063cc44bc71d5b00bf8706a177720ec3f745f9537ecf1021e6c1ad",
       "license_snapshot": "gemini-cli/LICENSE"
     },
     {

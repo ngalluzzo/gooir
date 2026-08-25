@@ -150,13 +150,17 @@ semantic adapters project only independently earned contracts. See
 
 ### Activity is a selected projection, not a representation tree
 
-Exact upstream selectors from two distinct current Svelte product repositories
-produce concrete verified values of a smaller semantic object: an exact source
-scope emits an ordered selection of activity references with explicit source
-extent. React DOM, React/Ink, and Rust/Ratatui products statically corroborate
-the candidate through different graphs, rewind recordings, and thread-local
-containers, but do not yet establish a concrete cross-runtime projection. The
-backing model is not the common waist.
+Exact upstream selectors from two distinct current Svelte product repositories,
+plus Gemini CLI's exact React `useHistory` state machine, produce concrete
+verified values of a smaller semantic object: an exact source scope emits an
+ordered selection of activity locators with explicit source extent. The Gemini
+trace uses projection-local keys because its numeric UI ids are neither durable
+recording ids nor chronology; exact AppContainer, UI context, normal App/layout,
+MainContent, and display sources retain its downstream aliased-Ink lineage
+without claiming terminal visibility. React DOM and Rust/Ratatui products
+continue to corroborate the candidate through
+different graphs and thread-local containers. The backing model is not the
+common waist.
 
 `ActivityProjection` deliberately carries no portable payload, actor enum,
 pending request, composer, stream reducer, or render tree. Those meanings are

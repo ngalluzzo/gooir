@@ -16,12 +16,22 @@ exact opaque source scope
 The tool does not lift a component tree, content payload, actor enum, backing
 branch graph, or pending decision. Those are separate facts and capabilities.
 
-Only the behavioral case produces semantic values. It extracts the exact
-reviewed `createMessagesList` function node from Open WebUI and `buildSubtree`
-from Chat UI, transpiles them with pinned TypeScript, and executes the same
-branching fixture in an isolated context. Each selected result becomes a
-concrete `ActivityProjection` consumed by the Rust semantic verifier. This does
-not claim that either full application dependency closure ran.
+Only the two behavioral cases produce semantic values. The branch case extracts
+the exact reviewed `createMessagesList` function node from Open WebUI and
+`buildSubtree` from Chat UI, transpiles them with pinned TypeScript, and executes
+the same branching fixture in an isolated context. The React case admits only
+the exact review-pinned Gemini CLI `useHistory` function digest, then compiles
+and mounts it under React 19.2.4 in a permission-restricted, time-bounded child
+process with no handwritten reducer. Its action trace establishes the settled
+state vector `[20, 10, 22]`, including duplicate suppression and an allocated
+id gap. Those numeric ids become projection-local keys, never durable recording
+references.
+
+Gemini's exact AppContainer, UIStateContext, App normal branch,
+DefaultAppLayout, MainContent, and HistoryItemDisplay sources establish native
+lineage from that state to the product's `npm:@jrichman/ink@6.6.9` consumer.
+They are static evidence: the test does not execute the full application
+dependency closure or claim rendered terminal equivalence.
 
 Run:
 

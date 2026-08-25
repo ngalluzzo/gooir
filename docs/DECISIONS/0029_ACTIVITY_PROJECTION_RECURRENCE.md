@@ -1,6 +1,6 @@
 # 0029 — Agent activity recurs as a selected ordered projection
 
-Status: provisional v0 semantic contract; two concrete source projections and
+Status: provisional v0 semantic contract; three concrete source projections and
 six-product static corroboration implemented
 
 ## Question
@@ -17,7 +17,7 @@ falsify.
 
 ## Corpus
 
-The checked-in corpus pins 27 product-owned source documents and eight license
+The checked-in corpus pins 33 product-owned source documents and eight license
 records from six current, independently governed products:
 
 | Product | Exact revision | Native route |
@@ -26,7 +26,7 @@ records from six current, independently governed products:
 | LibreChat | `ac2aef00f6ebed74cde89b51d28e77da5db6c97b` | React DOM; two-pass tree construction and per-parent sibling selection |
 | Open WebUI | `01f4282f1ffe0d6212f58d3afbeae21fffd0c4be` | Svelte DOM; current-head walk over a parent-linked map |
 | Hugging Face Chat UI | `d34daa15dab956dfc14fa56b781fa2d992a41508` | Svelte DOM; selected-leaf ancestor materialization |
-| Gemini CLI | `812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8` | React/Ink; append recording with rewind and checkpoint materialization |
+| Gemini CLI | `812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8` | React 19.2.4 state; `useHistory` vector consumed downstream through an `npm:@jrichman/ink` alias |
 | Codex | `9c9675d3d038d9e827875c6bdceb2c6d68439dfc` | Rust/Ratatui; thread-local ordered turns and items with explicit load extent |
 
 Pinned Babel, Svelte, tree-sitter Python/Rust, TOML, and TypeScript authorities
@@ -105,7 +105,7 @@ Those meanings may recur independently and join the same source references.
 They must be earned as separate contracts so one provider's absence does not
 erase or fabricate the others.
 
-### F4 — Two real selectors converge, while their defeats remain distinct
+### F4 — Three native producers establish the same smaller contract
 
 The generator extracts the exact reviewed upstream selection function nodes
 from Open WebUI and Chat UI and executes them in an isolated context with
@@ -120,13 +120,32 @@ selected = assistant_b
 both functions emit `system, user, assistant_b`; selecting the other leaf emits
 `system, user, assistant_a`. Each valid result is then lowered into a concrete
 `ActivityProjection`, deserialized by the Rust semantic crate, and passed
-through its verifier. This is the verified two-product vertical for selected
-emitted order, not merely similar source shape.
+through its verifier. This is the verified two-product branch vertical for
+selected emitted order, not merely similar source shape.
 
 Malformed topology remains a falsifier. Open WebUI returns the reachable suffix
 while Chat UI throws `Ancestor not found`; neither result is admitted as a
 valid common projection. The test executes the reviewed extracted functions,
 not the applications' dependency closures, and proves no visual equivalence.
+
+Gemini supplies a deliberately different behavioral case. The generator admits
+only the exact review-pinned `useHistory` function digest, then compiles and
+mounts it under React 19.2.4 in a permission-restricted, time-bounded child
+process without replacing React state with a handwritten reducer. The closed
+trace loads history ids `[20, 10]`, attempts to append a consecutive duplicate
+user item, appends a Gemini item, then updates id `10`. Native behavior allocates
+`21` for the suppressed duplicate and `22` for the later append; the settled
+vector remains `[20, 10, 22]` and the update does not move id `10`.
+
+That settled hook snapshot lowers into a third concrete `ActivityProjection`.
+Its numeric ids are projection-local keys: they are not Gemini recording ids,
+durable identity, or timestamps. `full` covers every item in the exact settled
+hook snapshot only. It says nothing about durable session completeness, pending
+items, confirmation queues, or terminal visibility. Exact AppContainer,
+UIStateContext, App normal-branch, DefaultAppLayout, MainContent, and
+HistoryItemDisplay sources establish the native lineage from
+`historyManager.history` to the aliased Ink consumer; those downstream nodes are
+source-bound static evidence, not an executed render.
 
 ### F5 — The data-model pattern applies without creating a UI metamodel
 
@@ -143,7 +162,12 @@ Chat UI native graph + exact upstream selector -----/          |
                                                                v
                                                     ActivityProjection::verify
 
-Lobe / Libre / Gemini / Codex native routes
+Gemini exact useHistory + React 19.2.4
+  -> settled hook-state adapter -> ActivityProjection::verify
+  -> source-closed normal AppContainer/App/MainContent/aliased-Ink lineage
+     remains native evidence
+
+Lobe / Libre / Codex native routes
   -> static corroboration only; concrete projection still required
 ```
 
@@ -185,11 +209,13 @@ produce an equivalent requested fact through a different library.
 
 Add `org.gooi.semantics.activity_projection/ordered_activity@0.1.0` as a
 separately versioned provisional semantic contract. Two distinct current Svelte
-product repositories now produce concrete verifier-owned fixture values
-through their exact upstream selection code. Four other products, including two
-React web products, statically corroborate the narrower shape but do not count
-as concrete contract projections. No cross-runtime lowering claim is admitted
-yet.
+product repositories produce concrete verifier-owned fixture values through
+their exact upstream selection code. Gemini CLI produces a third value from its
+exact React state hook using projection-local locators. Three other products,
+including two React web products and one Rust/Ratatui product, statically
+corroborate the narrower shape but do not count as concrete projections. This
+earns cross-runtime semantic production at the native state boundary; it does
+not claim cross-runtime renderer, component, or visual equivalence.
 
 The contract owns exact opaque scope, selection-relative emitted order, entry
 locators, explicit source extent, and lossless extensions. It does not own
@@ -204,16 +230,17 @@ providers are the ecosystem authorities that implement individual bridges.
 
 Do not add a demonstration renderer yet. Rendering anonymous rows would hide
 the absence of earned content and participant meaning behind plausible UI.
-This slice completes one honest vertical at the source boundary: two independent
-web products execute their real selection functions, adapters produce concrete
-contract values, and an independent Rust checker byte-binds the canonical
-generator output and invokes the semantic verifier. The remaining four product
-routes are explicitly static corroboration.
+This slice now contains three honest source-bound verticals: two independent web
+products execute their real branch selection functions, Gemini executes its
+real React history hook, adapters produce concrete contract values, and an
+independent Rust checker byte-binds the canonical generator output and invokes
+the semantic verifier. The remaining three product routes are explicitly static
+corroboration.
 
 ## Required next proofs
 
-1. Produce a concrete projection from an independent non-Svelte runtime route;
-   React/Ink or Rust/Ratatui is the strongest next portability test.
+1. Repeat the concrete projection route through an independent Rust/Ratatui
+   product, retaining its explicit not-loaded, summary, and full extents.
 2. Probe outstanding interaction requests as zero-to-many correlated requests
    with optional activity subjects. Do not collapse them into one composer or
    one current decision.

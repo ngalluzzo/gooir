@@ -3,6 +3,7 @@ import {
   executeExportedTypescript,
   findBabel,
 } from './parsers.mjs';
+import {executeUseHistoryTrace} from './react-history.mjs';
 
 function nameOf(node) {
   return node?.id?.name ?? node?.key?.name ?? node?.key?.value;
@@ -39,6 +40,13 @@ const REVIEWED_EVIDENCE = Object.freeze({
     '19c3bf8790277f5fe6d4003760a6c3ed9d391787be22814c3f8c1e21b5099ce8',
     '5c97ad08857292a8513f768c7af8681cc65093fa2bea7d2d823902b46fc2dfa6',
     '2ca465ef59cc7011e5ccbe6fc8c8c6310ee924fb1b7e8576ee95bf78d9e351a0',
+    '01b769034ac7fb9ff1cb934ff6a1863b29efe02517657aa3ba70da3b0fa4dc3c',
+    'a86c0e7108ca4e8222f156a3b9e0701a2e64eadae72371da6497da92c0c9c761',
+    '8f10c5c8c7bc459cf6f36ab386c9c2bde21d5cdfee423570d2e9e1d2c280a9a9',
+    'a595be0f2abff0d065315e7d50a66ecb81dc429a4a352fe98eec11d88ab94370',
+    '367e9b4d0ea77994d1d554e82506fe6736bba6c6680d9708683790ced517e858',
+    '3e7667d77e704d67b805c275beb4311b3ca93bdb95fc32053b39ba672655eb34',
+    '680d928744063cc44bc71d5b00bf8706a177720ec3f745f9537ecf1021e6c1ad',
   ],
   codex: [
     '48ea99367b909aae2a2f03d06be1fbe52846ecaaa4b3068e1f9b157923b23542',
@@ -72,7 +80,7 @@ function sourceReference(entry) {
 function result(product, context, native, evidence, defeats) {
   const expected = REVIEWED_EVIDENCE[product.id];
   if (!expected || JSON.stringify(evidence.map(item => item.sha256)) !== JSON.stringify(expected)) {
-    throw new Error(`${product.id} positive evidence differs from its semantic-review pins`);
+    throw new Error(`${product.id} positive evidence differs from its semantic-review pins: received ${JSON.stringify(evidence.map(item => item.sha256))}`);
   }
   return {
     product_id: product.id,
@@ -194,26 +202,52 @@ export function projectChatUi(product, context) {
 }
 
 export function projectGemini(product, context) {
+  const manifest = context.json('gemini.runtime_manifest');
   const types = context.ts('gemini.recording_types');
   const service = context.ts('gemini.recording_service');
+  const history = context.ts('gemini.history_manager');
+  const app = context.ts('gemini.app_container', true);
+  const uiContext = context.ts('gemini.ui_state_context', true);
+  const appView = context.ts('gemini.app', true);
+  const defaultLayout = context.ts('gemini.default_app_layout', true);
+  const main = context.ts('gemini.main_content', true);
+  const display = context.ts('gemini.history_item_display', true);
   const base = namedDeclaration(types.ast, 'TSInterfaceDeclaration', 'BaseMessageRecord', 'Gemini BaseMessageRecord');
   const extras = namedDeclaration(types.ast, 'TSTypeAliasDeclaration', 'ConversationRecordExtra', 'Gemini ConversationRecordExtra');
   const conversation = namedDeclaration(types.ast, 'TSInterfaceDeclaration', 'ConversationRecord', 'Gemini ConversationRecord');
   const load = findBabel(service.ast, node => node.type === 'FunctionDeclaration' && nameOf(node) === 'loadConversationRecord', 'Gemini loadConversationRecord');
+  const useHistory = findBabel(history.ast, node => node.type === 'FunctionDeclaration' && nameOf(node) === 'useHistory', 'Gemini useHistory');
+  const appContainer = findBabel(app.ast, node => node.type === 'VariableDeclarator' && nameOf(node) === 'AppContainer', 'Gemini AppContainer');
+  if (manifest.ast.dependencies?.react !== '19.2.4' || manifest.ast.dependencies?.ink !== 'npm:@jrichman/ink@6.6.9') throw new Error('Gemini runtime manifest no longer pins the reviewed React and Ink alias');
   textIncludes(types.source, base, ['id: string', 'content: PartListUnion'], 'Gemini BaseMessageRecord');
   textIncludes(types.source, extras, ["type: 'user' | 'info' | 'error' | 'warning'", "type: 'gemini'", 'toolCalls?: ToolCallRecord[]'], 'Gemini extras');
   textIncludes(types.source, conversation, ['sessionId: string', 'messages: MessageRecord[]'], 'Gemini ConversationRecord');
   textIncludes(service.source, load, ['isRewindRecord(record)', 'messagesMap.delete(id)', 'messagesMap.clear()', 'Array.from(messagesMap.values())', 'metadataOnly ? [] : loadedMessages'], 'Gemini loader');
+  textIncludes(history.source, useHistory, ['useState<HistoryItem[]>(initialItems)', 'return [...prevHistory, newItem]', 'return prevHistory', 'setHistory(newHistory)', 'history,'], 'Gemini useHistory');
+  textIncludes(app.source, appContainer, ['useHistory({', 'history: historyManager.history', '<UIStateContext.Provider value={uiState}>', '<App />'], 'Gemini AppContainer');
+  textIncludes(uiContext.source, uiContext.ast.program, ['createContext<UIState | null>(null)', 'useContext(UIStateContext)', 'return context'], 'Gemini UIStateContext');
+  textIncludes(appView.source, appView.ast.program, ['useUIState()', 'isScreenReaderEnabled', '<DefaultAppLayout />'], 'Gemini App');
+  textIncludes(defaultLayout.source, defaultLayout.ast.program, ["from '../components/MainContent.js'", 'useUIState()', '<MainContent />'], 'Gemini DefaultAppLayout');
+  textIncludes(main.source, main.ast.program, ["from 'ink'", "from './HistoryItemDisplay.js'", "from '../contexts/UIStateContext.js'", 'uiState.history.map', 'augmentedHistory.map', '<MemoizedHistoryItemDisplay', '<ScrollableList', '<Static', '...staticHistoryItems', '...lastResponseHistoryItems'], 'Gemini MainContent');
+  textIncludes(display.source, display.ast.program, ["from 'ink'", 'itemForDisplay', '<Box', "itemForDisplay.type === 'user'", "itemForDisplay.type === 'gemini'"], 'Gemini HistoryItemDisplay');
   return result(product, context, {
-    backing: 'append_record_with_rewind_and_checkpoint_materialization',
-    selector: 'rewind_applied_before_map_insertion_order_projection',
-    emitted: 'ConversationRecord.messages',
-    entry_identity: 'message_record_id_with_nested_tool_records',
+    backing: 'react_history_state_with_load_append_update_and_clear',
+    selector: 'react_useHistory_settled_state_vector',
+    emitted: 'UseHistoryManagerReturn.history_consumed_by_MainContent',
+    entry_identity: 'projection_local_numeric_history_item_id',
+    renderer_lineage: 'source_closed_normal_AppContainer_UIState_App_DefaultAppLayout_MainContent_to_npm_aliased_jrichman_Ink',
   }, [
     utf16Evidence('gemini.recording_types', base.type, base.start, base.end, types.source),
     utf16Evidence('gemini.recording_types', extras.type, extras.start, extras.end, types.source),
     utf16Evidence('gemini.recording_types', conversation.type, conversation.start, conversation.end, types.source),
     utf16Evidence('gemini.recording_service', load.type, load.start, load.end, service.source),
+    utf16Evidence('gemini.history_manager', useHistory.type, useHistory.start, useHistory.end, history.source),
+    utf16Evidence('gemini.app_container', app.ast.program.type, app.ast.program.start, app.ast.program.end, app.source),
+    utf16Evidence('gemini.ui_state_context', uiContext.ast.program.type, uiContext.ast.program.start, uiContext.ast.program.end, uiContext.source),
+    utf16Evidence('gemini.app', appView.ast.program.type, appView.ast.program.start, appView.ast.program.end, appView.source),
+    utf16Evidence('gemini.default_app_layout', defaultLayout.ast.program.type, defaultLayout.ast.program.start, defaultLayout.ast.program.end, defaultLayout.source),
+    utf16Evidence('gemini.main_content', main.ast.program.type, main.ast.program.start, main.ast.program.end, main.source),
+    utf16Evidence('gemini.history_item_display', display.ast.program.type, display.ast.program.start, display.ast.program.end, display.source),
   ], [
     {kind: 'out_of_scope', affects: 'global_chronology', impact: 'disjoint', subject: 'gemini.rewound_suffix', reason: 'rewind records deliberately remove a previously materialized suffix'},
     {kind: 'out_of_scope', affects: 'portable_payload', impact: 'disjoint', subject: 'gemini.nested_tools_as_peer_activity', reason: 'tool records are nested inside Gemini message records'},
@@ -258,6 +292,19 @@ function activityProjection(productId, scopeRefs, messageNamespace, ids, selecto
     native_selector: selector,
     verifier_fixture: 'selected_branch_to_ordered_projection/v1',
     source_product: productId,
+  };
+}
+
+function reactHistoryProjection(traceDigest, keys) {
+  return {
+    scope_refs: [{namespace: 'gemini_cli.useHistory_action_trace', id: traceDigest}],
+    extent: 'full',
+    entries: keys.map(key => ({projection_key: key})),
+    native_selector: 'useHistory settled UseHistoryManagerReturn.history',
+    verifier_fixture: 'react_history_action_trace/v1',
+    source_product: 'gemini_cli',
+    runtime: 'react@19.2.4',
+    renderer_lineage: 'AppContainer UIState -> App normal branch -> DefaultAppLayout -> MainContent -> ink alias npm:@jrichman/ink@6.6.9',
   };
 }
 
@@ -314,17 +361,58 @@ export function runBehavioralCases(context) {
   }
   if (JSON.stringify(openBroken) !== JSON.stringify(['b']) || chatFailure !== 'Ancestor not found') throw new Error('missing-parent falsifier behavior changed');
 
+  const gemini = context.ts('gemini.history_manager');
+  const useHistoryNode = findBabel(gemini.ast, node => node.type === 'FunctionDeclaration' && nameOf(node) === 'useHistory', 'Gemini behavior useHistory');
+  const useHistorySource = gemini.source.slice(useHistoryNode.start, useHistoryNode.end);
+  const geminiFixture = {
+    initial_history: [
+      {id: 20, type: 'info', text: 'loaded-first'},
+      {id: 10, type: 'user', text: 'same'},
+    ],
+    actions: [
+      {kind: 'add', item: {type: 'user', text: 'same'}, base_timestamp: 5},
+      {kind: 'add', item: {type: 'gemini', text: 'answer'}, base_timestamp: 5},
+      {kind: 'update', id: 10, updates: {text: 'same-updated'}},
+    ],
+  };
+  const geminiResult = executeUseHistoryTrace(useHistorySource, geminiFixture);
+  const geminiKeys = geminiResult.history.map(item => String(item.id));
+  if (JSON.stringify(geminiResult.allocated_ids) !== JSON.stringify([21, 22])) throw new Error('Gemini history ID allocation behavior changed');
+  if (JSON.stringify(geminiKeys) !== JSON.stringify(['20', '10', '22'])) throw new Error('Gemini settled history order changed');
+  if (geminiResult.history[1]?.text !== 'same-updated' || geminiResult.history.some(item => item.id === 21)) throw new Error('Gemini update or duplicate suppression behavior changed');
+  const traceDigest = sha256(Buffer.from(JSON.stringify(geminiFixture)));
+
   return {
-    protocol: 'org.gooi.fixture.activity_projection_behavior/v1',
-    case: 'selected_branch_to_ordered_projection',
-    fixture: {
-      graph: 'system -> user -> {assistant_a, assistant_b}',
-      selected: 'assistant_b',
-      native_inputs: {
-        open_webui: selectedOpenInput,
-        chat_ui: selectedChatInput,
+    protocol: 'org.gooi.fixture.activity_projection_behavior/v2',
+    cases: [
+      {
+        id: 'selected_branch_to_ordered_projection',
+        products: ['open_webui', 'chat_ui'],
+        fixture: {
+          graph: 'system -> user -> {assistant_a, assistant_b}',
+          selected: 'assistant_b',
+          native_inputs: {
+            open_webui: selectedOpenInput,
+            chat_ui: selectedChatInput,
+          },
+        },
+        alternate_selection: {selected: 'assistant_a', open_webui: openAlternate, chat_ui: chatAlternate},
+        malformed_topology: {
+          open_webui: {result: openBroken, classification: 'partial_projection'},
+          chat_ui: {error: chatFailure, classification: 'blocking_unknown'},
+          admitted: false,
+        },
       },
-    },
+      {
+        id: 'react_history_action_trace',
+        products: ['gemini_cli'],
+        fixture: geminiFixture,
+        fixture_sha256: traceDigest,
+        allocated_ids: geminiResult.allocated_ids,
+        settled_history: geminiResult.history,
+        establishes: ['load_preserves_vector_order', 'duplicate_add_allocates_but_does_not_emit', 'later_add_retains_id_gap', 'update_preserves_position'],
+      },
+    ],
     observations: [
       {
         product_id: 'open_webui',
@@ -356,13 +444,13 @@ export function runBehavioralCases(context) {
         ),
         source_node: utf16Evidence('chat_ui.build_subtree', chatNode.type, chatNode.start, chatNode.end, chat.source),
       },
+      {
+        product_id: 'gemini_cli',
+        ordered_projection_keys: geminiKeys,
+        activity_projection: reactHistoryProjection(traceDigest, geminiKeys),
+        source_node: utf16Evidence('gemini.history_manager', useHistoryNode.type, useHistoryNode.start, useHistoryNode.end, gemini.source),
+      },
     ],
-    alternate_selection: {selected: 'assistant_a', open_webui: openAlternate, chat_ui: chatAlternate},
-    malformed_topology: {
-      open_webui: {result: openBroken, classification: 'partial_projection'},
-      chat_ui: {error: chatFailure, classification: 'blocking_unknown'},
-      admitted: false,
-    },
-    claim_limit: 'executes reviewed exact upstream function nodes in an isolated context and verifies concrete ActivityProjection values; does not execute either application dependency closure or establish rendered visual equivalence',
+    claim_limit: 'executes two reviewed exact upstream selector nodes in an isolated context plus Gemini useHistory under pinned React, then verifies concrete ActivityProjection values; renderer lineage is statically source-bound and does not establish rendered visual equivalence or a full application dependency closure',
   };
 }
