@@ -23,6 +23,7 @@ members = [
     "crates/gooir-identity",
     "crates/gooir-plugin-process",
     "crates/gooir-provider",
+    "crates/interaction-activation-recurrence",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
     "crates/openapi-lowering",
@@ -35,6 +36,7 @@ members = [
     "crates/sql-ddl-lowering",
     "crates/semantics-effects-v1",
     "crates/semantics-fleetd-control-v0",
+    "crates/semantics-interaction-activation-v0",
     "crates/semantics-software-surface-v1",
     "crates/surface-completeness-analysis",
     "crates/workflow-dialect",
@@ -71,6 +73,7 @@ gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
 gooir-provider = { path = "crates/gooir-provider" }
+interaction-activation-recurrence = { path = "crates/interaction-activation-recurrence" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
 openapi-lifter = { path = "crates/openapi-lifter" }
@@ -84,6 +87,7 @@ semantics-data-model-v1 = { path = "crates/semantics-data-model-v1" }
 sql-ddl-lowering = { path = "crates/sql-ddl-lowering" }
 semantics-effects-v1 = { path = "crates/semantics-effects-v1" }
 semantics-fleetd-control-v0 = { path = "crates/semantics-fleetd-control-v0" }
+semantics-interaction-activation-v0 = { path = "crates/semantics-interaction-activation-v0" }
 semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" }
 surface-completeness-analysis = { path = "crates/surface-completeness-analysis" }
 serde = { version = "1", features = ["derive"] }

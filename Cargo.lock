@@ -387,6 +387,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "interaction-activation-recurrence"
+version = "0.1.0"
+dependencies = [
+ "lift-defeasible",
+ "semantics-interaction-activation-v0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -551,6 +563,15 @@ dependencies = [
 name = "semantics-fleetd-control-v0"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "semantics-interaction-activation-v0"
+version = "0.1.0"
+dependencies = [
+ "gooir-core",
  "serde",
  "serde_json",
 ]

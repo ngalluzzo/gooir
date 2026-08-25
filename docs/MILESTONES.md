@@ -64,3 +64,29 @@ passed independent conformance, produced admitted artifact fact
 and re-planned to zero steps and zero needs. The next orchestration boundary is
 an explicit structured result channel for tool-using ACP agents; progress prose
 must remain evidence without being conflated with the final provider result.
+
+## Experimental — Ecosystem-derived interaction activation
+
+Status: provisional v0 contract and recurrence falsifier implemented on
+`gooir-ui-ecosystem-correction-v0`.
+
+GOOIR now pins 17 full runtime, conformance, materializer, and library source
+documents plus five licenses from exact React, Vue, Ink, shadcn/ui, and Mantine
+revisions. Source-specific AST projections over React DOM and Vue runtime-dom
+independently recur on one narrow positive meaning: a bound activation invokes
+its registered handler. Ink demonstrates the same route across a terminal host
+but shares the React lineage; shadcn and Mantine are also React participants.
+None of those three inflates the independent-authority count.
+
+The provisional contract deliberately excludes component trees, buttons,
+clicks, keys, labels, availability, state transitions, and effect cardinality.
+The recurrence suite preserves all measured host differences in namespaced
+native extensions, carries incomplete dependency closure and unexecuted test
+suites as typed disjoint limits, and rejects a missing binding, stimulus,
+assertion, runtime invocation, source digest, or parser pin as unknown.
+
+The next gate is a same-application behavioral realization: semantic
+activation through actual target revisions and authoritative builds, followed
+by verifier-owned browser or PTY stimulus and a lift of only the observed
+handler-dispatch subset. That proof, not source-shape code generation, earns
+the first lowering capability.

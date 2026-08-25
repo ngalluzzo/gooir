@@ -115,6 +115,24 @@ expected during progressive lifting and lowering.
 
 Unknown means maximally interfering, never safe. A generic pass must not reorder, duplicate, eliminate, or otherwise reinterpret an operation unless installed contracts establish the required semantics.
 
+### Interaction enters as an optional projection
+
+The first ecosystem recurrence probe uses source-specific AST projections over
+the independent React DOM and Vue runtime-dom lineages to earn only an
+activation-to-registered-handler contract. It does not introduce a universal
+component tree. React and Vue programs may continue through their native
+compiler/runtime routes without producing an Interaction fact; Ink participates
+as non-voting React-lineage evidence with a terminal host configuration.
+shadcn/ui participates through its exact registry and project materialization
+APIs, while Mantine participates through exact package exports, types, CSS, and
+provider setup.
+
+A portable realization requires the interaction fact together with native
+handler/effect implementation, host policy, and an evidence-bearing component
+or input realization. The requested target may be native source, a runnable
+artifact, or an observed behavior fact. No framework is the universal endpoint.
+See [decision 0027](DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
+
 ## Lifting
 
 Lifters should prefer authoritative representations such as Prisma DMMF, PostgreSQL catalogs, OpenAPI/Smithy models, Cedar schemas/ASTs, Terraform plan JSON, and `cargo metadata`. A native source dialect preserves target-specific information losslessly. Bridges into shared contracts are explicit and may be partial.

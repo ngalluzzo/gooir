@@ -1,0 +1,1344 @@
+{
+  "protocol": "org.gooi.fixture.interaction_activation_observations/v1",
+  "generator": {
+    "name": "@gooir/interaction-activation-lifters",
+    "version": "0.1.0",
+    "implementation_paths": [
+      "tools/interaction-activation-lifters/package.json",
+      "tools/interaction-activation-lifters/src/ast.mjs",
+      "tools/interaction-activation-lifters/src/cli.mjs",
+      "tools/interaction-activation-lifters/src/ink.mjs",
+      "tools/interaction-activation-lifters/src/lift.mjs",
+      "tools/interaction-activation-lifters/src/react.mjs",
+      "tools/interaction-activation-lifters/src/vue.mjs"
+    ],
+    "implementation_sha256": "647c9cf04473ceca8ee7e6935939ac89778b08e5c9016e7d59c906db49c4786a",
+    "package_lock_path": "tools/interaction-activation-lifters/package-lock.json",
+    "package_lock_sha256": "c72947ac431a6f7ecc3adf2e504417eb33c61941892e3865dca8c1b61fd5a791",
+    "parser": {
+      "package": "@babel/parser",
+      "version": "7.29.8",
+      "config": {
+        "source_type": "unambiguous",
+        "error_recovery": false,
+        "variants": {
+          "flow_jsx": {
+            "plugins": [
+              "flow",
+              "jsx"
+            ]
+          },
+          "typescript_jsx": {
+            "plugins": [
+              "typescript",
+              "jsx"
+            ]
+          }
+        },
+        "authority_variants": {
+          "react_dom.simple_event_plugin.runtime": "typescript_jsx",
+          "react_dom.dom_plugin_event_system.runtime": "typescript_jsx",
+          "react_dom.simple_event_plugin.conformance": "flow_jsx",
+          "vue_runtime_dom.events.runtime": "typescript_jsx",
+          "vue_runtime_dom.patch_events.conformance": "typescript_jsx",
+          "ink.use_input.runtime": "typescript_jsx",
+          "ink.reconciler.runtime": "typescript_jsx",
+          "ink.use_input_multiple.fixture": "typescript_jsx",
+          "ink.use_input.conformance": "typescript_jsx"
+        }
+      }
+    },
+    "authority_lock_sha256": "6e173ccf889a74e6ebc366dec960e993ccef3299a46772a6db21f97083d72c98",
+    "evidence_kind": "static_source_path_with_declared_test_corroboration"
+  },
+  "observations": [
+    {
+      "audit_subject_id": "react-dom:SimpleEventPlugin/onClick",
+      "authority_group": "react_dom",
+      "ecosystem": "react_dom",
+      "semantic": {
+        "action_id": "react-dom:SimpleEventPlugin/onClick",
+        "outcome": "invokes_registered_handler"
+      },
+      "lineage": {
+        "runtime": "react",
+        "participation": "authority",
+        "evidence": [
+          {
+            "source": "react_dom.simple_event_plugin.runtime",
+            "node_type": "FunctionDeclaration",
+            "loc": {
+              "start": {
+                "line": 57,
+                "column": 0
+              },
+              "end": {
+                "line": 235,
+                "column": 1
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 1523,
+                "end": 7090
+              },
+              "utf8_bytes": {
+                "start": 1523,
+                "end": 7090
+              }
+            },
+            "relation": "defines_plugin_extractor",
+            "symbol": "extractEvents"
+          },
+          {
+            "source": "react_dom.dom_plugin_event_system.runtime",
+            "node_type": "FunctionDeclaration",
+            "loc": {
+              "start": {
+                "line": 252,
+                "column": 0
+              },
+              "end": {
+                "line": 264,
+                "column": 1
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 7470,
+                "end": 7741
+              },
+              "utf8_bytes": {
+                "start": 7470,
+                "end": 7741
+              }
+            },
+            "relation": "defines_dispatch_executor",
+            "symbol": "executeDispatch"
+          }
+        ]
+      },
+      "chain": {
+        "binding": {
+          "source": "react_dom.simple_event_plugin.conformance",
+          "node_type": "JSXAttribute",
+          "loc": {
+            "start": {
+              "line": 77,
+              "column": 25
+            },
+            "end": {
+              "line": 77,
+              "column": 42
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 1829,
+              "end": 1846
+            },
+            "utf8_bytes": {
+              "start": 1829,
+              "end": 1846
+            }
+          },
+          "form": "jsx_attribute",
+          "name": "onClick",
+          "handler": "onClick"
+        },
+        "stimulus": {
+          "source": "react_dom.simple_event_plugin.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 34,
+              "column": 6
+            },
+            "end": {
+              "line": 34,
+              "column": 21
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 696,
+              "end": 711
+            },
+            "utf8_bytes": {
+              "start": 696,
+              "end": 711
+            }
+          },
+          "form": "dom_element_click_method",
+          "receiver": "element",
+          "method": "click"
+        },
+        "assertion": {
+          "source": "react_dom.simple_event_plugin.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 36,
+              "column": 4
+            },
+            "end": {
+              "line": 36,
+              "column": 44
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 725,
+              "end": 765
+            },
+            "utf8_bytes": {
+              "start": 725,
+              "end": 765
+            }
+          },
+          "framework": "jest",
+          "matcher": "toHaveBeenCalledTimes",
+          "handler": "onClick",
+          "expected_count": 1
+        },
+        "test_link": {
+          "source": "react_dom.simple_event_plugin.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 78,
+              "column": 10
+            },
+            "end": {
+              "line": 78,
+              "column": 49
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 1861,
+              "end": 1900
+            },
+            "utf8_bytes": {
+              "start": 1861,
+              "end": 1900
+            }
+          },
+          "binding_variable": "element",
+          "mount_helper": "mounted",
+          "assertion_helper": "expectClickThru"
+        },
+        "runtime_accumulation": {
+          "source": "react_dom.simple_event_plugin.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 215,
+              "column": 22
+            },
+            "end": {
+              "line": 222,
+              "column": 5
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 6611,
+              "end": 6776
+            },
+            "utf8_bytes": {
+              "start": 6611,
+              "end": 6776
+            }
+          },
+          "mapped_listener_name": "reactName",
+          "native_event_member": "type"
+        },
+        "runtime_stimulus_mapping": {
+          "source": "react_dom.simple_event_plugin.runtime",
+          "node_type": "SwitchCase",
+          "loc": {
+            "start": {
+              "line": 99,
+              "column": 4
+            },
+            "end": {
+              "line": 106,
+              "column": 7
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 2933,
+              "end": 3222
+            },
+            "utf8_bytes": {
+              "start": 2933,
+              "end": 3222
+            }
+          },
+          "discriminant": "domEventName",
+          "event_name": "click",
+          "fallthrough_event_constructor": "SyntheticMouseEvent"
+        },
+        "runtime_event_construction": {
+          "source": "react_dom.simple_event_plugin.runtime",
+          "node_type": "AssignmentExpression",
+          "loc": {
+            "start": {
+              "line": 118,
+              "column": 6
+            },
+            "end": {
+              "line": 118,
+              "column": 46
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 3516,
+              "end": 3556
+            },
+            "utf8_bytes": {
+              "start": 3516,
+              "end": 3556
+            }
+          },
+          "assignment": "SyntheticEventCtor",
+          "constructor": "SyntheticMouseEvent"
+        },
+        "runtime_queue": {
+          "source": "react_dom.simple_event_plugin.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 232,
+              "column": 6
+            },
+            "end": {
+              "line": 232,
+              "column": 44
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 7039,
+              "end": 7077
+            },
+            "utf8_bytes": {
+              "start": 7039,
+              "end": 7077
+            }
+          },
+          "queue": "dispatchQueue",
+          "fields": [
+            "event",
+            "listeners"
+          ]
+        },
+        "runtime_queue_forward": {
+          "source": "react_dom.dom_plugin_event_system.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 320,
+              "column": 4
+            },
+            "end": {
+              "line": 320,
+              "column": 70
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 9338,
+              "end": 9404
+            },
+            "utf8_bytes": {
+              "start": 9338,
+              "end": 9404
+            }
+          },
+          "callee": "processDispatchQueueItemsInOrder"
+        },
+        "runtime_handler_invocation": {
+          "source": "react_dom.dom_plugin_event_system.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 259,
+              "column": 4
+            },
+            "end": {
+              "line": 259,
+              "column": 19
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 7639,
+              "end": 7654
+            },
+            "utf8_bytes": {
+              "start": 7639,
+              "end": 7654
+            }
+          },
+          "callee_parameter": "listener",
+          "argument": "event"
+        }
+      },
+      "native": {
+        "host": "browser_dom",
+        "binding_form": "react_jsx_onClick_attribute",
+        "stimulus_form": "dom_element_click_method",
+        "assertion_form": "jest_mock_call_count",
+        "suppression": [
+          {
+            "mechanism": "disabled_interactive_ancestor",
+            "binding": {
+              "source": "react_dom.simple_event_plugin.conformance",
+              "node_type": "JSXAttribute",
+              "loc": {
+                "start": {
+                  "line": 94,
+                  "column": 32
+                },
+                "end": {
+                  "line": 94,
+                  "column": 47
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2365,
+                  "end": 2380
+                },
+                "utf8_bytes": {
+                  "start": 2365,
+                  "end": 2380
+                }
+              }
+            },
+            "stimulus": {
+              "source": "react_dom.simple_event_plugin.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 100,
+                  "column": 4
+                },
+                "end": {
+                  "line": 100,
+                  "column": 17
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2477,
+                  "end": 2490
+                },
+                "utf8_bytes": {
+                  "start": 2477,
+                  "end": 2490
+                }
+              }
+            },
+            "assertion": {
+              "source": "react_dom.simple_event_plugin.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 101,
+                  "column": 4
+                },
+                "end": {
+                  "line": 101,
+                  "column": 44
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2496,
+                  "end": 2536
+                },
+                "utf8_bytes": {
+                  "start": 2496,
+                  "end": 2536
+                }
+              },
+              "matcher": "toHaveBeenCalledTimes",
+              "expected_count": 0
+            }
+          }
+        ]
+      },
+      "sources": [
+        {
+          "authority_id": "react_dom.simple_event_plugin.runtime",
+          "repository": {
+            "url": "https://github.com/facebook/react.git",
+            "commit": "6c3bd60a90cde43e12a6c0021de8f1ecb69491b9"
+          },
+          "source_path": "packages/react-dom-bindings/src/events/plugins/SimpleEventPlugin.js",
+          "snapshot_path": "react/SimpleEventPlugin.js",
+          "sha256": "9bf3ed515e9ffb8fdd448c0eceb7521231e7369e43f86d7efb4e2abc50b40518"
+        },
+        {
+          "authority_id": "react_dom.dom_plugin_event_system.runtime",
+          "repository": {
+            "url": "https://github.com/facebook/react.git",
+            "commit": "6c3bd60a90cde43e12a6c0021de8f1ecb69491b9"
+          },
+          "source_path": "packages/react-dom-bindings/src/events/DOMPluginEventSystem.js",
+          "snapshot_path": "react/DOMPluginEventSystem.js",
+          "sha256": "74dccec8b465df25e7ddb4ec018e4180f4c43808e966826c2da9c5adfa97c088"
+        },
+        {
+          "authority_id": "react_dom.simple_event_plugin.conformance",
+          "repository": {
+            "url": "https://github.com/facebook/react.git",
+            "commit": "6c3bd60a90cde43e12a6c0021de8f1ecb69491b9"
+          },
+          "source_path": "packages/react-dom/src/events/plugins/__tests__/SimpleEventPlugin-test.js",
+          "snapshot_path": "react/SimpleEventPlugin-test.js",
+          "sha256": "9d8800a4860b15f9cf308dea4d60e906d518220473b55bf2ebcb346dca341217"
+        }
+      ],
+      "defeats": [
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "react_dom.durable_conformance_run",
+            "reason": "the lifter parsed an upstream test declaration but did not execute that upstream suite"
+          }
+        },
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "react_dom.dependency_closure",
+            "reason": "the authority corpus pins the callable path documents used by this observation, not the complete imported runtime closure"
+          }
+        }
+      ]
+    },
+    {
+      "audit_subject_id": "vue-runtime-dom:patchEvent/onClick",
+      "authority_group": "vue_runtime_dom",
+      "ecosystem": "vue_runtime_dom",
+      "semantic": {
+        "action_id": "vue-runtime-dom:patchEvent/onClick",
+        "outcome": "invokes_registered_handler"
+      },
+      "lineage": {
+        "runtime": "vue",
+        "participation": "authority",
+        "evidence": [
+          {
+            "source": "vue_runtime_dom.events.runtime",
+            "node_type": "FunctionDeclaration",
+            "loc": {
+              "start": {
+                "line": 36,
+                "column": 7
+              },
+              "end": {
+                "line": 68,
+                "column": 1
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 746,
+                "end": 1770
+              },
+              "utf8_bytes": {
+                "start": 746,
+                "end": 1770
+              }
+            },
+            "relation": "defines_runtime_event_patch",
+            "symbol": "patchEvent"
+          },
+          {
+            "source": "vue_runtime_dom.events.runtime",
+            "node_type": "CallExpression",
+            "loc": {
+              "start": {
+                "line": 141,
+                "column": 6
+              },
+              "end": {
+                "line": 146,
+                "column": 7
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 4359,
+                "end": 4481
+              },
+              "utf8_bytes": {
+                "start": 4359,
+                "end": 4481
+              }
+            },
+            "relation": "invokes_runtime_handler",
+            "symbol": "callWithAsyncErrorHandling"
+          }
+        ]
+      },
+      "chain": {
+        "binding": {
+          "source": "vue_runtime_dom.patch_events.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 9,
+              "column": 4
+            },
+            "end": {
+              "line": 9,
+              "column": 38
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 272,
+              "end": 306
+            },
+            "utf8_bytes": {
+              "start": 272,
+              "end": 306
+            }
+          },
+          "form": "patchProp",
+          "event_prop": "onClick",
+          "handler": "fn"
+        },
+        "stimulus": {
+          "source": "vue_runtime_dom.patch_events.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 10,
+              "column": 4
+            },
+            "end": {
+              "line": 10,
+              "column": 40
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 311,
+              "end": 347
+            },
+            "utf8_bytes": {
+              "start": 311,
+              "end": 347
+            }
+          },
+          "form": "dispatchEvent",
+          "event_constructor": "Event",
+          "event_name": "click",
+          "observed_dispatch_count": 3
+        },
+        "assertion": {
+          "source": "vue_runtime_dom.patch_events.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 16,
+              "column": 4
+            },
+            "end": {
+              "line": 16,
+              "column": 39
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 494,
+              "end": 529
+            },
+            "utf8_bytes": {
+              "start": 494,
+              "end": 529
+            }
+          },
+          "framework": "vitest",
+          "matcher": "toHaveBeenCalledTimes",
+          "handler": "fn",
+          "expected_count": 3
+        },
+        "runtime_binding": {
+          "source": "vue_runtime_dom.events.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 55,
+              "column": 43
+            },
+            "end": {
+              "line": 60,
+              "column": 7
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 1412,
+              "end": 1558
+            },
+            "utf8_bytes": {
+              "start": 1412,
+              "end": 1558
+            }
+          },
+          "callee": "createInvoker",
+          "handler_source": "nextValue"
+        },
+        "runtime_installation": {
+          "source": "vue_runtime_dom.events.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 61,
+              "column": 6
+            },
+            "end": {
+              "line": 61,
+              "column": 50
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 1566,
+              "end": 1610
+            },
+            "utf8_bytes": {
+              "start": 1566,
+              "end": 1610
+            }
+          },
+          "callee": "addEventListener",
+          "listener": "invoker"
+        },
+        "runtime_handler_invocation": {
+          "source": "vue_runtime_dom.events.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 141,
+              "column": 6
+            },
+            "end": {
+              "line": 146,
+              "column": 7
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 4359,
+              "end": 4481
+            },
+            "utf8_bytes": {
+              "start": 4359,
+              "end": 4481
+            }
+          },
+          "callee": "callWithAsyncErrorHandling",
+          "handler": "value",
+          "event_argument": "e"
+        }
+      },
+      "native": {
+        "host": "browser_dom",
+        "binding_form": "vue_runtime_dom_patchProp",
+        "stimulus_form": "dom_dispatchEvent",
+        "assertion_form": "vitest_mock_call_count",
+        "suppression": [
+          {
+            "mechanism": "patchProp_handler_removal",
+            "binding": {
+              "source": "vue_runtime_dom.patch_events.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 73,
+                  "column": 4
+                },
+                "end": {
+                  "line": 73,
+                  "column": 38
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2172,
+                  "end": 2206
+                },
+                "utf8_bytes": {
+                  "start": 2172,
+                  "end": 2206
+                }
+              }
+            },
+            "stimulus": {
+              "source": "vue_runtime_dom.patch_events.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 74,
+                  "column": 4
+                },
+                "end": {
+                  "line": 74,
+                  "column": 40
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2211,
+                  "end": 2247
+                },
+                "utf8_bytes": {
+                  "start": 2211,
+                  "end": 2247
+                }
+              }
+            },
+            "assertion": {
+              "source": "vue_runtime_dom.patch_events.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 76,
+                  "column": 4
+                },
+                "end": {
+                  "line": 76,
+                  "column": 37
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 2272,
+                  "end": 2305
+                },
+                "utf8_bytes": {
+                  "start": 2272,
+                  "end": 2305
+                }
+              },
+              "matcher": "not.toHaveBeenCalled"
+            }
+          }
+        ]
+      },
+      "sources": [
+        {
+          "authority_id": "vue_runtime_dom.events.runtime",
+          "repository": {
+            "url": "https://github.com/vuejs/core.git",
+            "commit": "e2bede96134f757aad5c5b33ac9be055022dbfc8"
+          },
+          "source_path": "packages/runtime-dom/src/modules/events.ts",
+          "snapshot_path": "vue/events.ts",
+          "sha256": "ff9b9b5a9b4d19adbf4b2259d3ff825fba81dc938969b8a4b6234c9f10287c85"
+        },
+        {
+          "authority_id": "vue_runtime_dom.patch_events.conformance",
+          "repository": {
+            "url": "https://github.com/vuejs/core.git",
+            "commit": "e2bede96134f757aad5c5b33ac9be055022dbfc8"
+          },
+          "source_path": "packages/runtime-dom/__tests__/patchEvents.spec.ts",
+          "snapshot_path": "vue/patchEvents.spec.ts",
+          "sha256": "58aec308b33c26d6ede00ffe60883121b31d815b44ea48509a4d80eae5e5ac13"
+        }
+      ],
+      "defeats": [
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "vue_runtime_dom.durable_conformance_run",
+            "reason": "the lifter parsed an upstream test declaration but did not execute that upstream suite"
+          }
+        },
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "vue_runtime_dom.dependency_closure",
+            "reason": "the authority corpus pins the callable path documents used by this observation, not the complete imported runtime closure"
+          }
+        }
+      ]
+    },
+    {
+      "audit_subject_id": "ink:useInput/input",
+      "authority_group": "ink_terminal",
+      "ecosystem": "ink",
+      "semantic": {
+        "action_id": "ink:useInput/input",
+        "outcome": "invokes_registered_handler"
+      },
+      "lineage": {
+        "runtime": "react",
+        "participation": "renderer",
+        "evidence": [
+          {
+            "source": "ink.use_input.runtime",
+            "node_type": "ImportDeclaration",
+            "loc": {
+              "start": {
+                "line": 3,
+                "column": 0
+              },
+              "end": {
+                "line": 3,
+                "column": 42
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 122,
+                "end": 164
+              },
+              "utf8_bytes": {
+                "start": 122,
+                "end": 164
+              }
+            },
+            "relation": "imports_local_reconciler",
+            "module": "../reconciler.js",
+            "imported": "default as reconciler"
+          },
+          {
+            "source": "ink.reconciler.runtime",
+            "node_type": "ImportDeclaration",
+            "loc": {
+              "start": {
+                "line": 2,
+                "column": 0
+              },
+              "end": {
+                "line": 2,
+                "column": 69
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 36,
+                "end": 105
+              },
+              "utf8_bytes": {
+                "start": 36,
+                "end": 105
+              }
+            },
+            "relation": "imports_react_reconciler",
+            "module": "react-reconciler",
+            "imported": "default as createReconciler"
+          },
+          {
+            "source": "ink.reconciler.runtime",
+            "node_type": "ImportDeclaration",
+            "loc": {
+              "start": {
+                "line": 9,
+                "column": 0
+              },
+              "end": {
+                "line": 9,
+                "column": 61
+              }
+            },
+            "span": {
+              "utf16": {
+                "start": 268,
+                "end": 329
+              },
+              "utf8_bytes": {
+                "start": 268,
+                "end": 329
+              }
+            },
+            "relation": "imports_react_runtime",
+            "module": "react",
+            "imported": [
+              "createContext",
+              "version as reactVersion"
+            ]
+          }
+        ]
+      },
+      "chain": {
+        "binding": {
+          "source": "ink.use_input_multiple.fixture",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 13,
+              "column": 1
+            },
+            "end": {
+              "line": 13,
+              "column": 22
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 379,
+              "end": 400
+            },
+            "utf8_bytes": {
+              "start": 379,
+              "end": 400
+            }
+          },
+          "form": "useInput_hook",
+          "handler": "handleInput",
+          "active_by_default": true
+        },
+        "stimulus": {
+          "source": "ink.use_input.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 7,
+              "column": 1
+            },
+            "end": {
+              "line": 7,
+              "column": 14
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 231,
+              "end": 244
+            },
+            "utf8_bytes": {
+              "start": 231,
+              "end": 244
+            }
+          },
+          "form": "pty_write",
+          "receiver": "ps",
+          "input": "x"
+        },
+        "assertion": {
+          "source": "ink.use_input.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 10,
+              "column": 1
+            },
+            "end": {
+              "line": 10,
+              "column": 32
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 308,
+              "end": 339
+            },
+            "utf8_bytes": {
+              "start": 308,
+              "end": 339
+            }
+          },
+          "framework": "ava",
+          "matcher": "true(output.includes)",
+          "expected_output": "x",
+          "observation": "rendered_handler_effect"
+        },
+        "fixture_link": {
+          "source": "ink.use_input.conformance",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 6,
+              "column": 12
+            },
+            "end": {
+              "line": 6,
+              "column": 38
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 202,
+              "end": 228
+            },
+            "utf8_bytes": {
+              "start": 202,
+              "end": 228
+            }
+          },
+          "fixture": "use-input-multiple"
+        },
+        "handler_effect": {
+          "source": "ink.use_input_multiple.fixture",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 10,
+              "column": 2
+            },
+            "end": {
+              "line": 10,
+              "column": 60
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 308,
+              "end": 366
+            },
+            "utf8_bytes": {
+              "start": 308,
+              "end": 366
+            }
+          },
+          "state_setter": "setInput",
+          "update": "previousInput_plus_input"
+        },
+        "rendered_effect": {
+          "source": "ink.use_input_multiple.fixture",
+          "node_type": "JSXExpressionContainer",
+          "loc": {
+            "start": {
+              "line": 24,
+              "column": 14
+            },
+            "end": {
+              "line": 24,
+              "column": 21
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 584,
+              "end": 591
+            },
+            "utf8_bytes": {
+              "start": 584,
+              "end": 591
+            }
+          },
+          "component": "Text",
+          "expression": "input"
+        },
+        "runtime_subscription": {
+          "source": "ink.use_input.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 263,
+              "column": 2
+            },
+            "end": {
+              "line": 263,
+              "column": 47
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 5846,
+              "end": 5891
+            },
+            "utf8_bytes": {
+              "start": 5848,
+              "end": 5893
+            }
+          },
+          "emitter": "internal_eventEmitter",
+          "event": "input",
+          "callback": "handleData"
+        },
+        "runtime_handler_invocation": {
+          "source": "ink.use_input.runtime",
+          "node_type": "CallExpression",
+          "loc": {
+            "start": {
+              "line": 254,
+              "column": 3
+            },
+            "end": {
+              "line": 254,
+              "column": 27
+            }
+          },
+          "span": {
+            "utf16": {
+              "start": 5735,
+              "end": 5759
+            },
+            "utf8_bytes": {
+              "start": 5737,
+              "end": 5761
+            }
+          },
+          "callee_parameter": "inputHandler",
+          "arguments": [
+            "input",
+            "key"
+          ]
+        }
+      },
+      "native": {
+        "host": "terminal_pty",
+        "binding_form": "ink_useInput_hook",
+        "stimulus_form": "pty_stdin_write",
+        "assertion_form": "ava_rendered_output_inclusion",
+        "suppression": [
+          {
+            "mechanism": "isActive_false",
+            "binding": {
+              "source": "ink.use_input_multiple.fixture",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 14,
+                  "column": 1
+                },
+                "end": {
+                  "line": 14,
+                  "column": 41
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 403,
+                  "end": 443
+                },
+                "utf8_bytes": {
+                  "start": 403,
+                  "end": 443
+                }
+              }
+            },
+            "runtime_guard": {
+              "source": "ink.use_input.runtime",
+              "node_type": "IfStatement",
+              "loc": {
+                "start": {
+                  "line": 259,
+                  "column": 2
+                },
+                "end": {
+                  "line": 261,
+                  "column": 3
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 5794,
+                  "end": 5842
+                },
+                "utf8_bytes": {
+                  "start": 5796,
+                  "end": 5844
+                }
+              }
+            },
+            "assertion": {
+              "source": "ink.use_input.conformance",
+              "node_type": "CallExpression",
+              "loc": {
+                "start": {
+                  "line": 9,
+                  "column": 1
+                },
+                "end": {
+                  "line": 9,
+                  "column": 34
+                }
+              },
+              "span": {
+                "utf16": {
+                  "start": 272,
+                  "end": 305
+                },
+                "utf8_bytes": {
+                  "start": 272,
+                  "end": 305
+                }
+              },
+              "matcher": "false(output.includes)",
+              "excluded_output": "xx"
+            }
+          }
+        ]
+      },
+      "sources": [
+        {
+          "authority_id": "ink.use_input.runtime",
+          "repository": {
+            "url": "https://github.com/vadimdemedes/ink.git",
+            "commit": "ad9e3ea430acd3411be1c7578a2859f810a848ec"
+          },
+          "source_path": "src/hooks/use-input.ts",
+          "snapshot_path": "ink/use-input.ts",
+          "sha256": "8ab84d056a5c516d9b4496c6f9562bb487430baae46183cc407a0f04aa27dab2"
+        },
+        {
+          "authority_id": "ink.reconciler.runtime",
+          "repository": {
+            "url": "https://github.com/vadimdemedes/ink.git",
+            "commit": "ad9e3ea430acd3411be1c7578a2859f810a848ec"
+          },
+          "source_path": "src/reconciler.ts",
+          "snapshot_path": "ink/reconciler.ts",
+          "sha256": "fd71eb685679e1954f6fe5fc91d6ddd6e44bd4ef66f88606059d2f8e02b6c3cc"
+        },
+        {
+          "authority_id": "ink.use_input_multiple.fixture",
+          "repository": {
+            "url": "https://github.com/vadimdemedes/ink.git",
+            "commit": "ad9e3ea430acd3411be1c7578a2859f810a848ec"
+          },
+          "source_path": "test/fixtures/use-input-multiple.tsx",
+          "snapshot_path": "ink/use-input-multiple.tsx",
+          "sha256": "fb716722582a62dec938f41bf6897ecab5aade1de018abb7a3ee9aa62a479bf8"
+        },
+        {
+          "authority_id": "ink.use_input.conformance",
+          "repository": {
+            "url": "https://github.com/vadimdemedes/ink.git",
+            "commit": "ad9e3ea430acd3411be1c7578a2859f810a848ec"
+          },
+          "source_path": "test/hooks.tsx",
+          "snapshot_path": "ink/hooks.tsx",
+          "sha256": "eebef6681de31a05e1de46ac78e65af5cccf173b932a1a23ec75780e5032b328"
+        }
+      ],
+      "defeats": [
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "ink_terminal.durable_conformance_run",
+            "reason": "the lifter parsed an upstream test declaration but did not execute that upstream suite"
+          }
+        },
+        {
+          "impact": "disjoint_from_positive_witness",
+          "defeat": {
+            "kind": "out_of_scope",
+            "subject": "ink_terminal.dependency_closure",
+            "reason": "the authority corpus pins the callable path documents used by this observation, not the complete imported runtime closure"
+          }
+        }
+      ]
+    }
+  ]
+}

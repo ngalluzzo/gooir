@@ -1,0 +1,17 @@
+{
+  "name": "@gooir/interaction-activation-lifters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lift": "node ./src/cli.mjs",
+    "check": "node ./src/cli.mjs --check",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@babel/parser": "7.29.8"
+  }
+}
