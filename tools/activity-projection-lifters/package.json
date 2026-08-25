@@ -1,0 +1,24 @@
+{
+  "name": "@gooir/activity-projection-lifters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lift": "node ./src/cli.mjs",
+    "check": "node ./src/cli.mjs --check",
+    "refresh": "node ./src/refresh.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@babel/parser": "7.29.8",
+    "svelte": "5.56.10",
+    "smol-toml": "1.8.0",
+    "tree-sitter": "0.22.4",
+    "tree-sitter-python": "0.23.6",
+    "tree-sitter-rust": "0.24.0",
+    "typescript": "5.9.3"
+  }
+}

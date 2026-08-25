@@ -2,6 +2,7 @@
 members = [
     "crates/buzz-protocol-lifter",
     "crates/app-runtime",
+    "crates/activity-projection-recurrence",
     "crates/buzz-cli-lifter",
     "crates/buzz-relay-lifter",
     "crates/buzz-surface-check",
@@ -24,6 +25,7 @@ members = [
     "crates/gooir-plugin-process",
     "crates/gooir-provider",
     "crates/interaction-activation-recurrence",
+    "crates/semantics-activity-projection-v0",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
     "crates/openapi-lowering",
@@ -52,6 +54,7 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 [workspace.dependencies]
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
 app-runtime = { path = "crates/app-runtime" }
+activity-projection-recurrence = { path = "crates/activity-projection-recurrence" }
 buzz-cli-lifter = { path = "crates/buzz-cli-lifter" }
 buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-check = { path = "crates/buzz-surface-check" }
@@ -74,6 +77,7 @@ gooir-identity = { path = "crates/gooir-identity" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
 gooir-provider = { path = "crates/gooir-provider" }
 interaction-activation-recurrence = { path = "crates/interaction-activation-recurrence" }
+semantics-activity-projection-v0 = { path = "crates/semantics-activity-projection-v0" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
 openapi-lifter = { path = "crates/openapi-lifter" }

@@ -148,6 +148,29 @@ meaning. Ecosystem-specific providers establish native facts and explicit
 semantic adapters project only independently earned contracts. See
 [decision 0028](DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
 
+### Activity is a selected projection, not a representation tree
+
+Exact upstream selectors from two distinct current Svelte product repositories
+produce concrete verified values of a smaller semantic object: an exact source
+scope emits an ordered selection of activity references with explicit source
+extent. React DOM, React/Ink, and Rust/Ratatui products statically corroborate
+the candidate through different graphs, rewind recordings, and thread-local
+containers, but do not yet establish a concrete cross-runtime projection. The
+backing model is not the common waist.
+
+`ActivityProjection` deliberately carries no portable payload, actor enum,
+pending request, composer, stream reducer, or render tree. Those meanings are
+separate facts that can join the same opaque source references. A native target
+provider composes whichever facts its requested output requires; React, Vue,
+Svelte, Ink, Ratatui, shadcn/ui, Mantine, and other ecosystem authorities remain
+at native lift, materialization, build, renderer, or observation hops.
+
+React and the other ecosystems can participate without semantic projection at
+all. There is no universal lowering endpoint: the requested target might be the
+projection itself, native source, a runnable artifact, or observed web/terminal
+behavior. See
+[decision 0029](DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).
+
 ## Lifting
 
 Lifters should prefer authoritative representations such as Prisma DMMF, PostgreSQL catalogs, OpenAPI/Smithy models, Cedar schemas/ASTs, Terraform plan JSON, and `cargo metadata`. A native source dialect preserves target-specific information losslessly. Bridges into shared contracts are explicit and may be partial.

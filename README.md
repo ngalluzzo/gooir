@@ -69,23 +69,23 @@ explicitly and measures the implementation itself — see
 
 ## How the crates are organised
 
-Forty crates, six roles. Every crate is exactly one of these:
+Forty-two crates, six roles. Every crate is exactly one of these:
 
 | role | what it holds | examples |
 | --- | --- | --- |
 | **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis`, `gooir-doctor` |
-| **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-effects-v1`, `semantics-interaction-activation-v0` |
+| **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-interaction-activation-v0`, `semantics-activity-projection-v0` |
 | **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
 | **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |
 | **tool** | reads or reports on a graph | `gooir-cli` — the one entry point |
-| **support** | shared machinery and empirical probes | `lift-defeasible`, `gooir-provider` (the SDK), `interaction-activation-recurrence` |
+| **support** | shared machinery and empirical probes | `lift-defeasible`, `gooir-provider` (the SDK), `activity-projection-recurrence` |
 
 A crate named `*-lifter` or `*-lowering` is a provider; the suffix says which
 direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Twenty-eight decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Twenty-nine decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
@@ -97,6 +97,7 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0024](docs/DECISIONS/0024_PROVIDER_SDK.md) — a provider is its transformation; coverage is derived, never declared
 - [0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md) — interaction starts at observed activation, not a parallel component system
 - [0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md) — a screen is a state-scoped derived observation, not the semantic waist
+- [0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md) — agent activity recurs as a selected ordered projection
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).
@@ -143,6 +144,33 @@ a future navigation probe. Gemini and historical Codex retain a separate
 agent-session candidate—ordered human/agent/tool/system activity plus a current
 input or decision locus—but Shopify proves that Ink itself carries no such
 meaning. See [decision 0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
+
+## Activity-projection recurrence probe
+
+Exact reviewed selectors from Open WebUI and Hugging Face Chat UI now lower one
+closed native fixture into concrete `ActivityProjection` values and pass the
+Rust semantic verifier. LobeChat, LibreChat, Gemini CLI, and Codex join those two
+as static corroboration across six distinct current repositories; they do not
+yet count as concrete projections. A canonical transcript, backing branch
+graph, global chronology, actor enum, portable payload, singular input locus,
+and durable stream delta are rejected.
+
+```bash
+npm ci --prefix tools/activity-projection-lifters
+npm test --prefix tools/activity-projection-lifters
+cargo test -p semantics-activity-projection-v0
+cargo test -p activity-projection-recurrence
+```
+
+The source-specific projectors use pinned mature parsers, exact source spans,
+and separately reviewed positive-node digests. The two exact upstream selection
+functions execute in an isolated context and select the same ordered branch;
+their different malformed-topology behavior remains an unadmitted defeat. The
+checked Rust probe byte-binds the canonical generated document and verifies the
+concrete semantic values. Content, participant attribution, outstanding
+requests, interaction, streaming, and native rendering remain separate facts.
+See
+[decision 0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).
 
 ## Fleetd multi-dialect dogfood
 

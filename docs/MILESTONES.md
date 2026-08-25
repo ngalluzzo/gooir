@@ -109,3 +109,33 @@ agent-session/activity candidate, while Shopify CLI falsifies any inference
 from Ink itself. Neither candidate is admitted here. The next proof must bring
 the appropriate authoritative route providers or an independent current
 product/runtime lineage, then observe a real build under verifier-owned state.
+
+## Experimental — Production activity-projection recurrence
+
+Status: provisional v0 contract, two concrete source projections, and
+six-product static corroboration implemented on
+`gooir-ui-ecosystem-correction-v0`.
+
+Exact reviewed Open WebUI and Chat UI selector nodes execute against one closed
+verifier fixture and produce concrete `ActivityProjection` values that pass the
+Rust semantic verifier. Six current product repositories across declared React
+DOM, Svelte DOM, React/Ink, and Rust/Ratatui routes statically corroborate that
+narrow shape. The other four products do not yet count as concrete projections,
+and no cross-runtime lowering is admitted. Backing graphs, recordings, rewind
+rules, grouping, forks, roles, payloads, pending requests, streaming behavior,
+and renderers remain native or separately unproven.
+
+The corpus pins 27 product-owned source documents and eight same-revision
+license records. Pinned mature parsers plus six product-specific static
+projectors fail closed on changed positive nodes, including relocked
+comment-decoy mutations. The two exact selector functions agree on both
+branches of one verifier-owned fixture; their incompatible malformed-topology
+results are preserved and not admitted. The Rust recurrence checker byte-binds
+the exact generated observation document and verifies both concrete contract
+values.
+
+The next portability gate is one concrete non-Svelte projection, followed by
+outstanding correlated interaction requests, participant attribution, or entry
+content as separate fact families. Only then should a native web/terminal
+provider compose a real rendered activity surface; anonymous demonstration rows
+would invent the missing semantics.

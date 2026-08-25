@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "activity-projection-recurrence"
+version = "0.1.0"
+dependencies = [
+ "semantics-activity-projection-v0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "app-runtime"
 version = "0.1.0"
 dependencies = [
@@ -542,6 +553,15 @@ name = "ryu-js"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
+
+[[package]]
+name = "semantics-activity-projection-v0"
+version = "0.1.0"
+dependencies = [
+ "gooir-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "semantics-data-model-v1"
