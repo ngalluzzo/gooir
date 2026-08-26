@@ -1,9 +1,9 @@
 //! Neutral capability pack for the data-model family.
 //!
-//! This package owns the canonical fact and capability identities for
-//! *authoring* a data model and lowering it to concrete artifacts. Unlike
-//! `fleetd-capability-pack`, nothing here is product-specific: no product
-//! names, no control semantics, no interaction concepts.
+//! This legacy convenience pack combines one external authoring contract with
+//! three data-model lowerings. Unlike `fleetd-capability-pack`, nothing here is
+//! product-specific: no product names, no control semantics, no interaction
+//! concepts.
 //!
 //! Folding the authoring surface in this way makes a hand-written `.entities`
 //! file an ordinary source fact. It reaches the same `DataModel` fact that a
@@ -12,13 +12,13 @@
 //! point of the front door, expressed as a derivation instead of a bespoke
 //! command.
 
+pub use gooir_author_data_model_contract::AuthoredSpec;
 use gooir_capability::{
     CapabilityId, CapabilityRegistry, FactCoverage, FactInstance, FactType, PackManifestError,
     ProviderId, RegistryError, register_pack,
 };
 use lift_defeasible::Defeasible;
 use semantics_data_model_v1::DataModel;
-use serde::{Deserialize, Serialize};
 
 pub mod neutral;
 
@@ -26,10 +26,10 @@ pub const PACK_VERSION: &str = "0.2.0";
 
 // ---------------------------------------------------------------- fact types
 
-/// Text a person wrote by hand. The only source fact in this pack that is not
-/// derived from existing software.
+/// Compatibility accessor for the authored-source kind owned by the external
+/// author-data-model contract.
 pub fn authored_entity_spec_fact() -> FactType {
-    FactType::new("org.gooi.source.authored", "entity_spec", "0.1.0")
+    gooir_author_data_model_contract::authored_entity_spec_value_kind()
 }
 
 /// The neutral data-model waist, carried as `Defeasible<DataModel>`.
@@ -62,7 +62,7 @@ pub fn typescript_types_fact() -> FactType {
 // -------------------------------------------------------------- capabilities
 
 pub fn author_data_model_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "author_data_model", "0.2.0")
+    gooir_author_data_model_contract::author_data_model_capability_id()
 }
 
 pub fn postgres_ddl_capability() -> CapabilityId {
@@ -75,16 +75,6 @@ pub fn openapi_surface_capability() -> CapabilityId {
 
 pub fn typescript_types_capability() -> CapabilityId {
     CapabilityId::new("org.gooi.capability", "lower_typescript_types", "0.2.0")
-}
-
-// ------------------------------------------------------------------ payloads
-
-/// A hand-written specification and where it came from.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthoredSpec {
-    pub origin: String,
-    pub text: String,
 }
 
 // ----------------------------------------------------------------- providers
@@ -103,15 +93,21 @@ fn implementation(name: &str) -> String {
 
 // -------------------------------------------------------------- registration
 
-/// The capabilities this pack declares, as data.
+/// The three legacy lowering capabilities this pack declares as data.
+///
+/// The authoring promise is owned by `gooir-author-data-model-contract` and is
+/// deliberately absent from this manifest.
 pub const MANIFEST: &str = include_str!("../pack.json");
 
 pub fn register_specs(registry: &mut CapabilityRegistry) -> Result<(), PackManifestError> {
+    registry
+        .register_spec(gooir_author_data_model_contract::author_data_model_spec())
+        .map_err(PackManifestError::Registry)?;
     register_pack(registry, MANIFEST)
 }
 
-/// Each provider is one function. The fact types it consumes and produces are
-/// declared once, in `pack.json`, and the SDK reads them from the capability.
+/// Each provider is one function. The three legacy lowering promises live in
+/// `pack.json`; the authoring provider consumes its external contract directly.
 pub fn register_providers(registry: &mut CapabilityRegistry) -> Result<(), RegistryError> {
     gooir_provider::register_transform(
         registry,

@@ -1,22 +1,23 @@
 //! Neutral, credential-free provider boundary for authored data models.
 //!
 //! The provider validates one complete semantic invocation and performs only
-//! the transformation declared by this pack. An external execution host must
-//! resolve every admitted input reference, verify the selected artifact, and
-//! manage process lifecycle before calling this module.
+//! the transformation declared by the author-data-model contract. An external
+//! execution host must resolve every admitted input reference, verify the
+//! selected artifact, and manage process lifecycle before calling this module.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+use gooir_author_data_model_contract::{
+    AuthoredSpec, author_data_model_capability_id, author_data_model_spec,
+};
 use gooir_capability::protocol::{
     ArtifactDigest, CapabilityFailure, CapabilityInvocation, CapabilityOffer, CapabilityResult,
     FailureKindId, ImplementationId, NamedOutput, ProtocolError,
 };
-use gooir_capability::{CapabilitySpec, Fact, PackManifestError, read_pack};
+use gooir_capability::{CapabilitySpec, Fact};
 use serde_json::json;
-
-use crate::{AuthoredSpec, MANIFEST, author_data_model_capability};
 
 /// Exact semantic identity of this entity-spec implementation.
 pub fn implementation_id() -> ImplementationId {
@@ -29,22 +30,13 @@ pub fn unparsable_source_failure_kind() -> FailureKindId {
     FailureKindId::new("org.gooi.failure", "entity_spec_unparsable", "1.0.0")
 }
 
-/// Reads the complete capability declaration owned by this pack.
+/// Returns the complete implementation-independent authoring promise.
 ///
-/// No port, value-kind, conformance, or extension data is restated here. A
-/// missing or duplicated declaration fails closed.
-pub fn capability_spec() -> Result<CapabilitySpec, NeutralProviderError> {
-    let declared = read_pack(MANIFEST).map_err(NeutralProviderError::Manifest)?;
-    let expected = author_data_model_capability();
-    let mut matches: Vec<_> = declared
-        .capabilities
-        .into_iter()
-        .filter(|spec| spec.id == expected)
-        .collect();
-    if matches.len() != 1 {
-        return Err(NeutralProviderError::DeclarationCount(matches.len()));
-    }
-    Ok(matches.remove(0))
+/// The provider consumes the separately governed contract directly. It does
+/// not recover its meaning from the legacy lowering pack.
+#[must_use]
+pub fn capability_spec() -> CapabilitySpec {
+    author_data_model_spec()
 }
 
 /// Constructs one availability offer from a host-measured artifact digest.
@@ -58,7 +50,7 @@ pub fn capability_offer(
     CapabilityOffer::new(
         implementation_id(),
         artifact_digest,
-        author_data_model_capability(),
+        author_data_model_capability_id(),
         BTreeMap::new(),
     )
     .map_err(NeutralProviderError::Protocol)
@@ -74,7 +66,7 @@ pub fn invoke(invocation: &CapabilityInvocation) -> Result<CapabilityResult, Neu
         .validate()
         .map_err(NeutralProviderError::Protocol)?;
 
-    let expected = capability_spec()?;
+    let expected = capability_spec();
     if invocation.specification != expected {
         return Err(NeutralProviderError::SpecificationMismatch);
     }
@@ -151,8 +143,6 @@ pub fn invoke_json(input: &str) -> Result<String, NeutralProviderError> {
 /// A failure to validate or evaluate the provider's exact semantic boundary.
 #[derive(Debug)]
 pub enum NeutralProviderError {
-    Manifest(PackManifestError),
-    DeclarationCount(usize),
     UnsupportedDeclarationShape,
     Protocol(ProtocolError),
     SpecificationMismatch,
@@ -170,21 +160,14 @@ pub enum NeutralProviderError {
 impl fmt::Display for NeutralProviderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Manifest(error) => {
-                write!(formatter, "installed pack declaration is invalid: {error}")
-            }
-            Self::DeclarationCount(count) => write!(
-                formatter,
-                "installed pack contains {count} author_data_model declarations, expected exactly one"
-            ),
             Self::UnsupportedDeclarationShape => formatter.write_str(
-                "installed author_data_model declaration is not the supported one-input, one-output transformation",
+                "author-data-model contract is not the supported one-input, one-output transformation",
             ),
             Self::Protocol(error) => {
                 write!(formatter, "invalid capability protocol document: {error}")
             }
             Self::SpecificationMismatch => formatter
-                .write_str("invocation specification differs from the installed pack declaration"),
+                .write_str("invocation specification differs from the author-data-model contract"),
             Self::ImplementationMismatch { expected, actual } => write!(
                 formatter,
                 "invocation selected implementation {actual}, expected {expected}"
@@ -213,8 +196,7 @@ mod tests {
     use super::*;
 
     use gooir_capability::protocol::{
-        AdmittedFactRef, AuthorityRecordId, CapabilityOutcome, ConformanceSuiteId,
-        ImplementationSelection, LinkedInput,
+        AdmittedFactRef, AuthorityRecordId, CapabilityOutcome, ImplementationSelection, LinkedInput,
     };
     use gooir_capability::{FactAcceptance, PortName, ValueKindId};
     use serde_json::{Value, json};
@@ -233,16 +215,12 @@ entity User
         AuthorityRecordId::parse(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
     }
 
-    fn suite() -> ConformanceSuiteId {
-        ConformanceSuiteId::new(
-            "org.gooi.conformance",
-            "author_data_model_tasks_entities",
-            "1.1.0",
-        )
-    }
-
     fn authored_source(payload: Value) -> Fact {
-        Fact::new(crate::authored_entity_spec_fact(), payload).unwrap()
+        Fact::new(
+            gooir_author_data_model_contract::authored_entity_spec_value_kind(),
+            payload,
+        )
+        .unwrap()
     }
 
     fn invocation_with(
@@ -261,7 +239,7 @@ entity User
             specification,
             ImplementationSelection::new(offer, BTreeMap::new())?,
             vec![input],
-            suite(),
+            gooir_author_data_model_contract::author_data_model_suite_id(),
             BTreeMap::new(),
         )
     }
@@ -273,7 +251,7 @@ entity User
         })
         .unwrap();
         invocation_with(
-            capability_spec().unwrap(),
+            capability_spec(),
             capability_offer(digest('1')).unwrap(),
             authored_source(payload),
         )
@@ -281,9 +259,10 @@ entity User
     }
 
     #[test]
-    fn declaration_is_read_whole_from_the_pack() {
-        let spec = capability_spec().unwrap();
-        assert_eq!(spec.id, author_data_model_capability());
+    fn provider_uses_the_complete_external_contract() {
+        let spec = capability_spec();
+        assert_eq!(spec.id, author_data_model_capability_id());
+        assert_eq!(spec, author_data_model_spec());
         assert_eq!(spec.input_ports.len(), 1);
         assert_eq!(spec.input_ports[0].name.as_str(), "source");
         assert_eq!(spec.input_ports[0].acceptance, FactAcceptance::CompleteOnly);
@@ -296,7 +275,7 @@ entity User
         let first = capability_offer(digest('1')).unwrap();
         let second = capability_offer(digest('2')).unwrap();
         assert_eq!(first.implementation, implementation_id());
-        assert_eq!(first.capability, author_data_model_capability());
+        assert_eq!(first.capability, author_data_model_capability_id());
         assert_eq!(first.artifact_digest, digest('1'));
         assert_ne!(first.offer_id, second.offer_id);
     }
@@ -331,7 +310,7 @@ entity User
             .unwrap(),
         );
         let invocation = invocation_with(
-            capability_spec().unwrap(),
+            capability_spec(),
             capability_offer(digest('1')).unwrap(),
             fact,
         )
@@ -347,7 +326,7 @@ entity User
 
     #[test]
     fn every_different_specification_scope_is_rejected() {
-        let declared = capability_spec().unwrap();
+        let declared = capability_spec();
         let mut capability_extension = declared.clone();
         capability_extension
             .extensions
@@ -393,12 +372,12 @@ entity User
         let offer = CapabilityOffer::new(
             ImplementationId::new("example.implementation", "other", "1.0.0"),
             digest('1'),
-            author_data_model_capability(),
+            author_data_model_capability_id(),
             BTreeMap::new(),
         )
         .unwrap();
         let invocation = invocation_with(
-            capability_spec().unwrap(),
+            capability_spec(),
             offer,
             authored_source(
                 serde_json::to_value(AuthoredSpec {
@@ -432,14 +411,14 @@ entity User
             .unwrap(),
         );
         assert!(matches!(
-            invocation_with(capability_spec().unwrap(), offer, fact),
+            invocation_with(capability_spec(), offer, fact),
             Err(ProtocolError::OfferCapabilityMismatch { .. })
         ));
     }
 
     #[test]
     fn a_different_port_declaration_is_rejected() {
-        let mut spec = capability_spec().unwrap();
+        let mut spec = capability_spec();
         spec.input_ports[0].name = PortName::parse("document").unwrap();
         let fact = authored_source(
             serde_json::to_value(AuthoredSpec {
@@ -462,7 +441,7 @@ entity User
             ImplementationSelection::new(capability_offer(digest('1')).unwrap(), BTreeMap::new())
                 .unwrap(),
             vec![input],
-            suite(),
+            gooir_author_data_model_contract::author_data_model_suite_id(),
             BTreeMap::new(),
         )
         .unwrap();
@@ -485,7 +464,7 @@ entity User
         .unwrap();
         assert!(
             invocation_with(
-                capability_spec().unwrap(),
+                capability_spec(),
                 capability_offer(digest('1')).unwrap(),
                 fact,
             )
@@ -500,7 +479,7 @@ entity User
             json!({"origin": "test", "text": SPEC, "credential": "must-not-be-ignored"}),
         ] {
             let invocation = invocation_with(
-                capability_spec().unwrap(),
+                capability_spec(),
                 capability_offer(digest('1')).unwrap(),
                 authored_source(payload),
             )
@@ -517,7 +496,7 @@ entity User
         let mut extensions = BTreeMap::new();
         extensions.insert("example.semantic/meaning".to_owned(), json!("different"));
         let fact = Fact::with_extensions(
-            crate::authored_entity_spec_fact(),
+            gooir_author_data_model_contract::authored_entity_spec_value_kind(),
             serde_json::to_value(AuthoredSpec {
                 origin: "test".to_owned(),
                 text: SPEC.to_owned(),
@@ -527,7 +506,7 @@ entity User
         )
         .unwrap();
         let invocation = invocation_with(
-            capability_spec().unwrap(),
+            capability_spec(),
             capability_offer(digest('1')).unwrap(),
             fact,
         )

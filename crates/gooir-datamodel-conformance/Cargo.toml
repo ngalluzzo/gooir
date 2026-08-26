@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gooir-author-data-model-contract = { workspace = true }
 gooir-capability = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

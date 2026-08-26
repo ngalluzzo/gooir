@@ -10,6 +10,10 @@ use std::error::Error;
 use std::fmt;
 use std::fmt::Write as _;
 
+use gooir_author_data_model_contract::{
+    author_data_model_spec, author_data_model_suite_id, authored_entity_spec_value_kind,
+};
+use gooir_capability::Fact;
 use gooir_capability::authority::{
     AssessmentOutcome, AuthorityError, ConformanceAssessment, ConformanceAttester,
     ConformanceAuthority, ConformanceCheck,
@@ -18,10 +22,6 @@ use gooir_capability::protocol::{
     ArtifactDigest, CapabilityCandidate, CapabilityInvocation, CapabilityOutcome, CapabilityResult,
     ConformanceSuiteId, EvidenceDigest, EvidenceKindId, EvidenceRef, ImplementationId, NamedOutput,
     ProtocolError,
-};
-use gooir_capability::{
-    CapabilityId, CapabilitySpec, Fact, FactAcceptance, InputPort, OutputPort, PortName,
-    ValueKindId,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -166,11 +166,7 @@ impl AssessmentRequest {
 
 /// The one suite implemented by this fixture-scoped attester.
 pub fn suite_id() -> ConformanceSuiteId {
-    ConformanceSuiteId::new(
-        "org.gooi.conformance",
-        "author_data_model_tasks_entities",
-        "1.1.0",
-    )
+    author_data_model_suite_id()
 }
 
 /// Exact identity of this oracle attester, distinct from the data-model producer.
@@ -217,7 +213,7 @@ pub fn assess(
         (
             CHECK_CAPABILITY.to_owned(),
             check(
-                invocation.specification == expected_specification(),
+                invocation.specification == author_data_model_spec(),
                 &evidence,
             )?,
         ),
@@ -270,17 +266,25 @@ fn load_oracle(bytes: &[u8]) -> Result<Oracle, AttesterError> {
         oracle.output.extensions.clone(),
     )
     .map_err(AttesterError::Protocol)?;
+    let contract = author_data_model_spec();
+    let [source_port] = contract.input_ports.as_slice() else {
+        return Err(AttesterError::ContractShape);
+    };
+    let [model_port] = contract.output_ports.as_slice() else {
+        return Err(AttesterError::ContractShape);
+    };
     if validated_output != oracle.output
         || oracle.source_coordinate != SOURCE_COORDINATE
-        || oracle.source.value_kind != source_value_kind()
+        || source_port.value_kind != authored_entity_spec_value_kind()
+        || oracle.source.value_kind != source_port.value_kind
         || oracle
             .source
             .payload
             .get("origin")
             .and_then(serde_json::Value::as_str)
             != Some(SOURCE_COORDINATE)
-        || oracle.output.port != port("model")
-        || oracle.output.fact.value_kind != model_value_kind()
+        || oracle.output.port != model_port.name
+        || oracle.output.fact.value_kind != model_port.value_kind
     {
         return Err(AttesterError::OracleCoordinate);
     }
@@ -304,7 +308,11 @@ fn source_matches(invocation: &CapabilityInvocation, expected: &Fact) -> bool {
     let [input] = invocation.inputs.as_slice() else {
         return false;
     };
-    input.port == port("source") && input.fact == *expected
+    let contract = author_data_model_spec();
+    let [source_port] = contract.input_ports.as_slice() else {
+        return false;
+    };
+    input.port == source_port.name && input.fact == *expected
 }
 
 fn output_matches(result: &CapabilityResult, expected: &NamedOutput) -> bool {
@@ -312,34 +320,6 @@ fn output_matches(result: &CapabilityResult, expected: &NamedOutput) -> bool {
         return false;
     };
     outputs.as_slice() == std::slice::from_ref(expected)
-}
-
-fn expected_specification() -> CapabilitySpec {
-    CapabilitySpec {
-        id: CapabilityId::new("org.gooi.capability", "author_data_model", "0.2.0"),
-        input_ports: vec![InputPort {
-            name: port("source"),
-            value_kind: source_value_kind(),
-            acceptance: FactAcceptance::CompleteOnly,
-            extensions: BTreeMap::new(),
-        }],
-        output_ports: vec![OutputPort::new(port("model"), model_value_kind())],
-        default_conformance_suite: "org.gooi.conformance/author_data_model_tasks_entities@1.1.0"
-            .to_owned(),
-        extensions: BTreeMap::new(),
-    }
-}
-
-fn source_value_kind() -> ValueKindId {
-    ValueKindId::new("org.gooi.source.authored", "entity_spec", "0.1.0")
-}
-
-fn model_value_kind() -> ValueKindId {
-    ValueKindId::new("org.gooi.semantics.data_model", "model", "1.0.0")
-}
-
-fn port(name: &str) -> PortName {
-    PortName::parse(name).expect("the attester's fixed port names are valid")
 }
 
 fn oracle_evidence() -> Result<EvidenceRef, AttesterError> {
@@ -371,6 +351,7 @@ pub enum AttesterError {
     Authority(AuthorityError),
     Oracle(String),
     OracleCoordinate,
+    ContractShape,
     ResultCandidateMismatch,
     UnsupportedSuite(ConformanceSuiteId),
 }
@@ -388,6 +369,9 @@ impl fmt::Display for AttesterError {
             Self::OracleCoordinate => {
                 formatter.write_str("checked-in oracle has unexpected fixture coordinates")
             }
+            Self::ContractShape => formatter.write_str(
+                "author-data-model contract is not the expected one-input, one-output promise",
+            ),
             Self::ResultCandidateMismatch => {
                 formatter.write_str("candidate does not contain the supplied result")
             }
@@ -410,6 +394,7 @@ mod tests {
     use gooir_capability::protocol::{
         AdmittedFactRef, AuthorityRecordId, CapabilityOffer, ImplementationSelection, LinkedInput,
     };
+    use gooir_capability::{CapabilitySpec, OutputPort, PortName};
     use serde_json::{Value, json};
 
     use super::*;
@@ -435,7 +420,8 @@ mod tests {
     fn admitted(fact: Fact) -> LinkedInput {
         let authority = AuthorityRecordId::parse(format!("sha256:{}", "1".repeat(64))).unwrap();
         let reference = AdmittedFactRef::new(fact.id.clone(), authority, BTreeMap::new()).unwrap();
-        LinkedInput::new(port("source"), reference, fact, BTreeMap::new()).unwrap()
+        let source_port = author_data_model_spec().input_ports.remove(0).name;
+        LinkedInput::new(source_port, reference, fact, BTreeMap::new()).unwrap()
     }
 
     fn invocation_with(
@@ -485,7 +471,7 @@ mod tests {
     fn valid_chain() -> (CapabilityInvocation, CapabilityResult, CapabilityCandidate) {
         let oracle = load_oracle(ORACLE_BYTES).unwrap();
         chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             oracle.source,
             oracle.output,
             producer(),
@@ -640,12 +626,12 @@ mod tests {
     fn structurally_valid_wrong_source_output_and_port_are_failed_assessments() {
         let oracle = load_oracle(ORACLE_BYTES).unwrap();
         let wrong_source = Fact::new(
-            source_value_kind(),
+            authored_entity_spec_value_kind(),
             json!({"origin": SOURCE_COORDINATE, "text": "entity Other\n  id uuid pk"}),
         )
         .unwrap();
         let (invocation, result, candidate) = chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             wrong_source,
             oracle.output.clone(),
             producer(),
@@ -656,10 +642,11 @@ mod tests {
             CHECK_SOURCE,
         );
 
-        let wrong_fact = Fact::new(model_value_kind(), json!({"not": "the oracle"})).unwrap();
-        let wrong_output = NamedOutput::new(port("model"), wrong_fact, BTreeMap::new()).unwrap();
+        let model_port = author_data_model_spec().output_ports.remove(0);
+        let wrong_fact = Fact::new(model_port.value_kind, json!({"not": "the oracle"})).unwrap();
+        let wrong_output = NamedOutput::new(model_port.name, wrong_fact, BTreeMap::new()).unwrap();
         let (invocation, result, candidate) = chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             oracle.source.clone(),
             wrong_output,
             producer(),
@@ -670,11 +657,11 @@ mod tests {
             CHECK_OUTPUT,
         );
 
-        let mut wrong_specification = expected_specification();
-        wrong_specification.output_ports[0] =
-            OutputPort::new(port("different"), model_value_kind());
-        let wrong_port =
-            NamedOutput::new(port("different"), oracle.output.fact, BTreeMap::new()).unwrap();
+        let mut wrong_specification = author_data_model_spec();
+        let model_kind = wrong_specification.output_ports[0].value_kind.clone();
+        let different = PortName::parse("different").unwrap();
+        wrong_specification.output_ports[0] = OutputPort::new(different.clone(), model_kind);
+        let wrong_port = NamedOutput::new(different, oracle.output.fact, BTreeMap::new()).unwrap();
         let (invocation, result, candidate) = chain_with(
             wrong_specification,
             oracle.source,
@@ -702,7 +689,7 @@ mod tests {
 
         let oracle = load_oracle(ORACLE_BYTES).unwrap();
         let (other_invocation, _, other_candidate) = chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             oracle.source,
             oracle.output,
             producer(),
@@ -719,7 +706,7 @@ mod tests {
     fn attester_must_be_independent_by_implementation_and_artifact() {
         let oracle = load_oracle(ORACLE_BYTES).unwrap();
         let (invocation, result, candidate) = chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             oracle.source.clone(),
             oracle.output.clone(),
             implementation_id(),
@@ -733,7 +720,7 @@ mod tests {
         ));
 
         let (invocation, result, candidate) = chain_with(
-            expected_specification(),
+            author_data_model_spec(),
             oracle.source,
             oracle.output,
             producer(),

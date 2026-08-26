@@ -2,16 +2,6 @@
   "protocol": "org.gooi.pack/v2",
   "capabilities": [
     {
-      "id": "org.gooi.capability/author_data_model@0.2.0",
-      "input_ports": [
-        { "name": "source", "value_kind": "org.gooi.source.authored/entity_spec@0.1.0", "acceptance": "complete_only" }
-      ],
-      "output_ports": [
-        { "name": "model", "value_kind": "org.gooi.semantics.data_model/model@1.0.0" }
-      ],
-      "default_conformance_suite": "org.gooi.conformance/author_data_model_tasks_entities@1.1.0"
-    },
-    {
       "id": "org.gooi.capability/lower_openapi_crud_surface@0.2.0",
       "input_ports": [
         { "name": "model", "value_kind": "org.gooi.semantics.data_model/model@1.0.0", "acceptance": "complete_only" }

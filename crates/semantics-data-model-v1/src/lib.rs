@@ -15,6 +15,16 @@ use serde::{Deserialize, Serialize};
 pub const PACKAGE: &str = "org.gooi.semantics.data_model";
 pub const VERSION: &str = "1.0.0";
 
+/// Exact independently installable package that owns this vocabulary.
+pub const VOCABULARY_PACKAGE: &str = "org.gooi.semantics.data_model@1.0.0";
+
+/// Exact package/v1 declaration for this vocabulary.
+///
+/// It deliberately exports only the governed dialect and its value kinds.
+/// Capabilities and implementation offers belong to separately versioned
+/// packages.
+pub const PACKAGE_MANIFEST: &str = include_str!("../gooir-package.json");
+
 /// The concept name for the model as a whole, as distinct from the `entity`
 /// and `relation` concepts within it.
 ///

@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 entity-spec = { workspace = true }
+gooir-author-data-model-contract = { workspace = true }
 gooir-capability = { workspace = true }
 gooir-provider = { workspace = true }
 lift-defeasible = { workspace = true }

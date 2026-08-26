@@ -14,8 +14,10 @@ members = [
     "crates/fleetd-interaction-plan",
     "crates/fleetd-surface-lowering",
     "crates/gooir-capability",
+    "crates/gooir-author-data-model-contract",
     "crates/gooir-cli",
     "crates/gooir-datamodel-conformance",
+    "crates/gooir-datamodel-package-proof",
     "crates/gooir-datamodel-pack",
     "crates/gooir-doctor",
     "crates/gooir-identity",
@@ -60,8 +62,10 @@ fleetd-capability-pack = { path = "crates/fleetd-capability-pack" }
 fleetd-interaction-plan = { path = "crates/fleetd-interaction-plan" }
 fleetd-surface-lowering = { path = "crates/fleetd-surface-lowering" }
 gooir-capability = { path = "crates/gooir-capability" }
+gooir-author-data-model-contract = { path = "crates/gooir-author-data-model-contract" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-datamodel-conformance = { path = "crates/gooir-datamodel-conformance" }
+gooir-datamodel-package-proof = { path = "crates/gooir-datamodel-package-proof" }
 gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-identity = { path = "crates/gooir-identity" }
