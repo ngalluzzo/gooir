@@ -11,6 +11,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -366,6 +367,35 @@ impl QualifiedNativeArtifact {
             self.lock.resource_digest(),
         )?;
         validate_empty_cwd(&self.root, &self.cwd, &self.cwd_identity)
+    }
+
+    /// Revalidate and borrow the minimum authority required by one immediate
+    /// proof-local spawn. The executable path and cwd descriptor cannot escape
+    /// this crate or outlive the qualified materialization.
+    pub(super) fn revalidated_spawn_access(
+        &self,
+    ) -> Result<NativeSpawnAccess<'_>, NativeQualificationError> {
+        self.revalidate()?;
+        Ok(NativeSpawnAccess {
+            executable_path: self.private_root.path().join(EXECUTABLE_NAME),
+            cwd: self.cwd.as_fd(),
+        })
+    }
+}
+
+/// Borrow-scoped, path-private spawn authority for the supervisor module.
+pub(super) struct NativeSpawnAccess<'artifact> {
+    executable_path: PathBuf,
+    cwd: BorrowedFd<'artifact>,
+}
+
+impl NativeSpawnAccess<'_> {
+    pub(super) fn executable_path(&self) -> &Path {
+        &self.executable_path
+    }
+
+    pub(super) fn cwd(&self) -> BorrowedFd<'_> {
+        self.cwd
     }
 }
 

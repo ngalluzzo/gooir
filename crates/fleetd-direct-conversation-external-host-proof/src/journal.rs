@@ -37,7 +37,7 @@ pub const CHECKPOINT_PROTOCOL: &str =
 pub const RECEIPT_CAPACITY: usize = 2;
 
 const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
-const MAX_EXACT_JSON_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_EXACT_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OPAQUE_ID_BYTES: usize = 4 * 1024;
 const MAX_SAFE_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
 const CHECKPOINT_NAME: &str = "checkpoint.json";
@@ -155,6 +155,36 @@ impl DeploymentLock {
         Ok(lock)
     }
 
+    /// Selected implementation identity.
+    #[must_use]
+    pub fn implementation(&self) -> &str {
+        &self.implementation
+    }
+
+    /// Installed package identity.
+    #[must_use]
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    /// Exact installed package digest.
+    #[must_use]
+    pub fn package_digest(&self) -> &str {
+        &self.package_digest
+    }
+
+    /// Exact resource name within the installed package.
+    #[must_use]
+    pub fn resource(&self) -> &str {
+        &self.resource
+    }
+
+    /// Exact installed resource digest.
+    #[must_use]
+    pub fn resource_digest(&self) -> &str {
+        &self.resource_digest
+    }
+
     fn validate(&self) -> Result<(), JournalError> {
         validate_opaque("implementation", &self.implementation)?;
         validate_opaque("package", &self.package)?;
@@ -188,6 +218,18 @@ impl NativeRuntimeLock {
         };
         lock.validate()?;
         Ok(lock)
+    }
+
+    /// Closed proof-host runtime/profile coordinate.
+    #[must_use]
+    pub fn runtime(&self) -> &str {
+        &self.runtime
+    }
+
+    /// Digest of the complete proof-local runtime qualification.
+    #[must_use]
+    pub fn runtime_digest(&self) -> &str {
+        &self.runtime_digest
     }
 
     fn validate(&self) -> Result<(), JournalError> {
@@ -265,10 +307,76 @@ impl AttemptInputs {
         &self.attempt_id
     }
 
+    /// Exact semantic plan selected before execution.
+    #[must_use]
+    pub const fn semantic_plan(&self) -> &ExactJson {
+        &self.semantic_plan
+    }
+
+    /// Exact linked invocation supplied to the provider.
+    #[must_use]
+    pub const fn invocation(&self) -> &ExactJson {
+        &self.invocation
+    }
+
+    /// Exact target baseline captured before execution.
+    #[must_use]
+    pub const fn baseline_snapshot(&self) -> &ExactJson {
+        &self.baseline_snapshot
+    }
+
+    /// Exact conformance suite selected for independent assessment.
+    #[must_use]
+    pub fn conformance_suite(&self) -> &str {
+        &self.conformance_suite
+    }
+
+    /// Exact selected provider deployment.
+    #[must_use]
+    pub const fn provider(&self) -> &DeploymentLock {
+        &self.provider
+    }
+
+    /// Exact independently selected attester deployment.
+    #[must_use]
+    pub const fn attester(&self) -> &DeploymentLock {
+        &self.attester
+    }
+
+    /// Complete proof-local native runtime commitment.
+    #[must_use]
+    pub const fn native_runtime(&self) -> &NativeRuntimeLock {
+        &self.native_runtime
+    }
+
     /// Exact non-secret target binding.
     #[must_use]
     pub const fn target(&self) -> &TargetBinding {
         &self.target
+    }
+
+    /// Exact trusted provider replay law.
+    #[must_use]
+    pub fn provider_replay_law(&self) -> &str {
+        &self.provider_replay_law
+    }
+
+    /// Exact trusted attester replay law.
+    #[must_use]
+    pub fn attester_replay_law(&self) -> &str {
+        &self.attester_replay_law
+    }
+
+    /// Exact bounded native execution policy interpreted by the proof host.
+    #[must_use]
+    pub const fn execution_policy(&self) -> &ExactJson {
+        &self.execution_policy
+    }
+
+    /// Exact contextual admission policy applied after assessment.
+    #[must_use]
+    pub const fn admission_policy(&self) -> &ExactJson {
+        &self.admission_policy
     }
 
     /// Revalidate all children and aggregate identity.
@@ -1815,6 +1923,65 @@ mod tests {
 
     fn receipt(label: &str) -> RetainedReceipt {
         RetainedReceipt::exact(exact(label)).expect("receipt")
+    }
+
+    #[test]
+    fn recovery_views_expose_every_immutable_input_without_schema_bypass() {
+        let temp = TempDir::new().expect("temp");
+        let inputs = inputs(&temp);
+        inputs.validate().expect("valid inputs");
+
+        assert_eq!(inputs.semantic_plan().value()["value"], "plan");
+        assert_eq!(inputs.invocation().value()["value"], "invocation");
+        assert_eq!(inputs.baseline_snapshot().value()["value"], "baseline");
+        assert_eq!(
+            inputs.conformance_suite(),
+            "dev.fleetd.conformance/direct_conversation_ref@0.1.0"
+        );
+        assert_eq!(
+            inputs.provider().implementation(),
+            "dev.fleetd.implementation/direct_conversation_reqwest@0.1.0"
+        );
+        assert_eq!(
+            inputs.provider().package(),
+            "dev.fleetd.package/direct-conversation@0.1.0"
+        );
+        assert_eq!(inputs.provider().package_digest(), digest('e'));
+        assert_eq!(inputs.provider().resource(), "bin/reqwest-provider");
+        assert_eq!(inputs.provider().resource_digest(), digest('f'));
+        assert_eq!(
+            inputs.attester().implementation(),
+            "dev.fleetd.implementation/direct_conversation_attester@0.1.0"
+        );
+        assert_eq!(
+            inputs.native_runtime().runtime(),
+            "org.gooi.proof/native-command-fd3@0.1.0"
+        );
+        assert_eq!(inputs.native_runtime().runtime_digest(), digest('2'));
+        assert_eq!(
+            inputs.provider_replay_law(),
+            "dev.fleetd.proof/direct-pair-open-or-resolve-replay@0.1.0"
+        );
+        assert_eq!(
+            inputs.attester_replay_law(),
+            "dev.fleetd.proof/direct-conversation-get-reobserve@0.1.0"
+        );
+        assert_eq!(
+            inputs.execution_policy().value()["value"],
+            "execution-policy"
+        );
+        assert_eq!(
+            inputs.admission_policy().value()["value"],
+            "admission-policy"
+        );
+
+        let runtime = serde_json::to_value(inputs.native_runtime()).expect("runtime JSON");
+        assert_eq!(
+            runtime.as_object().expect("runtime object").keys().count(),
+            2
+        );
+        assert!(runtime.get("runtime").is_some());
+        assert!(runtime.get("runtime_digest").is_some());
     }
 
     #[test]

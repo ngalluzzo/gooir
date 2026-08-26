@@ -3,11 +3,13 @@
 //! This crate owns non-secret target locking, durable attempt state, and
 //! proof-local qualification/private materialization of exact package-owned
 //! native artifacts. It is not a generic GOOIR runtime, native process API,
-//! HTTP adapter, or plugin interface. Process execution and semantic
-//! interpretation are deliberately outside this checkpoint.
+//! HTTP adapter, or plugin interface. Process execution is confined to the
+//! proof-local supervisor primitive; semantic interpretation remains outside
+//! that primitive.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod journal;
 pub mod native;
+pub mod supervisor;
 pub mod target;

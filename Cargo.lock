@@ -750,9 +750,11 @@ dependencies = [
 name = "fleetd-direct-conversation-external-host-proof"
 version = "0.1.0"
 dependencies = [
+ "fleetd-direct-conversation-command-abi",
  "fleetd-direct-conversation-contract",
  "gooir-fleetd-direct-conversation-package-proof",
  "gooir-package",
+ "libc",
  "object",
  "rustix",
  "serde",

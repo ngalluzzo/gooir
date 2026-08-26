@@ -7,9 +7,11 @@ repository.workspace = true
 
 [dependencies]
 fleetd-direct-conversation-contract = { workspace = true }
+fleetd-direct-conversation-command-abi = { workspace = true }
 gooir-fleetd-direct-conversation-package-proof = { workspace = true }
 gooir-package = { workspace = true }
 object = { workspace = true }
+libc = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -18,7 +20,7 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 all = "warn"
