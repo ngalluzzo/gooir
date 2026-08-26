@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub const RUNNABLE_WEB_ARTIFACT_SCHEMA: &str = "dev.fleetd.artifact.runnable_web_surface/v1";
-const SUITE: &str = "dev.fleetd.conformance.runnable_web_surface@0.1.0";
+const SUITE: &str = "dev.fleetd.conformance/runnable_web_surface@0.2.0";
 const ENTRYPOINT: &str = "/operator/";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_PROCESS_EVIDENCE_BYTES: usize = 16 * 1024;
@@ -82,7 +82,7 @@ impl CapabilityConformanceProvider for RunnableWebConformanceProvider {
             id: ProviderId::new(
                 "dev.fleetd.conformance_provider",
                 "runnable_web_surface_git",
-                "0.1.0",
+                "0.2.0",
             ),
             suite: SUITE.to_owned(),
             implementation_digest: implementation_digest(),

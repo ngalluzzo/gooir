@@ -82,11 +82,11 @@ explicitly and measures the implementation itself — see
 
 ## How the crates are organised
 
-Thirty-three crates, six roles. Every crate is exactly one of these:
+Workspace crates have six roles. Every crate is exactly one of these:
 
 | role | what it holds | examples |
 | --- | --- | --- |
-| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-capability`, `gooir-doctor` |
+| **kernel** | the finite primitives, knowing no domain | `gooir-identity`, `gooir-capability`, `gooir-package`, `gooir-planning`, `gooir-doctor` |
 | **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-interaction-activation-v0`, `semantics-activity-projection-v0` |
 | **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
 | **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |

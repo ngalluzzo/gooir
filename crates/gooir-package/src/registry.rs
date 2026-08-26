@@ -298,6 +298,17 @@ impl PackageRegistry {
             .map(|entry| (&entry.owner, &entry.declaration))
     }
 
+    /// Iterates over every installed capability and its exact owning package,
+    /// in capability-identity order.
+    ///
+    /// This is complete installed availability, not discovery, ranking, or
+    /// implementation selection.
+    pub fn capabilities(&self) -> impl Iterator<Item = (&PackageId, &CapabilitySpec)> {
+        self.capabilities
+            .values()
+            .map(|entry| (&entry.owner, &entry.declaration))
+    }
+
     /// Returns the package that owns one implementation identity.
     #[must_use]
     pub fn implementation_owner(&self, id: &ImplementationId) -> Option<&PackageId> {
@@ -308,6 +319,12 @@ impl PackageRegistry {
     #[must_use]
     pub fn offer(&self, id: &OfferId) -> Option<&CapabilityOffer> {
         self.offers.get(id).map(|installed| &installed.offer)
+    }
+
+    /// Iterates over every exact installed implementation offer in offer-ID
+    /// order. The iterator does not select or rank an implementation.
+    pub fn offers(&self) -> impl Iterator<Item = &CapabilityOffer> {
+        self.offers.values().map(|installed| &installed.offer)
     }
 
     /// Returns the owned bytes bound to one exact offer ID.

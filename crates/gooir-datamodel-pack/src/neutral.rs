@@ -20,7 +20,7 @@ use crate::{AuthoredSpec, MANIFEST, author_data_model_capability};
 
 /// Exact semantic identity of this entity-spec implementation.
 pub fn implementation_id() -> ImplementationId {
-    ImplementationId::new("org.gooi.implementation", "entity_spec_rust", "1.0.0")
+    ImplementationId::new("org.gooi.implementation", "entity_spec_rust", "1.1.0")
 }
 
 /// Exact inability emitted when the mature parser cannot establish a complete
@@ -237,7 +237,7 @@ entity User
         ConformanceSuiteId::new(
             "org.gooi.conformance",
             "author_data_model_tasks_entities",
-            "1.0.0",
+            "1.1.0",
         )
     }
 

@@ -41,7 +41,7 @@ fn spec(id: CapabilityId, from: &str, to: &str) -> CapabilitySpec {
         id,
         input_ports: vec![InputPort::complete(port("source"), fact(from))],
         output_ports: vec![OutputPort::new(port("result"), fact(to))],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
         extensions: Default::default(),
     }
 }
@@ -73,7 +73,7 @@ fn repeated_kind_route_is_reported_as_provider_coverage_not_obtainability() {
             InputPort::complete(port("right"), fact("a")),
         ],
         output_ports: vec![OutputPort::new(port("result"), fact("b"))],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
         extensions: Default::default(),
     };
     r.register_spec(repeated).unwrap();
@@ -126,7 +126,7 @@ fn a_fact_with_no_route_is_blocking() {
         id: cap("cycle"),
         input_ports: vec![InputPort::complete(port("source"), fact("z"))],
         output_ports: vec![OutputPort::new(port("result"), fact("z"))],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
         extensions: Default::default(),
     })
     .unwrap();
@@ -162,5 +162,5 @@ fn every_registered_provider_is_unadmitted_until_conformance_runs() {
 
     let report = diagnose(&r);
     assert_eq!(report.unadmitted.len(), 1);
-    assert_eq!(report.unadmitted[0].conformance_suite, "test.suite@1.0.0");
+    assert_eq!(report.unadmitted[0].conformance_suite, "test/suite@1.0.0");
 }

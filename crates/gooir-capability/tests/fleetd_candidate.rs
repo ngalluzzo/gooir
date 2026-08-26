@@ -13,9 +13,9 @@ impl CapabilityConformanceProvider for FixtureRunnableWebSuite {
             id: ProviderId::new(
                 "dev.fleetd.conformance_provider",
                 "fixture_runnable_web",
-                "0.1.0",
+                "0.2.0",
             ),
-            suite: "dev.fleetd.conformance.runnable_web_surface@0.1.0".to_owned(),
+            suite: "dev.fleetd.conformance/runnable_web_surface@0.2.0".to_owned(),
             implementation_digest: format!("sha256:{}", "c".repeat(64)),
         }
     }
@@ -51,7 +51,7 @@ fn fleetd_candidate_round_trips_but_cannot_bypass_conformance() {
         .expect("Fleetd and GOOIR compute the same candidate identity");
     assert_eq!(
         candidate.candidate_id,
-        "sha256:a2262fbc6ce8af0f59b33c0ec67af7cec2398670b1c7ebb837ab8d256beb802e"
+        "sha256:dd443c88950ed6472e636b60759aa89100dfd269c8e6bdcc27817c0e81272818"
     );
 
     let mut policy = AdmissionPolicy::default();

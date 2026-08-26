@@ -999,6 +999,48 @@ mod tests {
     }
 
     #[test]
+    fn complete_planning_inventory_is_stable_and_sorted() {
+        let mut registry = PackageRegistry::default();
+        let later = install_local(
+            &mut registry,
+            "org.example.later.package",
+            "org.example.later",
+            "org.example.later.implementation",
+            b"later provider",
+        );
+        let earlier = install_local(
+            &mut registry,
+            "org.example.earlier.package",
+            "org.example.earlier",
+            "org.example.earlier.implementation",
+            b"earlier provider",
+        );
+
+        let capabilities = registry.capabilities().collect::<Vec<_>>();
+        assert_eq!(capabilities.len(), 2);
+        assert!(capabilities[0].1.id < capabilities[1].1.id);
+        assert_eq!(capabilities[0].0, earlier.package_id());
+        assert_eq!(capabilities[1].0, later.package_id());
+        assert_eq!(
+            registry.capability(&capabilities[0].1.id),
+            Some(capabilities[0])
+        );
+        assert_eq!(
+            registry.capability(&capabilities[1].1.id),
+            Some(capabilities[1])
+        );
+
+        let offers = registry.offers().collect::<Vec<_>>();
+        assert_eq!(offers.len(), 2);
+        assert!(offers[0].offer_id < offers[1].offer_id);
+        assert!(offers.iter().all(|offer| {
+            registry
+                .offer(&offer.offer_id)
+                .is_some_and(|installed| installed == *offer)
+        }));
+    }
+
+    #[test]
     fn an_exact_hardlinked_resource_is_accepted() {
         let bytes = b"hardlinked provider";
         let manifest = local_manifest(

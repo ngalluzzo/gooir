@@ -1,16 +1,16 @@
 {
-  "candidate_id": "sha256:a2262fbc6ce8af0f59b33c0ec67af7cec2398670b1c7ebb837ab8d256beb802e",
-  "request_id": "sha256:1cfa575c40e4f44d7201fe1ccc7cf3cc912fc88aa14b80531d6a49c62ea9886f",
+  "candidate_id": "sha256:dd443c88950ed6472e636b60759aa89100dfd269c8e6bdcc27817c0e81272818",
+  "request_id": "sha256:6a9ffb41afef3fe31501cc555cc6cdf9b2259401d271c302139584b308e38e8c",
   "provider": {
     "id": {
       "package": "dev.fleetd.provider",
       "name": "fixture_runnable_web",
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     "capability": {
       "package": "dev.fleetd.capability",
       "name": "generate_runnable_web_surface",
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     "implementation_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },

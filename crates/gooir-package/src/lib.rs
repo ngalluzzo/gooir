@@ -1038,11 +1038,11 @@ fn validate_capabilities(capabilities: &[CapabilitySpec]) -> Result<(), PackageM
     validate_sorted_unique("capabilities", capabilities.iter().map(|item| &item.id))?;
     let mut registry = CapabilityRegistry::default();
     for capability in capabilities {
+        ConformanceSuiteId::parse(&capability.default_conformance_suite)
+            .map_err(|error| invalid("capability conformance suite", error))?;
         registry
             .register_spec(capability.clone())
             .map_err(|error| PackageManifestError::InvalidCapability(error.to_string()))?;
-        ConformanceSuiteId::parse(&capability.default_conformance_suite)
-            .map_err(|error| invalid("capability conformance suite", error))?;
     }
     Ok(())
 }

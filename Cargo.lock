@@ -337,6 +337,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-planning"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-package",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gooir-plugin-process"
 version = "0.1.0"
 dependencies = [

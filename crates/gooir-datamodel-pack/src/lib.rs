@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod neutral;
 
-pub const PACK_VERSION: &str = "0.1.0";
+pub const PACK_VERSION: &str = "0.2.0";
 
 // ---------------------------------------------------------------- fact types
 
@@ -62,19 +62,19 @@ pub fn typescript_types_fact() -> FactType {
 // -------------------------------------------------------------- capabilities
 
 pub fn author_data_model_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "author_data_model", "0.1.0")
+    CapabilityId::new("org.gooi.capability", "author_data_model", "0.2.0")
 }
 
 pub fn postgres_ddl_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "lower_postgres_ddl", "0.1.0")
+    CapabilityId::new("org.gooi.capability", "lower_postgres_ddl", "0.2.0")
 }
 
 pub fn openapi_surface_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "lower_openapi_crud_surface", "0.1.0")
+    CapabilityId::new("org.gooi.capability", "lower_openapi_crud_surface", "0.2.0")
 }
 
 pub fn typescript_types_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "lower_typescript_types", "0.1.0")
+    CapabilityId::new("org.gooi.capability", "lower_typescript_types", "0.2.0")
 }
 
 // ------------------------------------------------------------------ payloads

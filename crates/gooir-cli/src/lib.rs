@@ -67,7 +67,7 @@ mod tests {
                 port("result"),
                 fact("t.artifact", "unique_name"),
             )],
-            default_conformance_suite: "t.suite@1".to_owned(),
+            default_conformance_suite: "t/suite@1".to_owned(),
             extensions: Default::default(),
         })
         .unwrap();
@@ -81,7 +81,7 @@ mod tests {
                 OutputPort::new(port("first"), fact("t.a", "shared")),
                 OutputPort::new(port("second"), fact("t.b", "shared")),
             ],
-            default_conformance_suite: "t.suite@1".to_owned(),
+            default_conformance_suite: "t/suite@1".to_owned(),
             extensions: Default::default(),
         })
         .unwrap();

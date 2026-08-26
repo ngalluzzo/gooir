@@ -1,9 +1,9 @@
 {
-  "request_id": "sha256:1cfa575c40e4f44d7201fe1ccc7cf3cc912fc88aa14b80531d6a49c62ea9886f",
+  "request_id": "sha256:6a9ffb41afef3fe31501cc555cc6cdf9b2259401d271c302139584b308e38e8c",
   "capability": {
     "package": "dev.fleetd.capability",
     "name": "generate_runnable_web_surface",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "requires": [
     {
@@ -17,7 +17,7 @@
   ],
   "inputs": [
     {
-      "id": "sha256:2a40970af79e85de24ac6344a7b9efb060e7effaf3404e04963d3e1145168fe0",
+      "id": "sha256:a0ae5053a031dc532375caa0425c06dcee0f14a6c38e1d87f905fbd22d95c0a8",
       "fact_type": {
         "package": "org.gooi.target.web",
         "name": "fleetd_blocked_delivery",
@@ -65,12 +65,12 @@
         "capability": {
           "package": "dev.fleetd.capability",
           "name": "lower_web_target_ir",
-          "version": "0.1.0"
+          "version": "0.2.0"
         },
         "provider": {
           "package": "dev.fleetd.provider.in_process",
           "name": "fleetd_web_target",
-          "version": "0.1.0"
+          "version": "0.2.0"
         },
         "inputs": [
           "sha256:e4e4a59e0db03df89f8b8f0cacd78c40e60feef325ae3f18c348e77a0fdc6517",
@@ -86,5 +86,5 @@
       "version": "0.1.0"
     }
   ],
-  "conformance_suite": "dev.fleetd.conformance.runnable_web_surface@0.1.0"
+  "conformance_suite": "dev.fleetd.conformance/runnable_web_surface@0.2.0"
 }

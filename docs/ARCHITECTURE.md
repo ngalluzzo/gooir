@@ -42,8 +42,32 @@ Target packs and distributions
 A capability is a separately versioned typed promise: exact required fact
 types, exact produced fact types, coverage acceptance, and a named conformance
 suite. Capabilities form directed hyperedges because one derivation may require
-several independent semantic facts. The generic registry may plan and execute
-those edges without learning what any fact means.
+several independent semantic facts. The finite planner may relate those edges
+without learning what any fact means; it never executes them.
+
+`gooir-planning` copies one complete installed capability-and-offer inventory
+from `gooir-package`, applies caller-chosen finite bounds, and emits a
+content-identified AND/OR graph slice from caller-held input value kinds to one
+target kind. Every reachable target-relevant capability and every installed
+offer for it remains visible. A capability with no offer remains as an
+explicit need. Planning chooses neither a route nor an implementation.
+
+Linking is a separate explicit operation. The caller names one capability and
+one exact offer from the plan and supplies exact named facts plus the authority-
+record references it has already resolved under contextual admission. The
+structural linker does not resolve those records; it forms the existing
+content-identified capability invocation. A serialized plan is untrusted
+structure: linking revalidates its bounds and requires its exact capability
+specification and selected offer to match the planner's immutable installed
+inventory. The complete planning inventory has its own digest, so two plans derived from
+different installed scopes cannot silently share an identity even when their
+visible target slices happen to match. Planning state, graph traversal, host
+deployment compatibility, execution, conformance, and admission do not become
+ecosystem capabilities merely because the plan can be serialized.
+
+The default conformance suite is part of the exact versioned capability
+promise. Correcting or replacing that obligation publishes a new capability
+version; it never silently redefines the old coordinate.
 
 Capabilities are not protocols. An in-process call, ACP session, HTTP service,
 external compiler, or durable Fleetd worker may provide the same capability.

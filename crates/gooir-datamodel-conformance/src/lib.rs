@@ -169,7 +169,7 @@ pub fn suite_id() -> ConformanceSuiteId {
     ConformanceSuiteId::new(
         "org.gooi.conformance",
         "author_data_model_tasks_entities",
-        "1.0.0",
+        "1.1.0",
     )
 }
 
@@ -178,7 +178,7 @@ pub fn implementation_id() -> ImplementationId {
     ImplementationId::new(
         "org.gooi.attester",
         "author_data_model_tasks_entities_oracle",
-        "1.0.0",
+        "1.1.0",
     )
 }
 
@@ -316,7 +316,7 @@ fn output_matches(result: &CapabilityResult, expected: &NamedOutput) -> bool {
 
 fn expected_specification() -> CapabilitySpec {
     CapabilitySpec {
-        id: CapabilityId::new("org.gooi.capability", "author_data_model", "0.1.0"),
+        id: CapabilityId::new("org.gooi.capability", "author_data_model", "0.2.0"),
         input_ports: vec![InputPort {
             name: port("source"),
             value_kind: source_value_kind(),
@@ -324,7 +324,8 @@ fn expected_specification() -> CapabilitySpec {
             extensions: BTreeMap::new(),
         }],
         output_ports: vec![OutputPort::new(port("model"), model_value_kind())],
-        default_conformance_suite: "org.gooi.conformance.authored_data_model@0.1.0".to_owned(),
+        default_conformance_suite: "org.gooi.conformance/author_data_model_tasks_entities@1.1.0"
+            .to_owned(),
         extensions: BTreeMap::new(),
     }
 }
@@ -428,7 +429,7 @@ mod tests {
     }
 
     fn producer() -> ImplementationId {
-        ImplementationId::new("org.gooi.implementation", "entity_spec_rust", "1.0.0")
+        ImplementationId::new("org.gooi.implementation", "entity_spec_rust", "1.1.0")
     }
 
     fn admitted(fact: Fact) -> LinkedInput {

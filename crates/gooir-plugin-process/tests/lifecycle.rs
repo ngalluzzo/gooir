@@ -38,7 +38,7 @@ fn spec() -> CapabilitySpec {
             PortName::parse("result").unwrap(),
             produced(),
         )],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
         extensions: Default::default(),
     }
 }

@@ -11,11 +11,22 @@ in this order:
    invariants;
 3. separate implementation offers and linked semantic invocations from
    execution-host lifecycle;
-4. make implementation selection explicit and converge on one admission path;
-5. prove one existing deterministic capability through Fleetd as an external,
+4. preserve every reachable route and installed offer in one bounded,
+   content-identified semantic plan, then link only an explicit caller choice;
+5. converge on one admission path;
+6. prove one existing deterministic capability through Fleetd as an external,
    restart-safe execution host; and
-6. extract workflow, task, conversation, UI, and other ecosystem packages only
+7. extract workflow, task, conversation, UI, and other ecosystem packages only
    after independent implementations establish their boundaries.
+
+The bounded planning checkpoint is implemented in `gooir-planning`. It takes
+the complete sorted capability-and-offer inventory exposed by
+`gooir-package`, retains all target-relevant AND/OR alternatives, leaves
+providerless capabilities as explicit needs, and requires an exact caller-
+selected offer plus named fact and authority-record references before forming
+an invocation. It
+does not discover packages, rank routes or providers, execute implementations,
+or establish conformance or admission.
 
 The older milestones remain as evidence from the exploration. They are not the
 dependency order for the recovery branch.
@@ -70,14 +81,15 @@ facts only through a separately identified matching conformance provider.
 
 The transport-only cross-repository fixture still intentionally fails the
 named runnable-web suite and therefore admits no facts. The real
-`dev.fleetd.conformance.runnable_web_surface@0.1.0` provider now defines an
+`dev.fleetd.conformance/runnable_web_surface@0.2.0` provider now defines an
 exact artifact manifest, checks out the proposed Fleetd revision from an
 operator-trusted repository, verifies its assets, and injects a verifier-owned
 black-box test.
 
-The first complete product loop now passes. A deterministic brownfield
-provider projected Fleetd revision `98c73ba08c47eff77769c12f142442cdebb29ace`
-through a durable Fleetd attempt. Candidate
+The first complete product loop passed under the retired pre-package
+coordinates. Its identities remain historical evidence rather than active
+fixture coordinates. A deterministic brownfield provider projected Fleetd
+revision `98c73ba08c47eff77769c12f142442cdebb29ace` through a durable Fleetd attempt. Candidate
 `sha256:42d157fcec55a6385630a1b11130b40f4ec05cb4ef625a63ebba6d6df4236fcf`
 passed independent conformance, produced admitted artifact fact
 `sha256:5591961e7692ce6429464bf1b04abf04a44b95afb720a765d26871949f418a56`,

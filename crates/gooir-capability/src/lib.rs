@@ -300,6 +300,17 @@ pub struct CapabilitySpec {
     pub extensions: BTreeMap<String, Value>,
 }
 
+impl CapabilitySpec {
+    /// Validates one complete capability declaration without registering it.
+    ///
+    /// This establishes only exact identities, named-port structure, and
+    /// extension preservation. It does not establish availability,
+    /// conformance, implementation selection, or admission.
+    pub fn validate(&self) -> Result<(), RegistryError> {
+        validate_spec(self)
+    }
+}
+
 /// One semantic package of capability declarations.
 ///
 /// This is the representation returned by pack protocol v2. Keeping the pack
@@ -1337,10 +1348,11 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
             reason: "a capability must declare at least one output port".to_owned(),
         });
     }
-    if spec.default_conformance_suite.trim().is_empty() {
+    if protocol::ConformanceSuiteId::parse(&spec.default_conformance_suite).is_err() {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: "a capability must name an exact conformance suite".to_owned(),
+            reason: "a capability must name an exact package/name@version conformance suite"
+                .to_owned(),
         });
     }
     if let Some(port) = spec
@@ -1724,10 +1736,23 @@ fn is_sha256_identity(value: &str) -> bool {
     })
 }
 
-fn canonical_digest(value: &impl Serialize) -> Result<String, String> {
-    serde_json_canonicalizer::to_vec(value)
-        .map(|bytes| sha256_identity(&bytes))
-        .map_err(|error| error.to_string())
+/// Returns the exact RFC 8785/SHA-256 identity of one serializable value.
+///
+/// This is generic trusted substrate machinery. It assigns no domain meaning,
+/// authority, conformance, or admission to the value being identified.
+///
+/// # Errors
+///
+/// Returns the canonicalizer's error when the value cannot be represented as
+/// canonical JSON.
+pub fn canonical_digest(value: &impl Serialize) -> Result<String, String> {
+    let value = serde_json::to_value(value).map_err(|error| error.to_string())?;
+    let bytes = serde_json_canonicalizer::to_vec(&value).map_err(|error| error.to_string())?;
+    let decoded: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if decoded != value {
+        return Err("canonicalization changed the JSON value".to_owned());
+    }
+    Ok(sha256_identity(&bytes))
 }
 
 fn validate_fact_parts(

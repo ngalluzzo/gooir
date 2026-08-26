@@ -29,7 +29,7 @@ pub use conformance::{
     RunnableWebConformanceProvider,
 };
 
-pub const PACK_VERSION: &str = "0.1.0";
+pub const PACK_VERSION: &str = "0.2.0";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SourceDocument {
@@ -97,34 +97,34 @@ pub fn runnable_web_artifact_fact() -> FactType {
 }
 
 pub fn openapi_data_capability() -> CapabilityId {
-    CapabilityId::new("org.gooi.capability", "lift_openapi_data_model", "0.1.0")
+    CapabilityId::new("org.gooi.capability", "lift_openapi_data_model", "0.2.0")
 }
 
 pub fn fleetd_native_capability() -> CapabilityId {
-    CapabilityId::new("dev.fleetd.capability", "lift_control_native", "0.1.0")
+    CapabilityId::new("dev.fleetd.capability", "lift_control_native", "0.2.0")
 }
 
 pub fn fleetd_control_projection_capability() -> CapabilityId {
-    CapabilityId::new("dev.fleetd.capability", "project_control", "0.1.0")
+    CapabilityId::new("dev.fleetd.capability", "project_control", "0.2.0")
 }
 
 pub fn fleetd_interaction_capability() -> CapabilityId {
-    CapabilityId::new("dev.fleetd.capability", "compose_interaction", "0.1.0")
+    CapabilityId::new("dev.fleetd.capability", "compose_interaction", "0.2.0")
 }
 
 pub fn web_target_capability() -> CapabilityId {
-    CapabilityId::new("dev.fleetd.capability", "lower_web_target_ir", "0.1.0")
+    CapabilityId::new("dev.fleetd.capability", "lower_web_target_ir", "0.2.0")
 }
 
 pub fn terminal_target_capability() -> CapabilityId {
-    CapabilityId::new("dev.fleetd.capability", "lower_terminal_target_ir", "0.1.0")
+    CapabilityId::new("dev.fleetd.capability", "lower_terminal_target_ir", "0.2.0")
 }
 
 pub fn runnable_web_capability() -> CapabilityId {
     CapabilityId::new(
         "dev.fleetd.capability",
         "generate_runnable_web_surface",
-        "0.1.0",
+        "0.2.0",
     )
 }
 
