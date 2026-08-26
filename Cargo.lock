@@ -277,6 +277,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-datamodel-conformance"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "gooir-datamodel-pack"
 version = "0.1.0"
 dependencies = [
