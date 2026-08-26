@@ -6,6 +6,7 @@
 //! constructs derivations over multi-input capability edges.
 
 mod manifest;
+pub mod protocol;
 
 pub use manifest::{PACK_PROTOCOL, PackManifestError, read_pack, register_pack, write_pack};
 
