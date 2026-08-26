@@ -28,6 +28,20 @@ an invocation. It
 does not discover packages, rank routes or providers, execute implementations,
 or establish conformance or admission.
 
+The first proof-local external host is complete through commit `aec35ea`. It
+installs exact `WASIp1` provider and attester packages, explicitly links one
+real plan offer, retains runtime receipts before interpretation, admits only an
+independently assessed candidate, and recovers real process exits across every
+durable admitted-path phase. Armed phases conservatively park because that
+credential-free protocol cannot prove an unknown execution is safe to repeat.
+
+The next checkpoint is [Decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md):
+two selectable client implementations composed with one exact Fleetd target.
+It proves stateful effect recovery against a real product API before a distinct
+Fleetd deployment supplies opaque durable coordination for the external GOOIR
+runner. The vocabulary remains Fleetd-native; no generic conversation or
+effect interface is introduced.
+
 The older milestones remain as evidence from the exploration. They are not the
 dependency order for the recovery branch.
 
