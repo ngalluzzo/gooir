@@ -4,22 +4,27 @@
 //! belong in profile packages, while native lifters remain authoritative for
 //! the facts they project into these relations.
 
-use gooir_core::ContractId;
+use gooir_identity::{DialectId, ValueKindId};
 use serde::{Deserialize, Serialize};
 
 pub const PACKAGE: &str = "org.gooi.semantics.software_surface";
 pub const VERSION: &str = "1.0.0";
 
-pub fn relation_contract() -> ContractId {
-    ContractId::new(PACKAGE, "relation", VERSION)
+/// Exact identity of the vocabulary family governing these value kinds.
+pub fn dialect_id() -> DialectId {
+    DialectId::new(PACKAGE, VERSION)
 }
 
-pub fn requirement_contract() -> ContractId {
-    ContractId::new(PACKAGE, "requirement", VERSION)
+pub fn relation_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), "relation")
 }
 
-pub fn coverage_witness_contract() -> ContractId {
-    ContractId::new(PACKAGE, "coverage_witness", VERSION)
+pub fn requirement_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), "requirement")
+}
+
+pub fn coverage_witness_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), "coverage_witness")
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -161,8 +166,21 @@ impl CoverageWitness {
 mod tests {
     use super::{
         ArtifactRole, CoverageCompleteness, CoverageProblem, CoverageWitness, ExtractorId,
-        RelationKind, SurfaceRelation, SurfaceRequirement,
+        RelationKind, SurfaceRelation, SurfaceRequirement, coverage_witness_contract, dialect_id,
+        relation_contract, requirement_contract,
     };
+
+    #[test]
+    fn value_kinds_share_one_exact_software_surface_dialect() {
+        for kind in [
+            relation_contract(),
+            requirement_contract(),
+            coverage_witness_contract(),
+        ] {
+            assert_eq!(kind.dialect(), dialect_id());
+        }
+        assert_ne!(relation_contract(), requirement_contract());
+    }
 
     fn production_requirement(relation: RelationKind) -> SurfaceRequirement {
         SurfaceRequirement {

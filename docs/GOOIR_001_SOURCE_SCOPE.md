@@ -1,5 +1,10 @@
 # GOOIR-001 source scope
 
+> Historical evidence: this document records the retired operation/claim
+> implementation of GOOIR-001. The pinned sources and findings remain useful,
+> but its projection, analyzer, and product-view packages are not active
+> workspace members and the recorded invocation is not runnable here.
+
 GOOIR-001 uses two separate authorities:
 
 - installed Buzz application `0.5.18`, CLI SHA-256 `9c7457b193d386a8fad2d903d4321c4bbcaa2edb4722031a2c8d5f9790e02f54`;
@@ -194,15 +199,10 @@ claims and `buzz-surface-profile`, the pinned result is:
   dispatch, whose native coverage lifters have not landed.
 
 The deterministic report is checked in at
-`fixtures/buzz/desktop-v0.5.18/job-surface.analysis.json`. The product view uses
-the same reviewed inputs and analysis through one clean-checkout command:
-
-```bash
-cargo run -q -p buzz-surface-check
-```
-
-Pass `--json` to reproduce the complete machine-readable report. The former
-three-path form remains supported for exact-input and evidence-mutation checks.
+`fixtures/buzz/desktop-v0.5.18/job-surface.analysis.json`. The retired product
+view used the same reviewed inputs and analysis through the historical
+`cargo run -q -p buzz-surface-check` invocation. Its `--json` and three-path
+forms are recorded behavior, not supported commands in the recovered workspace.
 
 This is a checked local admission policy, not a claim of cryptographic proof.
 The staging snapshot remains outside the trusted execution path.

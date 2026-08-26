@@ -6,7 +6,7 @@
 architecture implied by the experimental milestones below. Recovery proceeds
 in this order:
 
-1. remove the parallel operation/claim IR;
+1. remove the parallel operation/claim IR (complete on the recovery branch);
 2. establish dialect, value-kind, fact, named-port, and extension-preservation
    invariants;
 3. separate implementation offers and linked semantic invocations from

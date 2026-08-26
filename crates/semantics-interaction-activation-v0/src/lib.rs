@@ -5,7 +5,7 @@
 //! contract carries exactly that intersection. It does not infer further
 //! meaning from the handler or from the absence of an observed outcome.
 
-use gooir_core::ContractId;
+use gooir_identity::{DialectId, ValueKindId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -14,9 +14,14 @@ pub const PACKAGE: &str = "org.gooi.semantics.interaction_activation";
 pub const MODEL: &str = "action_activation";
 pub const VERSION: &str = "0.1.0";
 
-/// Exact identity of this provisional semantic contract.
-pub fn activation_contract() -> ContractId {
-    ContractId::new(PACKAGE, MODEL, VERSION)
+/// Exact identity of the vocabulary family governing this value kind.
+pub fn dialect_id() -> DialectId {
+    DialectId::new(PACKAGE, VERSION)
+}
+
+/// Exact identity of this provisional semantic value kind.
+pub fn activation_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), MODEL)
 }
 
 /// The one activation outcome established by the audited source corpus.
@@ -98,12 +103,13 @@ mod tests {
     fn contract_identity_is_exact_and_versioned() {
         assert_eq!(
             activation_contract(),
-            ContractId::new(
+            ValueKindId::new(
                 "org.gooi.semantics.interaction_activation",
                 "action_activation",
                 "0.1.0"
             )
         );
+        assert_eq!(activation_contract().dialect(), dialect_id());
     }
 
     #[test]

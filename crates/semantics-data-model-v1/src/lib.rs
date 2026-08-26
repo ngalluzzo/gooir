@@ -9,7 +9,7 @@
 //! laws. Its correctness is established by independent authorities converging
 //! on it, never by constraints authored alongside it.
 
-use gooir_core::ContractId;
+use gooir_identity::{DialectId, ValueKindId};
 use serde::{Deserialize, Serialize};
 
 pub const PACKAGE: &str = "org.gooi.semantics.data_model";
@@ -22,16 +22,21 @@ pub const VERSION: &str = "1.0.0";
 /// whole model as one fact, and the value must have exactly one source.
 pub const MODEL: &str = "model";
 
-pub fn model_contract() -> ContractId {
-    ContractId::new(PACKAGE, MODEL, VERSION)
+/// Exact identity of the vocabulary family governing these value kinds.
+pub fn dialect_id() -> DialectId {
+    DialectId::new(PACKAGE, VERSION)
 }
 
-pub fn entity_contract() -> ContractId {
-    ContractId::new(PACKAGE, "entity", VERSION)
+pub fn model_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), MODEL)
 }
 
-pub fn relation_contract() -> ContractId {
-    ContractId::new(PACKAGE, "relation", VERSION)
+pub fn entity_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), "entity")
+}
+
+pub fn relation_contract() -> ValueKindId {
+    ValueKindId::in_dialect(dialect_id(), "relation")
 }
 
 /// Neutral scalar domains. This set is smaller than any real authority's type
@@ -285,6 +290,15 @@ pub fn normalize(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn value_kinds_share_one_exact_data_model_dialect() {
+        assert_eq!(dialect_id(), DialectId::new(PACKAGE, VERSION));
+        for kind in [model_contract(), entity_contract(), relation_contract()] {
+            assert_eq!(kind.dialect(), dialect_id());
+        }
+        assert_ne!(model_contract(), entity_contract());
+    }
 
     #[test]
     fn normalization_folds_case_and_separators_only() {

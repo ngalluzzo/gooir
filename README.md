@@ -25,7 +25,7 @@ vocabulary.
 
 | | |
 | --- | --- |
-| **Fact** | a typed, identified value, carrying whether its coverage was complete |
+| **Fact** | a content-identified value of one exact value kind; authority and coverage are recorded separately |
 | **Capability** | a versioned promise from exact input fact types to exact output fact types |
 | **Provider** | one implementation of a capability |
 | **Plan** | a derivation over capabilities from what you have to what you want |
@@ -82,11 +82,11 @@ explicitly and measures the implementation itself — see
 
 ## How the crates are organised
 
-Forty-two crates, six roles. Every crate is exactly one of these:
+Thirty-three crates, six roles. Every crate is exactly one of these:
 
 | role | what it holds | examples |
 | --- | --- | --- |
-| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis`, `gooir-doctor` |
+| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-capability`, `gooir-doctor` |
 | **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-interaction-activation-v0`, `semantics-activity-projection-v0` |
 | **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
 | **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |
@@ -262,19 +262,13 @@ See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.m
 
 ## Earlier proof surfaces
 
-`GOOIR-000` proved the kernel boundary: unknown dialect data round-trips
-without a plugin, analyzers depend on exact contracts rather than dialect
-names, equivalent projections normalise equally, unverified claims never become
-safety facts, and a meaning-changing version requires an explicit bridge.
+`GOOIR-000` explored a kernel boundary through a parallel operation/claim IR.
+Its source and decisions remain historical evidence, but that IR and its
+analyzer line have been retired under decision 0031.
 
 `GOOIR-001` lifted a pinned Buzz event surface and reported a real cross-layer
-gap with exact scope and provenance:
-
-```bash
-cargo run -q -p buzz-surface-check
-```
-
-See the [ten-minute Slice 1 demo](docs/SLICE_1_DEMO.md).
+gap with exact scope and provenance. The [Slice 1 record](docs/SLICE_1_DEMO.md)
+documents that retired proof; it is not an active command surface.
 
 ## Development
 

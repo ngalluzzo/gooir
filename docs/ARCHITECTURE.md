@@ -7,8 +7,9 @@ parallel operation/claim architecture described below. The active recovery
 keeps one facts-and-capabilities graph, restores the distinction between a
 governed dialect and its named value kinds, and gives process lifecycle,
 credentials, leases, sessions, retries, and persistence to external execution
-hosts. Historical sections remain until their code is removed so the migration
-is reviewable rather than rewritten in place.
+hosts. The removed architecture remains in historical decisions as exploration
+evidence. References to operations and claims below describe that exploration,
+not an active second semantic substrate.
 
 ## Boundary
 
@@ -90,7 +91,7 @@ Git revision and content-addressed served assets; the verifier independently
 checks out that revision and injects its own black-box behavioral test. The
 served `/operator/contract.json` must equal the exact web target IR, so source
 meaning, generated UI, and runtime verification share one center without
-teaching `gooir-core` about pages, JavaScript, Fleetd, or HTTP.
+teaching the semantic substrate about pages, JavaScript, Fleetd, or HTTP.
 
 See [decision 0013](DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
 
@@ -208,15 +209,24 @@ Provenance explains where a lifted fact came from. A separate coverage witness e
 
 Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that changes only the contract identity while preserving the claim payload and evidence. A conformance declaration is evidence, not universal proof.
 
-Trust is contextual rather than intrinsic to serialized IR. The core transports an exact attester, suite identity/version, subject digest, and result digest. An analysis host validates a conformance result and admits it only when bound to an exact operation identity and semantic claim; the default policy admits nothing. Copying an admitted attestation onto a different operation, contract, payload, or source cannot make that claim safe. Multiple claims for the same exact contract remain ambiguous rather than being resolved by trust precedence. See [decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
+Trust is contextual rather than intrinsic to serialized facts. Authority records
+bind an exact attester, suite identity/version, subject digest, and result
+digest to the exact fact or invocation they qualify; the default policy admits
+nothing. Copying an admitted authority record onto a different fact, value
+kind, payload, or source cannot make that fact safe. Conflicting records remain
+ambiguous rather than being resolved by trust precedence. See
+[decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
 
-## First product corpus
+## Historical first product corpus
 
-Buzz is the first product proof. Its source dialects may model protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These are not kernel concepts.
+Buzz was the first product probe. Its source dialects modeled protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These were never kernel concepts.
 
-The first analyzer consumes generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps are acceptance cases, never hard-coded analyzer branches.
+The retired analyzer consumed generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps were acceptance cases, never hard-coded analyzer branches.
 
-`surface-completeness-analysis` receives only a generic `SurfaceProfile`, resolved relation claims, and resolved coverage-witness claims. A trusted opposite relation is an explicit contradiction. A missing relation becomes an error only when every coverage mechanism required by the profile has an admitted, exhaustive, gap-free witness in the exact scope; otherwise the result is unknown. Malformed, ambiguous, or unadmitted contract inputs also remain unknown. The Buzz projection and pinned local admission policy live in separate product-specific packages.
+That probe received only a generic `SurfaceProfile`, resolved relation claims,
+and coverage-witness claims. Its source-scope document and decision records are
+preserved as historical evidence; the operation/claim implementation and its
+product-specific projection are no longer active workspace packages.
 
 ## Open-world contract parametricity
 

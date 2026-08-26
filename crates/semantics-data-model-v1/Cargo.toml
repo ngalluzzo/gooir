@@ -6,5 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-gooir-core = { workspace = true }
+gooir-identity = { workspace = true }
 serde = { workspace = true }

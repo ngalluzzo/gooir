@@ -18,10 +18,14 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::{error::Error, fmt};
 
-gooir_identity::exact_identity! {
-    /// The exact identity of a kind of fact.
-    FactType
-}
+pub use gooir_identity::{DialectId, ValueKindId};
+
+/// Compatibility name for the exact kind of a fact.
+///
+/// New code should say [`ValueKindId`]. The alias preserves the existing
+/// display form, serialized fields, constructors, and downstream source while
+/// the graph migrates to the explicit dialect/value-kind vocabulary.
+pub type FactType = ValueKindId;
 
 gooir_identity::exact_identity! {
     /// The exact identity of a typed promise from facts to facts.
@@ -32,6 +36,111 @@ gooir_identity::exact_identity! {
     /// The exact identity of one implementation of a capability.
     ProviderId
 }
+
+/// Content-derived identity of one semantic fact value.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FactId(String);
+
+impl FactId {
+    pub fn parse(value: impl Into<String>) -> Result<Self, FactIdentityError> {
+        let value = value.into();
+        if is_sha256_identity(&value) {
+            Ok(Self(value))
+        } else {
+            Err(FactIdentityError::Malformed(value))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for FactId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// One content-identified semantic value.
+///
+/// Identity covers exactly the value kind, payload, and every preserved
+/// semantic extension. It deliberately excludes provenance, coverage,
+/// conformance, admission, and execution-host state; those are authority
+/// records about this value rather than parts of the value itself.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fact {
+    pub id: FactId,
+    pub value_kind: ValueKindId,
+    pub payload: Value,
+    /// Namespaced semantic data unknown to this version survives unchanged.
+    #[serde(flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl Fact {
+    pub fn new(value_kind: ValueKindId, payload: Value) -> Result<Self, FactIdentityError> {
+        Self::with_extensions(value_kind, payload, BTreeMap::new())
+    }
+
+    pub fn with_extensions(
+        value_kind: ValueKindId,
+        payload: Value,
+        extensions: BTreeMap<String, Value>,
+    ) -> Result<Self, FactIdentityError> {
+        validate_fact_parts(&value_kind, &extensions)?;
+        let id = semantic_fact_digest(&value_kind, &payload, &extensions)?;
+        Ok(Self {
+            id,
+            value_kind,
+            payload,
+            extensions,
+        })
+    }
+
+    /// Revalidates both the envelope and its content-derived identity.
+    pub fn validate(&self) -> Result<(), FactIdentityError> {
+        FactId::parse(self.id.to_string())?;
+        validate_fact_parts(&self.value_kind, &self.extensions)?;
+        let expected = semantic_fact_digest(&self.value_kind, &self.payload, &self.extensions)?;
+        if self.id != expected {
+            return Err(FactIdentityError::IdentityMismatch {
+                expected,
+                actual: self.id.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactIdentityError {
+    Malformed(String),
+    InvalidValueKind(ValueKindId),
+    ReservedExtension(String),
+    Serialization(String),
+    IdentityMismatch { expected: FactId, actual: FactId },
+}
+
+impl fmt::Display for FactIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Malformed(value) => write!(formatter, "`{value}` is not a SHA-256 fact identity"),
+            Self::InvalidValueKind(kind) => write!(formatter, "`{kind}` is not a valid value kind"),
+            Self::ReservedExtension(key) => {
+                write!(formatter, "semantic extension `{key}` shadows a fact field")
+            }
+            Self::Serialization(error) => write!(formatter, "fact serialization failed: {error}"),
+            Self::IdentityMismatch { expected, actual } => write!(
+                formatter,
+                "fact identity mismatch: expected {expected}, got {actual}"
+            ),
+        }
+    }
+}
+
+impl Error for FactIdentityError {}
 
 /// Whether an input may carry unresolved defeats.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -936,6 +1045,12 @@ fn candidate_for(
 }
 
 fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
+    if !spec.id.is_well_formed() {
+        return Err(RegistryError::InvalidCapability {
+            capability: spec.id.clone(),
+            reason: "capability identity is malformed".to_owned(),
+        });
+    }
     if spec.produces.is_empty() {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
@@ -946,6 +1061,26 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
             reason: "a capability must name an exact conformance suite".to_owned(),
+        });
+    }
+    if let Some(requirement) = spec
+        .requires
+        .iter()
+        .find(|requirement| !requirement.fact.is_well_formed())
+    {
+        return Err(RegistryError::InvalidCapability {
+            capability: spec.id.clone(),
+            reason: format!("required value kind `{}` is malformed", requirement.fact),
+        });
+    }
+    if let Some(produced) = spec
+        .produces
+        .iter()
+        .find(|produced| !produced.is_well_formed())
+    {
+        return Err(RegistryError::InvalidCapability {
+            capability: spec.id.clone(),
+            reason: format!("produced value kind `{produced}` is malformed"),
         });
     }
     let required = spec
@@ -970,6 +1105,12 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
 }
 
 fn validate_provider(descriptor: &ProviderDescriptor) -> Result<(), RegistryError> {
+    if !descriptor.id.is_well_formed() {
+        return Err(RegistryError::InvalidProvider {
+            provider: descriptor.id.clone(),
+            reason: "provider identity is malformed".to_owned(),
+        });
+    }
     if !is_sha256_identity(&descriptor.implementation_digest) {
         return Err(RegistryError::InvalidProvider {
             provider: descriptor.id.clone(),
@@ -1000,12 +1141,7 @@ fn validate_request_body(body: &CapabilityRequestBody) -> Result<(), CapabilityR
         .requires
         .iter()
         .map(|requirement| {
-            validate_exact_identity(
-                "required fact",
-                &requirement.fact.package,
-                &requirement.fact.name,
-                &requirement.fact.version,
-            )?;
+            validate_value_kind("required value kind", &requirement.fact)?;
             Ok(requirement.fact.clone())
         })
         .collect::<Result<BTreeSet<_>, CapabilityRequestError>>()?;
@@ -1018,7 +1154,7 @@ fn validate_request_body(body: &CapabilityRequestBody) -> Result<(), CapabilityR
         .produces
         .iter()
         .map(|fact| {
-            validate_exact_identity("produced fact", &fact.package, &fact.name, &fact.version)?;
+            validate_value_kind("produced value kind", fact)?;
             Ok(fact.clone())
         })
         .collect::<Result<BTreeSet<_>, CapabilityRequestError>>()?;
@@ -1029,12 +1165,7 @@ fn validate_request_body(body: &CapabilityRequestBody) -> Result<(), CapabilityR
     }
     let mut inputs = BTreeMap::new();
     for input in &body.inputs {
-        validate_exact_identity(
-            "input fact",
-            &input.fact_type.package,
-            &input.fact_type.name,
-            &input.fact_type.version,
-        )?;
+        validate_value_kind("input value kind", &input.fact_type)?;
         if inputs.insert(input.fact_type.clone(), input).is_some() {
             return Err(CapabilityRequestError::DuplicateInput(
                 input.fact_type.clone(),
@@ -1203,9 +1334,30 @@ fn validate_exact_identity(
     name: &str,
     version: &str,
 ) -> Result<(), CapabilityRequestError> {
-    if package.trim().is_empty() || name.trim().is_empty() || version.trim().is_empty() {
+    if package.trim().is_empty()
+        || name.trim().is_empty()
+        || version.trim().is_empty()
+        || package.contains('/')
+        || package.contains('@')
+        || name.contains('/')
+        || name.contains('@')
+        || version.contains('/')
+        || version.contains('@')
+    {
         return Err(CapabilityRequestError::InvalidNeed(format!(
-            "{label} identity contains an empty part"
+            "{label} identity is malformed"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_value_kind(
+    label: &str,
+    value_kind: &ValueKindId,
+) -> Result<(), CapabilityRequestError> {
+    if !value_kind.is_well_formed() {
+        return Err(CapabilityRequestError::InvalidNeed(format!(
+            "{label} `{value_kind}` is malformed"
         )));
     }
     Ok(())
@@ -1224,6 +1376,40 @@ fn canonical_digest(value: &impl Serialize) -> Result<String, String> {
     serde_json_canonicalizer::to_vec(value)
         .map(|bytes| sha256_identity(&bytes))
         .map_err(|error| error.to_string())
+}
+
+fn validate_fact_parts(
+    value_kind: &ValueKindId,
+    extensions: &BTreeMap<String, Value>,
+) -> Result<(), FactIdentityError> {
+    if !value_kind.is_well_formed() {
+        return Err(FactIdentityError::InvalidValueKind(value_kind.clone()));
+    }
+    for reserved in ["id", "value_kind", "payload"] {
+        if extensions.contains_key(reserved) {
+            return Err(FactIdentityError::ReservedExtension(reserved.to_owned()));
+        }
+    }
+    Ok(())
+}
+
+fn semantic_fact_digest(
+    value_kind: &ValueKindId,
+    payload: &Value,
+    extensions: &BTreeMap<String, Value>,
+) -> Result<FactId, FactIdentityError> {
+    validate_fact_parts(value_kind, extensions)?;
+    let mut envelope = serde_json::Map::new();
+    envelope.insert(
+        "value_kind".to_owned(),
+        serde_json::to_value(value_kind)
+            .map_err(|error| FactIdentityError::Serialization(error.to_string()))?,
+    );
+    envelope.insert("payload".to_owned(), payload.clone());
+    envelope.extend(extensions.clone());
+    canonical_digest(&Value::Object(envelope))
+        .map(FactId)
+        .map_err(FactIdentityError::Serialization)
 }
 
 fn validate_outputs(spec: &CapabilitySpec, outputs: &[ProducedFact]) -> Result<(), ExecutionError> {
@@ -1251,14 +1437,7 @@ fn fact_digest(
 ) -> Result<String, RegistryError> {
     let bytes = serde_json::to_vec(&(fact_type, coverage, payload, derivation))
         .map_err(|error| RegistryError::Serialization(error.to_string()))?;
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity(7 + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        let _ = write!(output, "{byte:02x}");
-    }
-    Ok(output)
+    Ok(sha256_identity(&bytes))
 }
 
 fn request_digest(body: &CapabilityRequestBody) -> Result<String, CapabilityRequestError> {
@@ -1429,6 +1608,81 @@ mod tests {
         FactType::new("test", name, "1")
     }
 
+    #[test]
+    fn fact_type_is_a_wire_compatible_value_kind() {
+        let dialect = DialectId::new("org.gooi.conversation", "1.0.0");
+        let value_kind = ValueKindId::in_dialect(dialect.clone(), "message");
+        let compatibility_name: FactType = value_kind.clone();
+
+        assert_eq!(compatibility_name.dialect(), dialect);
+        assert_eq!(
+            compatibility_name.to_string(),
+            "org.gooi.conversation/message@1.0.0"
+        );
+        assert_eq!(
+            serde_json::to_value(&compatibility_name).unwrap(),
+            json!({
+                "package": "org.gooi.conversation",
+                "name": "message",
+                "version": "1.0.0"
+            })
+        );
+    }
+
+    #[test]
+    fn semantic_fact_identity_is_exact_and_content_sensitive() {
+        let kind = ValueKindId::new("org.gooi.conversation", "message", "1.0.0");
+        let first = Fact::new(kind.clone(), json!({"body": "hello"})).unwrap();
+        let replay = Fact::new(kind.clone(), json!({"body": "hello"})).unwrap();
+        let changed_payload = Fact::new(kind, json!({"body": "goodbye"})).unwrap();
+        let changed_kind = Fact::new(
+            ValueKindId::new("org.gooi.conversation", "notice", "1.0.0"),
+            json!({"body": "hello"}),
+        )
+        .unwrap();
+
+        assert_eq!(first.id, replay.id);
+        assert_ne!(first.id, changed_payload.id);
+        assert_ne!(first.id, changed_kind.id);
+        assert!(first.id.as_str().starts_with("sha256:"));
+        first.validate().unwrap();
+    }
+
+    #[test]
+    fn unknown_semantic_extensions_round_trip_and_change_fact_identity() {
+        let kind = ValueKindId::new("org.gooi.conversation", "message", "1.0.0");
+        let plain = Fact::new(kind.clone(), json!({"body": "hello"})).unwrap();
+        let extended = Fact::with_extensions(
+            kind,
+            json!({"body": "hello"}),
+            BTreeMap::from([
+                (
+                    "org.example.future/retention".to_owned(),
+                    json!({"days": 30}),
+                ),
+                ("org.example.future/labels".to_owned(), json!(["reviewed"])),
+            ]),
+        )
+        .unwrap();
+
+        assert_ne!(plain.id, extended.id);
+        let encoded = serde_json::to_value(&extended).unwrap();
+        assert_eq!(encoded["org.example.future/retention"], json!({"days": 30}));
+        let decoded: Fact = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), encoded);
+        assert_eq!(decoded, extended);
+        decoded.validate().unwrap();
+
+        let mut tampered = decoded;
+        tampered
+            .extensions
+            .insert("org.example.future/labels".to_owned(), json!(["changed"]));
+        assert!(matches!(
+            tampered.validate(),
+            Err(FactIdentityError::IdentityMismatch { .. })
+        ));
+    }
+
     fn capability(
         name: &str,
         requires: Vec<Requirement>,
@@ -1440,6 +1694,37 @@ mod tests {
             produces,
             default_conformance_suite: format!("test/{name}@1"),
         }
+    }
+
+    #[test]
+    fn malformed_value_kinds_cannot_enter_the_registry() {
+        let malformed = FactType::new("test/nested", "output", "1");
+        let spec = capability("bad_output", Vec::new(), vec![malformed]);
+
+        assert!(matches!(
+            CapabilityRegistry::default().register_spec(spec),
+            Err(RegistryError::InvalidCapability { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_value_kinds_cannot_enter_through_a_request_document() {
+        let body = CapabilityRequestBody {
+            capability: CapabilityId::new("test", "generate", "1"),
+            requires: Vec::new(),
+            inputs: Vec::new(),
+            produces: vec![FactType::new("test/nested", "output", "1")],
+            conformance_suite: "test/generate@1".to_owned(),
+        };
+        let request = CapabilityRequest {
+            request_id: format!("sha256:{}", "0".repeat(64)),
+            body,
+        };
+
+        assert!(matches!(
+            request.validate(),
+            Err(CapabilityRequestError::InvalidNeed(_))
+        ));
     }
 
     struct CopyProvider {
