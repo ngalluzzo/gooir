@@ -23,7 +23,7 @@ use gooir_capability::{
     CapabilityId, CapabilitySpec, Fact, FactAcceptance, InputPort, OutputPort, PortName,
     ValueKindId,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const ORACLE_BYTES: &[u8] = include_bytes!("../oracles/tasks_entities.json");
@@ -34,6 +34,135 @@ const ORACLE_LOCATOR: &str = "crate:gooir-datamodel-conformance/oracles/tasks_en
 const CHECK_CAPABILITY: &str = "exact-capability-coordinate";
 const CHECK_SOURCE: &str = "exact-source-fact";
 const CHECK_OUTPUT: &str = "exact-named-output";
+
+/// Versioned wire protocol for this fixture-scoped attester's request.
+///
+/// This is deliberately owned by the product-specific conformance crate, not
+/// by `gooir-capability`: different attesters may expose different transports
+/// while consuming the same neutral capability documents.
+pub const ASSESSMENT_REQUEST_PROTOCOL: &str =
+    "org.gooi.conformance.author-data-model-tasks-entities/request/v1";
+
+/// One strict request to the independently deployed fixture attester.
+///
+/// The request embeds the complete invocation, the exact result including any
+/// evidence it carries, and the candidate that embeds that same result. The
+/// measured attester artifact is supplied by the execution host and remains
+/// distinct from the selected producer artifact.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssessmentRequest {
+    protocol: String,
+    invocation: CapabilityInvocation,
+    result: CapabilityResult,
+    candidate: CapabilityCandidate,
+    attester_artifact_digest: ArtifactDigest,
+}
+
+impl AssessmentRequest {
+    /// Constructs one request only from a complete, exactly correlated chain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any content identity or correlation is invalid,
+    /// the suite is unsupported, or the measured attester is not independent
+    /// from the selected producer.
+    pub fn new(
+        invocation: CapabilityInvocation,
+        result: CapabilityResult,
+        candidate: CapabilityCandidate,
+        attester_artifact_digest: ArtifactDigest,
+    ) -> Result<Self, AttesterError> {
+        let request = Self {
+            protocol: ASSESSMENT_REQUEST_PROTOCOL.to_owned(),
+            invocation,
+            result,
+            candidate,
+            attester_artifact_digest,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    /// Revalidates the exact request protocol, documents, and correlations.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation errors as [`Self::new`].
+    pub fn validate(&self) -> Result<(), AttesterError> {
+        if self.protocol != ASSESSMENT_REQUEST_PROTOCOL {
+            return Err(AttesterError::RequestProtocolMismatch {
+                actual: self.protocol.clone(),
+            });
+        }
+        self.invocation
+            .validate()
+            .map_err(AttesterError::Protocol)?;
+        self.result
+            .validate_against(&self.invocation)
+            .map_err(AttesterError::Protocol)?;
+        self.candidate
+            .validate_against(&self.invocation)
+            .map_err(AttesterError::Protocol)?;
+        if self.candidate.result != self.result {
+            return Err(AttesterError::ResultCandidateMismatch);
+        }
+        if self.invocation.conformance_suite != suite_id() {
+            return Err(AttesterError::UnsupportedSuite(
+                self.invocation.conformance_suite.clone(),
+            ));
+        }
+        let selected = &self.invocation.selection.offer;
+        if selected.implementation == implementation_id()
+            || selected.artifact_digest == self.attester_artifact_digest
+        {
+            return Err(AttesterError::Authority(
+                AuthorityError::AttesterNotIndependent,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns the exact complete invocation embedded by this request.
+    #[must_use]
+    pub const fn invocation(&self) -> &CapabilityInvocation {
+        &self.invocation
+    }
+
+    /// Returns the exact result embedded by this request.
+    #[must_use]
+    pub const fn result(&self) -> &CapabilityResult {
+        &self.result
+    }
+
+    /// Returns the candidate that embeds the exact request result.
+    #[must_use]
+    pub const fn candidate(&self) -> &CapabilityCandidate {
+        &self.candidate
+    }
+
+    /// Returns the host-measured attester artifact digest.
+    #[must_use]
+    pub const fn attester_artifact_digest(&self) -> &ArtifactDigest {
+        &self.attester_artifact_digest
+    }
+
+    /// Produces an assessment through the same validated path used by the
+    /// attester executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when request validation or fixture conformance fails.
+    pub fn assess(&self) -> Result<ConformanceAssessment, AttesterError> {
+        self.validate()?;
+        assess(
+            &self.invocation,
+            &self.result,
+            &self.candidate,
+            self.attester_artifact_digest.clone(),
+        )
+    }
+}
 
 /// The one suite implemented by this fixture-scoped attester.
 pub fn suite_id() -> ConformanceSuiteId {
@@ -236,6 +365,7 @@ fn sha256_identity(bytes: &[u8]) -> String {
 /// A refusal to produce an assessment from malformed or unsupported input.
 #[derive(Debug)]
 pub enum AttesterError {
+    RequestProtocolMismatch { actual: String },
     Protocol(ProtocolError),
     Authority(AuthorityError),
     Oracle(String),
@@ -247,6 +377,10 @@ pub enum AttesterError {
 impl fmt::Display for AttesterError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::RequestProtocolMismatch { actual } => write!(
+                formatter,
+                "unsupported assessment request protocol {actual}; expected {ASSESSMENT_REQUEST_PROTOCOL}"
+            ),
             Self::Protocol(error) => write!(formatter, "invalid capability chain: {error}"),
             Self::Authority(error) => write!(formatter, "assessment construction failed: {error}"),
             Self::Oracle(error) => write!(formatter, "checked-in oracle is invalid: {error}"),
@@ -281,6 +415,16 @@ mod tests {
 
     fn digest(byte: char) -> ArtifactDigest {
         ArtifactDigest::parse(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
+    }
+
+    fn request_evidence(byte: char) -> EvidenceRef {
+        EvidenceRef::new(
+            EvidenceKindId::new("test.evidence", "host-result", "1.0.0"),
+            EvidenceDigest::parse(format!("sha256:{}", byte.to_string().repeat(64))).unwrap(),
+            format!("test:host-result:{byte}"),
+            BTreeMap::new(),
+        )
+        .unwrap()
     }
 
     fn producer() -> ImplementationId {
@@ -348,6 +492,28 @@ mod tests {
         )
     }
 
+    fn evidenced_chain() -> (CapabilityInvocation, CapabilityResult, CapabilityCandidate) {
+        let (invocation, result, _) = valid_chain();
+        let CapabilityOutcome::Produced {
+            outputs,
+            extensions,
+        } = result.outcome
+        else {
+            unreachable!()
+        };
+        let result = CapabilityResult::produced(
+            &invocation,
+            outputs,
+            extensions,
+            vec![request_evidence('e')],
+            result.extensions,
+        )
+        .unwrap();
+        let candidate =
+            CapabilityCandidate::new(&invocation, result.clone(), BTreeMap::new()).unwrap();
+        (invocation, result, candidate)
+    }
+
     fn assert_failed(assessment: &ConformanceAssessment, check_name: &str) {
         assert_eq!(assessment.outcome, AssessmentOutcome::Failed);
         assert_eq!(
@@ -376,6 +542,97 @@ mod tests {
                     && !check.evidence.is_empty())
         );
         assert!(!assessment.evidence.is_empty());
+    }
+
+    #[test]
+    fn public_assessment_request_round_trips_and_drives_the_exact_attester() {
+        let (invocation, result, candidate) = evidenced_chain();
+        let request = AssessmentRequest::new(
+            invocation.clone(),
+            result.clone(),
+            candidate.clone(),
+            digest('b'),
+        )
+        .unwrap();
+
+        assert_eq!(request.invocation(), &invocation);
+        assert_eq!(request.result(), &result);
+        assert_eq!(request.candidate(), &candidate);
+        assert_eq!(request.attester_artifact_digest(), &digest('b'));
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: AssessmentRequest = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, request);
+        decoded.validate().unwrap();
+
+        let assessment = decoded.assess().unwrap();
+        assert_eq!(assessment.outcome, AssessmentOutcome::Passed);
+        assert_eq!(assessment.result_id, result.result_id);
+        assert_eq!(assessment.candidate_id, candidate.candidate_id);
+        assert_eq!(assessment.authority.attester.artifact_digest, digest('b'));
+    }
+
+    #[test]
+    fn assessment_request_rejects_unknown_fields_and_wrong_protocol_version() {
+        let (invocation, result, candidate) = evidenced_chain();
+        let request = AssessmentRequest::new(invocation, result, candidate, digest('b')).unwrap();
+        let mut unknown = serde_json::to_value(&request).unwrap();
+        unknown["lease_token"] = json!("must-not-enter-attester-wire");
+        assert!(serde_json::from_value::<AssessmentRequest>(unknown).is_err());
+
+        let mut wrong_protocol = serde_json::to_value(request).unwrap();
+        wrong_protocol["protocol"] =
+            json!("org.gooi.conformance.author-data-model-tasks-entities/request/v2");
+        let wrong_protocol: AssessmentRequest = serde_json::from_value(wrong_protocol).unwrap();
+        assert!(matches!(
+            wrong_protocol.validate(),
+            Err(AttesterError::RequestProtocolMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn assessment_request_rejects_chain_and_attester_substitution() {
+        let (invocation, result, candidate) = evidenced_chain();
+        let CapabilityOutcome::Produced {
+            outputs,
+            extensions,
+        } = &result.outcome
+        else {
+            unreachable!()
+        };
+        let substituted_result = CapabilityResult::produced(
+            &invocation,
+            outputs.clone(),
+            extensions.clone(),
+            vec![request_evidence('f')],
+            result.extensions.clone(),
+        )
+        .unwrap();
+        let substituted_candidate =
+            CapabilityCandidate::new(&invocation, substituted_result, BTreeMap::new()).unwrap();
+        assert!(matches!(
+            AssessmentRequest::new(
+                invocation.clone(),
+                result,
+                substituted_candidate,
+                digest('b')
+            ),
+            Err(AttesterError::ResultCandidateMismatch)
+        ));
+
+        assert!(matches!(
+            AssessmentRequest::new(invocation, candidate.result.clone(), candidate, digest('a')),
+            Err(AttesterError::Authority(
+                AuthorityError::AttesterNotIndependent
+            ))
+        ));
+    }
+
+    #[test]
+    fn assessment_request_does_not_invent_a_host_evidence_requirement() {
+        let (invocation, result, candidate) = valid_chain();
+        assert!(result.evidence.is_empty());
+        let request = AssessmentRequest::new(invocation, result, candidate, digest('b')).unwrap();
+        assert_eq!(request.assess().unwrap().outcome, AssessmentOutcome::Passed);
     }
 
     #[test]
