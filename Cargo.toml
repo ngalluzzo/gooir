@@ -8,7 +8,11 @@ members = [
     "crates/buzz-surface-profile",
     "crates/data-model-convergence",
     "crates/entity-spec",
+    "crates/fleetd-direct-conversation-attester",
+    "crates/fleetd-direct-conversation-command-abi",
     "crates/fleetd-direct-conversation-contract",
+    "crates/fleetd-direct-conversation-reqwest-provider",
+    "crates/fleetd-direct-conversation-ureq-provider",
     "crates/fleetd-control-lifter",
     "crates/fleetd-control-projection",
     "crates/fleetd-capability-pack",
@@ -59,7 +63,11 @@ buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 data-model-convergence = { path = "crates/data-model-convergence" }
 entity-spec = { path = "crates/entity-spec" }
+fleetd-direct-conversation-attester = { path = "crates/fleetd-direct-conversation-attester" }
+fleetd-direct-conversation-command-abi = { path = "crates/fleetd-direct-conversation-command-abi" }
 fleetd-direct-conversation-contract = { path = "crates/fleetd-direct-conversation-contract" }
+fleetd-direct-conversation-reqwest-provider = { path = "crates/fleetd-direct-conversation-reqwest-provider" }
+fleetd-direct-conversation-ureq-provider = { path = "crates/fleetd-direct-conversation-ureq-provider" }
 fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }
 fleetd-control-projection = { path = "crates/fleetd-control-projection" }
 fleetd-capability-pack = { path = "crates/fleetd-capability-pack" }
@@ -105,5 +113,9 @@ wasmtime = { version = "=48.0.1", default-features = false, features = ["craneli
 wasmtime-wasi = { version = "=48.0.1", default-features = false, features = ["p1"] }
 wasmparser = "=0.254.0"
 wat = "1"
-nix = { version = "0.31.3", features = ["fs"] }
+nix = { version = "=0.31.3", features = ["fs"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+attohttpc = { version = "=0.30.1", default-features = false }
+reqwest = { version = "=0.12.28", default-features = false, features = ["blocking"] }
+ureq = { version = "=3.1.4", default-features = false, features = ["json"] }
+url = "=2.5.8"
