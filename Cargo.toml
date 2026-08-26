@@ -88,4 +88,6 @@ sha2 = "0.10"
 syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 toml = "1"
+rustix = { version = "1.1.4", features = ["fs"] }
+nix = { version = "0.31.3", features = ["fs"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }

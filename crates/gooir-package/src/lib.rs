@@ -1,11 +1,18 @@
 //! Structural protocol for independently installable GOOIR packages.
 //!
-//! This crate validates package declarations and their content identity. It
-//! does not read resource bytes, compile schemas, install declarations, select
-//! implementations, execute code, establish conformance, or admit facts.
-//! It also cannot prove that a direct dependency exports a referenced value
-//! kind or capability. A later installer must resolve every nonlocal identity
-//! against exact dependency handles before making declarations available.
+//! This crate validates package declarations, copies exact package-local bytes,
+//! and installs their identities into an in-memory registry. It does not
+//! compile schemas, select or execute implementations, establish conformance,
+//! admit facts, discover packages, fetch dependencies, or solve versions.
+
+mod loader;
+mod registry;
+
+pub use loader::{
+    LoadLimits, OwnedResource, PACKAGE_MANIFEST_FILE, PackageLoadError, ValidatedPackage,
+    load_local_package,
+};
+pub use registry::{InstallError, InstalledPackage, PackageRegistry};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -267,6 +274,16 @@ pub struct DialectDeclaration {
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// One exact conformance-suite identity exported by this package.
+///
+/// This is an ownership declaration only. It does not contain an attester,
+/// execute a check, or establish admission.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConformanceSuiteDeclaration {
+    pub id: ConformanceSuiteId,
+    pub extensions: BTreeMap<String, Value>,
+}
+
 /// Availability declaration whose measured artifact digest and final offer ID
 /// can only be formed by a later byte loader.
 ///
@@ -295,6 +312,7 @@ pub struct PackageManifest {
     pub dependencies: Vec<PackageDependency>,
     pub resources: Vec<PackageResource>,
     pub dialects: Vec<DialectDeclaration>,
+    pub conformance_suites: Vec<ConformanceSuiteDeclaration>,
     pub capabilities: Vec<CapabilitySpec>,
     pub implementation_offers: Vec<ImplementationOfferDeclaration>,
     pub extensions: BTreeMap<String, Value>,
@@ -314,6 +332,7 @@ impl PackageManifest {
         dependencies: Vec<PackageDependency>,
         resources: Vec<PackageResource>,
         dialects: Vec<DialectDeclaration>,
+        conformance_suites: Vec<ConformanceSuiteDeclaration>,
         capabilities: Vec<CapabilitySpec>,
         implementation_offers: Vec<ImplementationOfferDeclaration>,
         extensions: BTreeMap<String, Value>,
@@ -324,6 +343,7 @@ impl PackageManifest {
             dependencies,
             resources,
             dialects,
+            conformance_suites,
             capabilities,
             implementation_offers,
             extensions,
@@ -365,6 +385,7 @@ impl PackageManifest {
                 "dependencies",
                 "resources",
                 "dialects",
+                "conformance_suites",
                 "capabilities",
                 "implementation_offers",
             ],
@@ -373,6 +394,7 @@ impl PackageManifest {
         validate_dependencies(&self.package, &self.dependencies)?;
         let resource_names = validate_resources(&self.resources)?;
         validate_dialects(&self.dialects, &resource_names)?;
+        validate_conformance_suites(&self.conformance_suites)?;
         validate_capabilities(&self.capabilities)?;
         validate_offers(&self.implementation_offers, &resource_names)?;
         Ok(())
@@ -563,6 +585,13 @@ struct WireDialectDeclaration {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+struct WireConformanceSuiteDeclaration {
+    id: String,
+    #[serde(default, flatten)]
+    extensions: BTreeMap<String, Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 struct WireInputPort {
     name: String,
     value_kind: String,
@@ -606,6 +635,7 @@ struct WirePackageManifest {
     dependencies: Vec<WirePackageDependency>,
     resources: Vec<WirePackageResource>,
     dialects: Vec<WireDialectDeclaration>,
+    conformance_suites: Vec<WireConformanceSuiteDeclaration>,
     capabilities: Vec<WireCapabilitySpec>,
     implementation_offers: Vec<WireOfferDeclaration>,
     #[serde(default, flatten)]
@@ -619,6 +649,7 @@ struct WirePackageManifestBody {
     dependencies: Vec<WirePackageDependency>,
     resources: Vec<WirePackageResource>,
     dialects: Vec<WireDialectDeclaration>,
+    conformance_suites: Vec<WireConformanceSuiteDeclaration>,
     capabilities: Vec<WireCapabilitySpec>,
     implementation_offers: Vec<WireOfferDeclaration>,
     #[serde(flatten)]
@@ -639,6 +670,7 @@ impl From<&PackageManifest> for WirePackageManifestBody {
             dependencies: wire_dependencies(&manifest.dependencies),
             resources: wire_resources(&manifest.resources),
             dialects: wire_dialects(&manifest.dialects),
+            conformance_suites: wire_conformance_suites(&manifest.conformance_suites),
             capabilities: wire_capabilities(&manifest.capabilities),
             implementation_offers: wire_offers(&manifest.implementation_offers),
             extensions: manifest.extensions.clone(),
@@ -655,6 +687,7 @@ impl From<&PackageManifest> for WirePackageManifest {
             dependencies: wire_dependencies(&manifest.dependencies),
             resources: wire_resources(&manifest.resources),
             dialects: wire_dialects(&manifest.dialects),
+            conformance_suites: wire_conformance_suites(&manifest.conformance_suites),
             capabilities: wire_capabilities(&manifest.capabilities),
             implementation_offers: wire_offers(&manifest.implementation_offers),
             extensions: manifest.extensions.clone(),
@@ -704,6 +737,17 @@ impl TryFrom<WirePackageManifest> for PackageManifest {
                 .into_iter()
                 .map(parse_dialect)
                 .collect::<Result<_, _>>()?,
+            conformance_suites: wire
+                .conformance_suites
+                .into_iter()
+                .map(|suite| {
+                    Ok(ConformanceSuiteDeclaration {
+                        id: ConformanceSuiteId::parse(&suite.id)
+                            .map_err(|error| invalid("conformance suite", error))?,
+                        extensions: suite.extensions,
+                    })
+                })
+                .collect::<Result<_, PackageManifestError>>()?,
             capabilities: wire
                 .capabilities
                 .into_iter()
@@ -826,6 +870,18 @@ fn wire_dialects(items: &[DialectDeclaration]) -> Vec<WireDialectDeclaration> {
                     extensions: value_kind.extensions.clone(),
                 })
                 .collect(),
+            extensions: item.extensions.clone(),
+        })
+        .collect()
+}
+
+fn wire_conformance_suites(
+    items: &[ConformanceSuiteDeclaration],
+) -> Vec<WireConformanceSuiteDeclaration> {
+    items
+        .iter()
+        .map(|item| WireConformanceSuiteDeclaration {
+            id: item.id.to_string(),
             extensions: item.extensions.clone(),
         })
         .collect()
@@ -991,6 +1047,22 @@ fn validate_capabilities(capabilities: &[CapabilitySpec]) -> Result<(), PackageM
     Ok(())
 }
 
+fn validate_conformance_suites(
+    suites: &[ConformanceSuiteDeclaration],
+) -> Result<(), PackageManifestError> {
+    validate_sorted_unique("conformance suites", suites.iter().map(|suite| &suite.id))?;
+    for suite in suites {
+        ConformanceSuiteId::parse(&suite.id.to_string())
+            .map_err(|error| invalid("conformance suite", error))?;
+        validate_extensions(
+            &format!("conformance suite `{}`", suite.id),
+            &suite.extensions,
+            &["id"],
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_offers(
     offers: &[ImplementationOfferDeclaration],
     resource_names: &BTreeSet<ResourceName>,
@@ -1097,7 +1169,7 @@ fn is_sha256(value: &str) -> bool {
     })
 }
 
-fn sha256_bytes(bytes: &[u8]) -> String {
+pub(crate) fn sha256_bytes(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut identity = String::with_capacity(71);
     identity.push_str("sha256:");
@@ -1291,6 +1363,10 @@ mod tests {
                 ],
                 extensions: BTreeMap::new(),
             }],
+            vec![ConformanceSuiteDeclaration {
+                id: ConformanceSuiteId::parse("org.example.conformance/convert@1.0.0").unwrap(),
+                extensions: BTreeMap::new(),
+            }],
             vec![capability.clone()],
             vec![ImplementationOfferDeclaration {
                 implementation: ImplementationId::new(
@@ -1366,6 +1442,9 @@ mod tests {
         manifest.dialects[0].value_kinds[0]
             .extensions
             .insert("x.kind".to_owned(), json!([2, 1]));
+        manifest.conformance_suites[0]
+            .extensions
+            .insert("x.suite".to_owned(), json!(["opaque", 1]));
         manifest.capabilities[0]
             .extensions
             .insert("x.capability".to_owned(), json!(["z", "a"]));
@@ -1383,6 +1462,7 @@ mod tests {
             manifest.dependencies,
             manifest.resources,
             manifest.dialects,
+            manifest.conformance_suites,
             manifest.capabilities,
             manifest.implementation_offers,
             manifest.extensions,
@@ -1402,6 +1482,7 @@ mod tests {
             changed.dependencies,
             changed.resources,
             changed.dialects,
+            changed.conformance_suites,
             changed.capabilities,
             changed.implementation_offers,
             changed.extensions,
@@ -1453,6 +1534,16 @@ mod tests {
             write_manifest(&offer),
             Err(PackageManifestError::ReservedExtension { key, .. }) if key == "artifact"
         ));
+
+        let mut suite = sample_manifest();
+        suite.conformance_suites[0]
+            .extensions
+            .insert("id".to_owned(), json!(null));
+        assert!(matches!(
+            write_manifest(&suite),
+            Err(PackageManifestError::ReservedExtension { scope, key })
+                if scope.starts_with("conformance suite") && key == "id"
+        ));
     }
 
     #[test]
@@ -1479,6 +1570,29 @@ mod tests {
         assert!(matches!(
             write_manifest(&duplicate),
             Err(PackageManifestError::UnsortedOrDuplicateSet(scope)) if scope == "dependencies"
+        ));
+
+        let mut duplicate_suite = sample_manifest();
+        duplicate_suite
+            .conformance_suites
+            .push(duplicate_suite.conformance_suites[0].clone());
+        assert!(matches!(
+            write_manifest(&duplicate_suite),
+            Err(PackageManifestError::UnsortedOrDuplicateSet(scope))
+                if scope == "conformance suites"
+        ));
+    }
+
+    #[test]
+    fn arbitrary_default_conformance_suite_identity_is_refused() {
+        let encoded = write_manifest(&sample_manifest()).unwrap();
+        let mut value: Value = serde_json::from_str(&encoded).unwrap();
+        value["capabilities"][0]["default_conformance_suite"] = json!("arbitrary");
+        let malformed = serde_json::to_string(&value).unwrap();
+        assert!(matches!(
+            read_manifest(&malformed),
+            Err(PackageManifestError::InvalidField { scope, .. })
+                if scope == "capability conformance suite"
         ));
     }
 
@@ -1554,6 +1668,7 @@ mod tests {
                 unsafe_number.dependencies,
                 unsafe_number.resources,
                 unsafe_number.dialects,
+                unsafe_number.conformance_suites,
                 unsafe_number.capabilities,
                 unsafe_number.implementation_offers,
                 unsafe_number.extensions,
