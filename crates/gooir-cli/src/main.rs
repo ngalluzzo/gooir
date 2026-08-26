@@ -89,14 +89,26 @@ fn print_answer(target: &FactType, given: &Answer) {
         Answer::Blocked(plan) => {
             println!("cannot derive {target} yet:");
             for need in &plan.needs {
-                println!("  need {}", need.capability);
+                println!("  need {}", need.specification.id);
             }
         }
         Answer::Unreachable(error) => println!("no route to {target}: {error}"),
         Answer::Refused(RequestRefusal::AmbiguousInput(fact)) => {
             println!("refused: two inputs both declare {fact}");
         }
-        Answer::Failed(error) => println!("a provider failed deriving {target}: {error}"),
+        Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
+            capability,
+            value_kind,
+        }) => println!(
+            "refused: legacy adapter cannot bind repeated input kind {value_kind} for {capability}"
+        ),
+        Answer::Refused(RequestRefusal::LegacyAdapterRepeatedOutputKind {
+            capability,
+            value_kind,
+        }) => println!(
+            "refused: legacy adapter cannot bind repeated output kind {value_kind} for {capability}"
+        ),
+        Answer::Failed(error) => println!("legacy execution failed deriving {target}: {error}"),
     }
     println!("\n-> {}", given.remedy());
 }
@@ -189,7 +201,11 @@ fn run() -> Result<(), String> {
             for fact in &facts {
                 let producers: Vec<String> = registry
                     .specs()
-                    .filter(|s| s.produces.contains(fact))
+                    .filter(|spec| {
+                        spec.output_ports
+                            .iter()
+                            .any(|port| &port.value_kind == fact)
+                    })
                     .map(|s| s.id.name.clone())
                     .collect();
                 let how = if producers.is_empty() {
@@ -215,11 +231,14 @@ fn run() -> Result<(), String> {
                     "NEED"
                 };
                 println!("  {mark}  {}", spec.id);
-                for r in &spec.requires {
-                    println!("          <- {} ({:?})", r.fact, r.acceptance);
+                for port in &spec.input_ports {
+                    println!(
+                        "          <- {}: {} ({:?})",
+                        port.name, port.value_kind, port.acceptance
+                    );
                 }
-                for p in &spec.produces {
-                    println!("          -> {p}");
+                for port in &spec.output_ports {
+                    println!("          -> {}: {}", port.name, port.value_kind);
                 }
             }
             Ok(())
@@ -272,10 +291,10 @@ fn run() -> Result<(), String> {
             }
             println!(
                 "\n{}",
-                if plan.is_executable() {
-                    "executable"
+                if plan.has_provider_for_every_step() {
+                    "legacy provider binding present for every plan step"
                 } else {
-                    "not executable: see `gooir needs`"
+                    "legacy provider binding missing: see `gooir needs`"
                 }
             );
             Ok(())

@@ -8,10 +8,10 @@ pub fn known_facts(registry: &CapabilityRegistry) -> Vec<FactType> {
     let mut facts: Vec<FactType> = registry
         .specs()
         .flat_map(|spec| {
-            spec.produces
+            spec.output_ports
                 .iter()
-                .cloned()
-                .chain(spec.requires.iter().map(|r| r.fact.clone()))
+                .map(|port| port.value_kind.clone())
+                .chain(spec.input_ports.iter().map(|port| port.value_kind.clone()))
         })
         .collect();
     facts.sort();
@@ -45,26 +45,44 @@ pub fn resolve(registry: &CapabilityRegistry, wanted: &str) -> Result<FactType, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gooir_capability::{CapabilitySpec, Requirement};
+    use gooir_capability::{CapabilitySpec, InputPort, OutputPort, PortName};
 
     fn fact(package: &str, name: &str) -> FactType {
         FactType::new(package, name, "1.0.0")
+    }
+
+    fn port(name: &str) -> PortName {
+        PortName::parse(name).unwrap()
     }
 
     fn registry() -> CapabilityRegistry {
         let mut r = CapabilityRegistry::default();
         r.register_spec(CapabilitySpec {
             id: gooir_capability::CapabilityId::new("t", "one", "1.0.0"),
-            requires: vec![Requirement::complete(fact("t.source", "input"))],
-            produces: vec![fact("t.artifact", "unique_name")],
+            input_ports: vec![InputPort::complete(
+                port("source"),
+                fact("t.source", "input"),
+            )],
+            output_ports: vec![OutputPort::new(
+                port("result"),
+                fact("t.artifact", "unique_name"),
+            )],
             default_conformance_suite: "t.suite@1".to_owned(),
+            extensions: Default::default(),
         })
         .unwrap();
         r.register_spec(CapabilitySpec {
             id: gooir_capability::CapabilityId::new("t", "two", "1.0.0"),
-            requires: vec![Requirement::complete(fact("t.source", "input"))],
-            produces: vec![fact("t.a", "shared"), fact("t.b", "shared")],
+            input_ports: vec![InputPort::complete(
+                port("source"),
+                fact("t.source", "input"),
+            )],
+            output_ports: vec![
+                OutputPort::new(port("first"), fact("t.a", "shared")),
+                OutputPort::new(port("second"), fact("t.b", "shared")),
+            ],
             default_conformance_suite: "t.suite@1".to_owned(),
+            extensions: Default::default(),
         })
         .unwrap();
         r

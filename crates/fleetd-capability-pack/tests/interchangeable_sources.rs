@@ -21,8 +21,8 @@ fn authored_and_lifted_sources_reach_the_same_waist_fact() {
         .plan([fleetd_capability_pack::openapi_source_fact()], &target)
         .expect("lifted route");
 
-    assert!(from_authored.is_executable());
-    assert!(from_lifted.is_executable());
+    assert!(from_authored.has_provider_for_every_step());
+    assert!(from_lifted.has_provider_for_every_step());
     assert_eq!(from_authored.target, from_lifted.target);
     assert_ne!(
         from_authored.steps, from_lifted.steps,

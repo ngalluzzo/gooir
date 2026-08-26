@@ -30,8 +30,9 @@ pub struct RootFact {
 pub struct TerminalFact {
     pub fact: FactType,
     pub produced_by: Vec<CapabilityId>,
-    /// True when at least one route from the roots is fully provided.
-    pub obtainable: bool,
+    /// True when every step on the chosen type-level route has a legacy
+    /// provider binding. This is provider coverage, not an execution claim.
+    pub fully_provided: bool,
     /// Capabilities on the route that have no provider. A terminal blocked
     /// solely by these is *accounted for*, not broken: that is what an open
     /// need means.
@@ -102,7 +103,7 @@ impl Report {
             + self
                 .terminals
                 .iter()
-                .filter(|t| !t.obtainable)
+                .filter(|t| !t.fully_provided)
                 .filter(|t| t.blocked_by.iter().any(|c| !declared.contains(c)))
                 .count()
     }
@@ -132,12 +133,16 @@ impl fmt::Display for Report {
             writeln!(f, "    needed by {}", root.required_by.len())?;
         }
 
-        writeln!(f, "\nyou can obtain ({})", self.terminals.len())?;
+        writeln!(f, "\nterminal provider coverage ({})", self.terminals.len())?;
         for terminal in &self.terminals {
             writeln!(
                 f,
                 "  {:<7} {}",
-                if terminal.obtainable { "yes" } else { "needs" },
+                if terminal.fully_provided {
+                    "provided"
+                } else {
+                    "needs"
+                },
                 terminal.fact
             )?;
             for capability in &terminal.blocked_by {
@@ -230,19 +235,19 @@ pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPol
 
     for spec in registry.specs() {
         capabilities += 1;
-        for out in &spec.produces {
+        for port in &spec.output_ports {
             produced_by
-                .entry(out.clone())
+                .entry(port.value_kind.clone())
                 .or_default()
                 .push(spec.id.clone());
-            all.insert(out.clone());
+            all.insert(port.value_kind.clone());
         }
-        for req in &spec.requires {
+        for port in &spec.input_ports {
             required_by
-                .entry(req.fact.clone())
+                .entry(port.value_kind.clone())
                 .or_default()
                 .push(spec.id.clone());
-            all.insert(req.fact.clone());
+            all.insert(port.value_kind.clone());
         }
     }
 
@@ -270,7 +275,7 @@ pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPol
                     terminals.push(TerminalFact {
                         fact: fact.clone(),
                         produced_by: produced_by.get(fact).cloned().unwrap_or_default(),
-                        obtainable: plan.is_executable(),
+                        fully_provided: plan.has_provider_for_every_step(),
                         blocked_by: plan
                             .steps
                             .iter()
@@ -296,7 +301,11 @@ pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPol
         .filter(|spec| !implemented.contains(&spec.id))
         .map(|spec| UnimplementedCapability {
             capability: spec.id.clone(),
-            produces: spec.produces.clone(),
+            produces: spec
+                .output_ports
+                .iter()
+                .map(|port| port.value_kind.clone())
+                .collect(),
             conformance_suite: spec.default_conformance_suite.clone(),
         })
         .collect();

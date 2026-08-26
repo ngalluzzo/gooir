@@ -3,11 +3,11 @@
 //! Two places naming one identity is exactly the drift this project removes, so
 //! nothing here is allowed to disagree.
 
-use gooir_capability::{PackManifest, read_pack};
+use gooir_capability::{CapabilityPack, read_pack};
 use gooir_datamodel_pack as pack;
 
-fn manifest() -> PackManifest {
-    serde_json::from_str(pack::MANIFEST).expect("pack.json is valid")
+fn manifest() -> CapabilityPack {
+    read_pack(pack::MANIFEST).expect("pack.json is valid")
 }
 
 #[test]
@@ -15,7 +15,7 @@ fn every_capability_accessor_is_declared_by_the_manifest() {
     let declared: Vec<String> = manifest()
         .capabilities
         .iter()
-        .map(|c| c.id.clone())
+        .map(|c| c.id.to_string())
         .collect();
     for accessor in [
         pack::author_data_model_capability(),
@@ -35,12 +35,13 @@ fn every_capability_accessor_is_declared_by_the_manifest() {
 fn every_fact_accessor_is_mentioned_by_the_manifest() {
     let specs = read_pack(pack::MANIFEST).expect("manifest reads");
     let mentioned: Vec<String> = specs
+        .capabilities
         .iter()
         .flat_map(|s| {
-            s.produces
+            s.output_ports
                 .iter()
-                .map(ToString::to_string)
-                .chain(s.requires.iter().map(|r| r.fact.to_string()))
+                .map(|port| port.value_kind.to_string())
+                .chain(s.input_ports.iter().map(|port| port.value_kind.to_string()))
         })
         .collect();
     for accessor in [
@@ -65,7 +66,7 @@ fn every_registered_provider_implements_a_declared_capability() {
     let declared: Vec<String> = manifest()
         .capabilities
         .iter()
-        .map(|c| c.id.clone())
+        .map(|c| c.id.to_string())
         .collect();
     for descriptor in registry.provider_descriptors() {
         assert!(

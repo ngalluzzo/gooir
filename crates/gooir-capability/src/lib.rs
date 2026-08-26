@@ -7,12 +7,9 @@
 
 mod manifest;
 
-pub use manifest::{
-    ManifestCapability, ManifestRequirement, PACK_PROTOCOL, PackManifest, PackManifestError,
-    read_pack, register_pack, write_pack,
-};
+pub use manifest::{PACK_PROTOCOL, PackManifestError, read_pack, register_pack, write_pack};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -150,6 +147,74 @@ pub enum FactAcceptance {
     PartialAllowed,
 }
 
+/// Exact, direction-scoped identity of one capability role.
+///
+/// GOOIR preserves ecosystem spelling. It rejects only names that cannot be
+/// displayed or compared without ambiguity: empty names, surrounding
+/// whitespace, control characters, and names longer than 128 UTF-8 bytes.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct PortName(String);
+
+impl PortName {
+    pub fn parse(value: impl Into<String>) -> Result<Self, PortNameError> {
+        let value = value.into();
+        if value.is_empty()
+            || value.len() > 128
+            || value.trim() != value
+            || value.chars().any(char::is_control)
+        {
+            Err(PortNameError(value))
+        } else {
+            Ok(Self(value))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for PortName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for PortName {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::parse(value).map_err(serde::de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PortNameError(String);
+
+impl fmt::Display for PortNameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "`{}` is not an exact port name",
+            self.0.escape_debug()
+        )
+    }
+}
+
+impl Error for PortNameError {}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InputPort {
+    pub name: PortName,
+    pub value_kind: ValueKindId,
+    pub acceptance: FactAcceptance,
+    /// Namespaced declaration data unknown to this version survives unchanged.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// Anonymous input shape retained only by the unversioned legacy request
+/// document. Capability specifications and planning use [`InputPort`].
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Requirement {
     pub fact: FactType,
@@ -172,13 +237,53 @@ impl Requirement {
     }
 }
 
-/// One versioned transformation contract. `requires` is a conjunction, making
-/// each capability a hyperedge rather than a simple graph edge.
+impl InputPort {
+    pub fn complete(name: PortName, value_kind: ValueKindId) -> Self {
+        Self {
+            name,
+            value_kind,
+            acceptance: FactAcceptance::CompleteOnly,
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    pub fn partial_allowed(name: PortName, value_kind: ValueKindId) -> Self {
+        Self {
+            name,
+            value_kind,
+            acceptance: FactAcceptance::PartialAllowed,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OutputPort {
+    pub name: PortName,
+    pub value_kind: ValueKindId,
+    /// Namespaced declaration data unknown to this version survives unchanged.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl OutputPort {
+    pub fn new(name: PortName, value_kind: ValueKindId) -> Self {
+        Self {
+            name,
+            value_kind,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
+/// One versioned transformation contract. Input ports form a conjunction,
+/// making each capability a hyperedge rather than a simple graph edge. Port
+/// names distinguish roles, so several ports may carry the same value kind.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CapabilitySpec {
     pub id: CapabilityId,
-    pub requires: Vec<Requirement>,
-    pub produces: Vec<FactType>,
+    pub input_ports: Vec<InputPort>,
+    pub output_ports: Vec<OutputPort>,
     /// The suite this capability declares by default.
     ///
     /// It is an obligation, not a fixed requirement. A neutral capability may
@@ -188,6 +293,30 @@ pub struct CapabilitySpec {
     /// is whether the host admits an attester *for the suite the request
     /// names*, which is [`AdmissionPolicy`]'s job.
     pub default_conformance_suite: String,
+    /// Namespaced declaration data unknown to this version survives unchanged.
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// One semantic package of capability declarations.
+///
+/// This is the representation returned by pack protocol v2. Keeping the pack
+/// root in the semantic model gives unknown root fields somewhere to survive;
+/// reducing a pack to `Vec<CapabilitySpec>` would destroy them before a
+/// round-trip could begin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapabilityPack {
+    pub capabilities: Vec<CapabilitySpec>,
+    pub extensions: BTreeMap<String, Value>,
+}
+
+impl CapabilityPack {
+    pub fn new(capabilities: Vec<CapabilitySpec>) -> Self {
+        Self {
+            capabilities,
+            extensions: BTreeMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -282,15 +411,22 @@ pub trait CapabilityProvider: Send + Sync {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PlanStep {
     pub capability: CapabilityId,
+    /// Legacy in-process execution binding carried by this plan shape.
+    ///
+    /// It is not an implementation-selection decision. The future linked
+    /// invocation boundary makes caller selection explicit.
     pub provider: Option<ProviderId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Experimental in-process planning API, not a versioned interchange format.
+///
+/// Its derived serde shape exists for local diagnostics and tests. Consumers
+/// must not treat that shape as a stable wire protocol or persisted contract.
 pub struct CapabilityNeed {
-    pub capability: CapabilityId,
-    pub requires: Vec<Requirement>,
-    pub produces: Vec<FactType>,
-    pub conformance_suite: String,
+    /// The complete declaration is the assignable work. Projecting selected
+    /// fields here would create a second, lossy authority for its meaning.
+    pub specification: CapabilitySpec,
     pub reason: String,
 }
 
@@ -322,7 +458,7 @@ impl CapabilityRequest {
         need: &CapabilityNeed,
         inputs: Vec<FactInstance>,
     ) -> Result<Self, CapabilityRequestError> {
-        let suite = need.conformance_suite.clone();
+        let suite = need.specification.default_conformance_suite.clone();
         Self::bind_with_suite(need, inputs, suite)
     }
 
@@ -341,16 +477,56 @@ impl CapabilityRequest {
         inputs: Vec<FactInstance>,
         conformance_suite: impl Into<String>,
     ) -> Result<Self, CapabilityRequestError> {
-        let mut required = need
-            .requires
-            .iter()
-            .map(|requirement| (requirement.fact.clone(), requirement))
-            .collect::<BTreeMap<_, _>>();
-        if required.len() != need.requires.len() {
-            return Err(CapabilityRequestError::InvalidNeed(
-                "duplicate required fact identity".to_owned(),
-            ));
+        let spec = &need.specification;
+        validate_spec(spec)
+            .map_err(|error| CapabilityRequestError::InvalidNeed(error.to_string()))?;
+        if !spec.extensions.is_empty() {
+            return Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: spec.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::Capability,
+                },
+            );
         }
+        if let Some(port) = spec
+            .input_ports
+            .iter()
+            .find(|port| !port.extensions.is_empty())
+        {
+            return Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: spec.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::InputPort(port.name.clone()),
+                },
+            );
+        }
+        if let Some(port) = spec
+            .output_ports
+            .iter()
+            .find(|port| !port.extensions.is_empty())
+        {
+            return Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: spec.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::OutputPort(port.name.clone()),
+                },
+            );
+        }
+        if let Some(value_kind) = repeated_input_kind(&spec.input_ports) {
+            return Err(
+                CapabilityRequestError::RepeatedInputValueKindPortsUnsupported(value_kind.clone()),
+            );
+        }
+        if let Some(value_kind) = repeated_output_kind(&spec.output_ports) {
+            return Err(
+                CapabilityRequestError::RepeatedOutputValueKindPortsUnsupported(value_kind.clone()),
+            );
+        }
+        let mut required = spec
+            .input_ports
+            .iter()
+            .map(|port| (port.value_kind.clone(), port))
+            .collect::<BTreeMap<_, _>>();
         let mut seen = BTreeSet::new();
         for input in &inputs {
             if !seen.insert(input.fact_type.clone()) {
@@ -358,10 +534,10 @@ impl CapabilityRequest {
                     input.fact_type.clone(),
                 ));
             }
-            let requirement = required
+            let port = required
                 .remove(&input.fact_type)
                 .ok_or_else(|| CapabilityRequestError::UnexpectedInput(input.fact_type.clone()))?;
-            if requirement.acceptance == FactAcceptance::CompleteOnly
+            if port.acceptance == FactAcceptance::CompleteOnly
                 && input.coverage == FactCoverage::Partial
             {
                 return Err(CapabilityRequestError::PartialInputRejected(
@@ -372,16 +548,27 @@ impl CapabilityRequest {
         if let Some(missing) = required.into_keys().next() {
             return Err(CapabilityRequestError::MissingInput(missing));
         }
-        if need.produces.is_empty() {
+        if spec.output_ports.is_empty() {
             return Err(CapabilityRequestError::InvalidNeed(
-                "produced fact set is empty".to_owned(),
+                "output port set is empty".to_owned(),
             ));
         }
         let body = CapabilityRequestBody {
-            capability: need.capability.clone(),
-            requires: need.requires.clone(),
+            capability: spec.id.clone(),
+            requires: spec
+                .input_ports
+                .iter()
+                .map(|port| Requirement {
+                    fact: port.value_kind.clone(),
+                    acceptance: port.acceptance,
+                })
+                .collect(),
             inputs,
-            produces: need.produces.clone(),
+            produces: spec
+                .output_ports
+                .iter()
+                .map(|port| port.value_kind.clone())
+                .collect(),
             conformance_suite: conformance_suite.into(),
         };
         validate_request_body(&body)?;
@@ -660,6 +847,10 @@ pub fn verify_and_admit(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Experimental in-process planning API, not a versioned interchange format.
+///
+/// Its derived serde shape may change while the linked-invocation boundary is
+/// designed. Only explicitly versioned protocols carry compatibility promises.
 pub struct DerivationPlan {
     pub target: FactType,
     pub steps: Vec<PlanStep>,
@@ -667,7 +858,14 @@ pub struct DerivationPlan {
 }
 
 impl DerivationPlan {
-    pub fn is_executable(&self) -> bool {
+    /// Reports whether every legacy plan step carries a provider binding.
+    ///
+    /// This is not a claim that the planner selected an implementation, nor
+    /// that the legacy execution adapter can represent the plan. In particular,
+    /// that adapter cannot bind repeated value kinds to distinct named ports.
+    /// Invocation protocols must perform their own selection, representation,
+    /// and admission checks.
+    pub fn has_provider_for_every_step(&self) -> bool {
         self.needs.is_empty() && self.steps.iter().all(|step| step.provider.is_some())
     }
 }
@@ -689,6 +887,9 @@ pub struct ExecutionReport {
 /// The request names a `FactType` and nothing else. There is no target kind,
 /// no host, no frontend selector: GOOIR does not need to know what end the
 /// caller is targeting.
+///
+/// This is an experimental local compatibility request, not a versioned
+/// interchange document. Linked named-port invocations replace it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DerivationRequest {
     pub target: FactType,
@@ -697,25 +898,53 @@ pub struct DerivationRequest {
 
 /// Why a request could not be accepted as asked.
 ///
-/// One cause today. It is a separate answer from [`Answer::Failed`] because
-/// the remedy belongs to the caller rather than to a provider.
+/// These are separate from [`Answer::Failed`] because the remedy belongs to
+/// the caller or invocation adapter rather than to a provider.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestRefusal {
     /// Two inputs declare the same fact type. Which one governs is the
     /// caller's decision, and guessing would silently pick an authority.
     AmbiguousInput(FactType),
+    /// The legacy adapter cannot bind two named input roles that share one
+    /// value kind. This says nothing about the capability's validity.
+    LegacyAdapterRepeatedInputKind {
+        capability: Box<CapabilityId>,
+        value_kind: Box<FactType>,
+    },
+    /// The legacy adapter cannot distinguish two named output roles that share
+    /// one value kind. This says nothing about the capability's validity.
+    LegacyAdapterRepeatedOutputKind {
+        capability: Box<CapabilityId>,
+        value_kind: Box<FactType>,
+    },
+}
+
+impl RequestRefusal {
+    fn remedy(&self) -> &'static str {
+        match self {
+            Self::AmbiguousInput(_) => "bind one unambiguous fact for each requested value kind",
+            Self::LegacyAdapterRepeatedInputKind { .. }
+            | Self::LegacyAdapterRepeatedOutputKind { .. } => {
+                "use an invocation adapter that binds exact named ports to fact identities"
+            }
+        }
+    }
 }
 
 /// Everything GOOIR has to say about one derivation request.
 ///
 /// **There is no `Result` at the door.** A `Result` would sort outcomes into
 /// answers and errors, when the premise is that "I cannot" is an answer that
-/// names a remedy. Five variants exist because they imply five different next
-/// actions — the same reason `DefeatKind` is five-valued. Two variants that
-/// shared a remedy would mean one of them is not earning its place.
+/// names a remedy. The five variants keep graph, availability, caller/adapter,
+/// and execution ownership distinct. [`RequestRefusal`] then identifies the
+/// exact caller or adapter remedy within that ownership class.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "answer", content = "detail")]
+/// Experimental local answer model, not a versioned interchange protocol.
+///
+/// Serde support makes local inspection convenient; it does not freeze this
+/// public Rust shape as a community wire contract.
 pub enum Answer {
     /// The fact exists. Its coverage says whether it is complete.
     ///
@@ -745,7 +974,7 @@ impl Answer {
             Answer::Produced(_) => "use the fact; read its coverage before assuming it is complete",
             Answer::Blocked(_) => "assign the open needs to a provider, an agent, or a person",
             Answer::Unreachable(_) => "declare a capability that produces this fact",
-            Answer::Refused(_) => "fix the request",
+            Answer::Refused(refusal) => refusal.remedy(),
             Answer::Failed(_) => "fix or replace the provider that failed",
         }
     }
@@ -780,14 +1009,35 @@ pub fn answer(registry: &CapabilityRegistry, request: &DerivationRequest) -> Ans
         Ok(plan) => plan,
         Err(error) => return Answer::Unreachable(error),
     };
-    if !plan.is_executable() {
+    if !plan.has_provider_for_every_step() {
         return Answer::Blocked(plan);
+    }
+
+    if let Err(error) = registry.preflight_legacy_execution(&plan) {
+        return match error {
+            ExecutionError::RepeatedInputValueKindPortsUnsupported {
+                capability,
+                value_kind,
+            } => Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
+                capability,
+                value_kind,
+            }),
+            ExecutionError::RepeatedOutputValueKindPortsUnsupported {
+                capability,
+                value_kind,
+            } => Answer::Refused(RequestRefusal::LegacyAdapterRepeatedOutputKind {
+                capability,
+                value_kind,
+            }),
+            other => Answer::Failed(other),
+        };
     }
 
     match registry.execute(&plan, request.inputs.clone()) {
         Ok(report) => Answer::Produced(Box::new(report)),
-        // `is_executable` already passed, so a disagreement here is the
-        // registry moving underneath the plan, not assignable work.
+        // Legacy provider bindings and adapter representability already
+        // passed. Execution still owns registry-race, provider, and output
+        // validation.
         Err(error) => Answer::Failed(error),
     }
 }
@@ -859,12 +1109,12 @@ impl CapabilityRegistry {
                 let Some(candidate) = candidate_for(spec, &candidates, self) else {
                     continue;
                 };
-                for output in &spec.produces {
+                for output in &spec.output_ports {
                     let replace = candidates
-                        .get(output)
+                        .get(&output.value_kind)
                         .is_none_or(|existing| candidate.score() < existing.score());
                     if replace {
-                        candidates.insert(output.clone(), candidate.clone());
+                        candidates.insert(output.value_kind.clone(), candidate.clone());
                         changed = true;
                     }
                 }
@@ -884,10 +1134,7 @@ impl CapabilityRegistry {
                     .get(&step.capability)
                     .expect("planned capability remains registered");
                 CapabilityNeed {
-                    capability: spec.id.clone(),
-                    requires: spec.requires.clone(),
-                    produces: spec.produces.clone(),
-                    conformance_suite: spec.default_conformance_suite.clone(),
+                    specification: spec.clone(),
                     reason: "no installed provider implements this exact capability".to_owned(),
                 }
             })
@@ -904,9 +1151,10 @@ impl CapabilityRegistry {
         plan: &DerivationPlan,
         initial: Vec<FactInstance>,
     ) -> Result<ExecutionReport, ExecutionError> {
-        if !plan.is_executable() {
+        if !plan.has_provider_for_every_step() {
             return Err(ExecutionError::PlanNotExecutable(plan.needs.clone()));
         }
+        self.preflight_legacy_execution(plan)?;
         let mut facts = BTreeMap::new();
         for fact in initial {
             if facts.insert(fact.fact_type.clone(), fact).is_some() {
@@ -927,17 +1175,17 @@ impl CapabilityRegistry {
                 .providers
                 .get(provider_id)
                 .ok_or_else(|| ExecutionError::ProviderUnavailable(provider_id.clone()))?;
-            let mut inputs = Vec::with_capacity(spec.requires.len());
-            for requirement in &spec.requires {
+            let mut inputs = Vec::with_capacity(spec.input_ports.len());
+            for port in &spec.input_ports {
                 let fact = facts
-                    .get(&requirement.fact)
-                    .ok_or_else(|| ExecutionError::MissingInput(requirement.fact.clone()))?;
-                if requirement.acceptance == FactAcceptance::CompleteOnly
+                    .get(&port.value_kind)
+                    .ok_or_else(|| ExecutionError::MissingInput(port.value_kind.clone()))?;
+                if port.acceptance == FactAcceptance::CompleteOnly
                     && fact.coverage == FactCoverage::Partial
                 {
                     return Err(ExecutionError::PartialInputRejected {
                         capability: Box::new(spec.id.clone()),
-                        fact: Box::new(requirement.fact.clone()),
+                        fact: Box::new(port.value_kind.clone()),
                     });
                 }
                 inputs.push(fact.clone());
@@ -991,6 +1239,36 @@ impl CapabilityRegistry {
             steps: plan.steps.clone(),
         })
     }
+
+    /// Validates the whole legacy adapter route before any provider runs.
+    fn preflight_legacy_execution(&self, plan: &DerivationPlan) -> Result<(), ExecutionError> {
+        for step in &plan.steps {
+            let spec = self
+                .specs
+                .get(&step.capability)
+                .ok_or_else(|| ExecutionError::RegistryChanged(step.capability.clone()))?;
+            let provider_id = step
+                .provider
+                .as_ref()
+                .ok_or_else(|| ExecutionError::PlanNotExecutable(plan.needs.clone()))?;
+            if !self.providers.contains_key(provider_id) {
+                return Err(ExecutionError::ProviderUnavailable(provider_id.clone()));
+            }
+            if let Some(value_kind) = repeated_input_kind(&spec.input_ports) {
+                return Err(ExecutionError::RepeatedInputValueKindPortsUnsupported {
+                    capability: Box::new(spec.id.clone()),
+                    value_kind: Box::new(value_kind.clone()),
+                });
+            }
+            if let Some(value_kind) = repeated_output_kind(&spec.output_ports) {
+                return Err(ExecutionError::RepeatedOutputValueKindPortsUnsupported {
+                    capability: Box::new(spec.id.clone()),
+                    value_kind: Box::new(value_kind.clone()),
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -1021,8 +1299,8 @@ fn candidate_for(
     registry: &CapabilityRegistry,
 ) -> Option<Candidate> {
     let mut steps = Vec::new();
-    for requirement in &spec.requires {
-        let requirement_candidate = candidates.get(&requirement.fact)?;
+    for port in &spec.input_ports {
+        let requirement_candidate = candidates.get(&port.value_kind)?;
         for step in &requirement_candidate.steps {
             if !steps
                 .iter()
@@ -1051,10 +1329,10 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
             reason: "capability identity is malformed".to_owned(),
         });
     }
-    if spec.produces.is_empty() {
+    if spec.output_ports.is_empty() {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: "a capability must produce at least one fact".to_owned(),
+            reason: "a capability must declare at least one output port".to_owned(),
         });
     }
     if spec.default_conformance_suite.trim().is_empty() {
@@ -1063,45 +1341,117 @@ fn validate_spec(spec: &CapabilitySpec) -> Result<(), RegistryError> {
             reason: "a capability must name an exact conformance suite".to_owned(),
         });
     }
-    if let Some(requirement) = spec
-        .requires
+    if let Some(port) = spec
+        .input_ports
         .iter()
-        .find(|requirement| !requirement.fact.is_well_formed())
+        .find(|port| !port.value_kind.is_well_formed())
     {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: format!("required value kind `{}` is malformed", requirement.fact),
+            reason: format!("input value kind `{}` is malformed", port.value_kind),
         });
     }
-    if let Some(produced) = spec
-        .produces
+    if let Some(port) = spec
+        .output_ports
         .iter()
-        .find(|produced| !produced.is_well_formed())
+        .find(|port| !port.value_kind.is_well_formed())
     {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: format!("produced value kind `{produced}` is malformed"),
+            reason: format!("output value kind `{}` is malformed", port.value_kind),
         });
     }
-    let required = spec
-        .requires
-        .iter()
-        .map(|requirement| &requirement.fact)
-        .collect::<BTreeSet<_>>();
-    if required.len() != spec.requires.len() {
+    if let Err(reason) = validate_ports(&spec.input_ports, &spec.output_ports) {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: "duplicate input fact identity".to_owned(),
+            reason,
         });
     }
-    let produced = spec.produces.iter().collect::<BTreeSet<_>>();
-    if produced.len() != spec.produces.len() {
+    if let Err(reason) = validate_extension_keys(
+        "capability",
+        &spec.extensions,
+        &[
+            "id",
+            "input_ports",
+            "output_ports",
+            "default_conformance_suite",
+        ],
+    ) {
         return Err(RegistryError::InvalidCapability {
             capability: spec.id.clone(),
-            reason: "duplicate output fact identity".to_owned(),
+            reason,
         });
+    }
+    for port in &spec.input_ports {
+        if let Err(reason) = validate_extension_keys(
+            &format!("input port `{}`", port.name),
+            &port.extensions,
+            &["name", "value_kind", "acceptance"],
+        ) {
+            return Err(RegistryError::InvalidCapability {
+                capability: spec.id.clone(),
+                reason,
+            });
+        }
+    }
+    for port in &spec.output_ports {
+        if let Err(reason) = validate_extension_keys(
+            &format!("output port `{}`", port.name),
+            &port.extensions,
+            &["name", "value_kind"],
+        ) {
+            return Err(RegistryError::InvalidCapability {
+                capability: spec.id.clone(),
+                reason,
+            });
+        }
     }
     Ok(())
+}
+
+fn validate_extension_keys(
+    scope: &str,
+    extensions: &BTreeMap<String, Value>,
+    reserved: &[&str],
+) -> Result<(), String> {
+    if let Some(key) = reserved.iter().find(|key| extensions.contains_key(**key)) {
+        Err(format!("{scope} extension `{key}` shadows a known field"))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_ports(input_ports: &[InputPort], output_ports: &[OutputPort]) -> Result<(), String> {
+    let input_names = input_ports
+        .iter()
+        .map(|port| &port.name)
+        .collect::<BTreeSet<_>>();
+    if input_names.len() != input_ports.len() {
+        return Err("duplicate input port name".to_owned());
+    }
+    let output_names = output_ports
+        .iter()
+        .map(|port| &port.name)
+        .collect::<BTreeSet<_>>();
+    if output_names.len() != output_ports.len() {
+        return Err("duplicate output port name".to_owned());
+    }
+    Ok(())
+}
+
+fn repeated_input_kind(ports: &[InputPort]) -> Option<&ValueKindId> {
+    repeated_value_kind(ports.iter().map(|port| &port.value_kind))
+}
+
+fn repeated_output_kind(ports: &[OutputPort]) -> Option<&ValueKindId> {
+    repeated_value_kind(ports.iter().map(|port| &port.value_kind))
+}
+
+fn repeated_value_kind<'a>(
+    kinds: impl IntoIterator<Item = &'a ValueKindId>,
+) -> Option<&'a ValueKindId> {
+    let mut seen = BTreeSet::new();
+    kinds.into_iter().find(|kind| !seen.insert(*kind))
 }
 
 fn validate_provider(descriptor: &ProviderDescriptor) -> Result<(), RegistryError> {
@@ -1418,11 +1768,16 @@ fn validate_outputs(spec: &CapabilitySpec, outputs: &[ProducedFact]) -> Result<(
         .map(|output| output.fact_type.clone())
         .collect::<Vec<_>>();
     let actual_set = actual.iter().collect::<BTreeSet<_>>();
-    let expected_set = spec.produces.iter().collect::<BTreeSet<_>>();
+    let expected = spec
+        .output_ports
+        .iter()
+        .map(|port| port.value_kind.clone())
+        .collect::<Vec<_>>();
+    let expected_set = expected.iter().collect::<BTreeSet<_>>();
     if actual.len() != actual_set.len() || actual_set != expected_set {
         return Err(ExecutionError::OutputContractViolation {
             capability: spec.id.clone(),
-            expected: spec.produces.clone(),
+            expected,
             actual,
         });
     }
@@ -1475,14 +1830,36 @@ pub enum RegistryError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LegacyDeclarationExtensionScope {
+    Capability,
+    InputPort(PortName),
+    OutputPort(PortName),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CapabilityRequestError {
     InvalidNeed(String),
+    /// The historical kind-keyed request has nowhere to retain an opaque
+    /// declaration extension. Dropping it could weaken the contract, so the
+    /// adapter refuses before minting a request identity.
+    LegacyAdapterDeclarationExtensionsUnsupported {
+        capability: CapabilityId,
+        scope: LegacyDeclarationExtensionScope,
+    },
+    /// The unversioned request document keys bindings by value kind. It must
+    /// not guess when a named signature repeats one; linked invocations will
+    /// carry exact port bindings in their own versioned protocol.
+    RepeatedInputValueKindPortsUnsupported(FactType),
+    RepeatedOutputValueKindPortsUnsupported(FactType),
     DuplicateInput(FactType),
     UnexpectedInput(FactType),
     MissingInput(FactType),
     PartialInputRejected(FactType),
     InvalidFactIdentity(String),
-    IdentityMismatch { expected: String, actual: String },
+    IdentityMismatch {
+        expected: String,
+        actual: String,
+    },
     Serialization(String),
 }
 
@@ -1570,6 +1947,14 @@ impl Error for PlanError {}
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionError {
     PlanNotExecutable(Vec<CapabilityNeed>),
+    RepeatedInputValueKindPortsUnsupported {
+        capability: Box<CapabilityId>,
+        value_kind: Box<FactType>,
+    },
+    RepeatedOutputValueKindPortsUnsupported {
+        capability: Box<CapabilityId>,
+        value_kind: Box<FactType>,
+    },
     AmbiguousInput,
     RegistryChanged(CapabilityId),
     ProviderUnavailable(ProviderId),
@@ -1606,6 +1991,28 @@ mod tests {
 
     fn fact(name: &str) -> FactType {
         FactType::new("test", name, "1")
+    }
+
+    fn port(name: impl Into<String>) -> PortName {
+        PortName::parse(name).unwrap()
+    }
+
+    #[test]
+    fn port_names_preserve_exact_ecosystem_spelling_with_a_bounded_wire_size() {
+        let exact = port("输入.Payload-v1");
+        assert_eq!(exact.as_str(), "输入.Payload-v1");
+        assert_eq!(
+            serde_json::from_str::<PortName>(&serde_json::to_string(&exact).unwrap()).unwrap(),
+            exact
+        );
+
+        assert!(PortName::parse("").is_err());
+        assert!(PortName::parse(" leading").is_err());
+        assert!(PortName::parse("trailing ").is_err());
+        assert!(PortName::parse("line\nbreak").is_err());
+        assert!(PortName::parse("a".repeat(128)).is_ok());
+        assert!(PortName::parse("a".repeat(129)).is_err());
+        assert!(serde_json::from_str::<PortName>(r#"" leading""#).is_err());
     }
 
     #[test]
@@ -1690,10 +2097,168 @@ mod tests {
     ) -> CapabilitySpec {
         CapabilitySpec {
             id: CapabilityId::new("test", name, "1"),
-            requires,
-            produces,
+            input_ports: requires
+                .into_iter()
+                .enumerate()
+                .map(|(index, requirement)| InputPort {
+                    name: port(format!("input_{index}")),
+                    value_kind: requirement.fact,
+                    acceptance: requirement.acceptance,
+                    extensions: BTreeMap::new(),
+                })
+                .collect(),
+            output_ports: produces
+                .into_iter()
+                .enumerate()
+                .map(|(index, value_kind)| {
+                    OutputPort::new(port(format!("output_{index}")), value_kind)
+                })
+                .collect(),
             default_conformance_suite: format!("test/{name}@1"),
+            extensions: BTreeMap::new(),
         }
+    }
+
+    #[test]
+    fn named_ports_allow_repeated_value_kinds_but_legacy_binding_fails_closed() {
+        let same = fact("same");
+        let target = fact("target");
+        let spec = CapabilitySpec {
+            id: CapabilityId::new("test", "compare", "1"),
+            input_ports: vec![
+                InputPort::complete(port("left"), same.clone()),
+                InputPort::complete(port("right"), same.clone()),
+            ],
+            output_ports: vec![OutputPort::new(port("comparison"), target.clone())],
+            default_conformance_suite: "test/compare@1".to_owned(),
+            extensions: BTreeMap::new(),
+        };
+        let mut registry = CapabilityRegistry::default();
+        registry.register_spec(spec).unwrap();
+
+        let plan = registry.plan([same.clone()], &target).unwrap();
+        assert_eq!(
+            plan.needs[0].specification.input_ports[0].name,
+            port("left")
+        );
+        assert_eq!(
+            plan.needs[0].specification.input_ports[1].name,
+            port("right")
+        );
+        let input =
+            FactInstance::initial(same, FactCoverage::Complete, json!({"value": 1}), "fixture")
+                .unwrap();
+        assert_eq!(
+            CapabilityRequest::bind(&plan.needs[0], vec![input]),
+            Err(CapabilityRequestError::RepeatedInputValueKindPortsUnsupported(fact("same")))
+        );
+
+        let output_need = CapabilityNeed {
+            specification: CapabilitySpec {
+                id: CapabilityId::new("test", "split", "1"),
+                input_ports: Vec::new(),
+                output_ports: vec![
+                    OutputPort::new(port("first"), target.clone()),
+                    OutputPort::new(port("second"), target.clone()),
+                ],
+                default_conformance_suite: "test/split@1".to_owned(),
+                extensions: BTreeMap::new(),
+            },
+            reason: "no provider".to_owned(),
+        };
+        assert_eq!(
+            CapabilityRequest::bind(&output_need, Vec::new()),
+            Err(CapabilityRequestError::RepeatedOutputValueKindPortsUnsupported(target))
+        );
+    }
+
+    #[test]
+    fn exact_need_retains_declaration_extensions_legacy_request_cannot_represent() {
+        let source = fact("extended_source");
+        let target = fact("extended_target");
+        let mut spec = capability(
+            "extended",
+            vec![Requirement::complete(source.clone())],
+            vec![target.clone()],
+        );
+        spec.extensions
+            .insert("x.capability".to_owned(), json!({"constraint": true}));
+        spec.input_ports[0]
+            .extensions
+            .insert("x.input".to_owned(), json!(["opaque"]));
+        spec.output_ports[0]
+            .extensions
+            .insert("x.output".to_owned(), json!({"future": 1}));
+
+        let mut registry = CapabilityRegistry::default();
+        registry.register_spec(spec.clone()).unwrap();
+        let need = registry.plan([source], &target).unwrap().needs.remove(0);
+        assert_eq!(need.specification, spec, "a need carries the exact spec");
+
+        assert_eq!(
+            CapabilityRequest::bind(&need, Vec::new()),
+            Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: need.specification.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::Capability,
+                }
+            )
+        );
+
+        let mut input_only = need.clone();
+        input_only.specification.extensions.clear();
+        assert_eq!(
+            CapabilityRequest::bind(&input_only, Vec::new()),
+            Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: input_only.specification.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::InputPort(port("input_0")),
+                }
+            )
+        );
+
+        let mut output_only = input_only;
+        output_only.specification.input_ports[0].extensions.clear();
+        assert_eq!(
+            CapabilityRequest::bind(&output_only, Vec::new()),
+            Err(
+                CapabilityRequestError::LegacyAdapterDeclarationExtensionsUnsupported {
+                    capability: output_only.specification.id.clone(),
+                    scope: LegacyDeclarationExtensionScope::OutputPort(port("output_0")),
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn duplicate_port_names_are_rejected_within_a_direction_only() {
+        let same = fact("same");
+        let mut registry = CapabilityRegistry::default();
+        registry
+            .register_spec(CapabilitySpec {
+                id: CapabilityId::new("test", "direction_scoped", "1"),
+                input_ports: vec![InputPort::complete(port("value"), same.clone())],
+                output_ports: vec![OutputPort::new(port("value"), same.clone())],
+                default_conformance_suite: "test/direction_scoped@1".to_owned(),
+                extensions: BTreeMap::new(),
+            })
+            .unwrap();
+
+        let duplicate = CapabilitySpec {
+            id: CapabilityId::new("test", "duplicate", "1"),
+            input_ports: vec![
+                InputPort::complete(port("value"), same.clone()),
+                InputPort::complete(port("value"), same.clone()),
+            ],
+            output_ports: vec![OutputPort::new(port("result"), same)],
+            default_conformance_suite: "test/duplicate@1".to_owned(),
+            extensions: BTreeMap::new(),
+        };
+        assert!(matches!(
+            registry.register_spec(duplicate),
+            Err(RegistryError::InvalidCapability { reason, .. })
+                if reason.contains("duplicate input port")
+        ));
     }
 
     #[test]
@@ -1784,7 +2349,7 @@ mod tests {
 
         assert!(registry.plan([a.clone()], &c).is_err());
         let plan = registry.plan([a, b], &c).unwrap();
-        assert!(plan.is_executable());
+        assert!(plan.has_provider_for_every_step());
         assert_eq!(plan.steps.len(), 1);
     }
 
@@ -1802,9 +2367,9 @@ mod tests {
 
         let plan = registry.plan([source], &target).unwrap();
 
-        assert!(!plan.is_executable());
+        assert!(!plan.has_provider_for_every_step());
         assert_eq!(plan.needs.len(), 1);
-        assert_eq!(plan.needs[0].capability, spec.id);
+        assert_eq!(plan.needs[0].specification, spec);
     }
 
     #[test]
@@ -1896,10 +2461,13 @@ mod tests {
         let source = fact("source");
         let target = fact("target");
         let need = CapabilityNeed {
-            capability: CapabilityId::new("test", "generate", "1"),
-            requires: vec![Requirement::complete(source.clone())],
-            produces: vec![target],
-            conformance_suite: "test/generate@1".to_owned(),
+            specification: CapabilitySpec {
+                id: CapabilityId::new("test", "generate", "1"),
+                input_ports: vec![InputPort::complete(port("source"), source.clone())],
+                output_ports: vec![OutputPort::new(port("result"), target)],
+                default_conformance_suite: "test/generate@1".to_owned(),
+                extensions: BTreeMap::new(),
+            },
             reason: "no provider".to_owned(),
         };
         let first = FactInstance::initial(
@@ -1923,17 +2491,20 @@ mod tests {
 
         assert_eq!(first_request.request_id, replay.request_id);
         assert_ne!(first_request.request_id, changed.request_id);
-        assert_eq!(first_request.body.capability, need.capability);
+        assert_eq!(first_request.body.capability, need.specification.id);
         assert_eq!(first_request.body.inputs.len(), 1);
     }
 
     #[test]
     fn source_capability_request_may_have_no_inputs() {
         let need = CapabilityNeed {
-            capability: CapabilityId::new("test", "discover", "1"),
-            requires: Vec::new(),
-            produces: vec![fact("discovered")],
-            conformance_suite: "test/discover@1".to_owned(),
+            specification: CapabilitySpec {
+                id: CapabilityId::new("test", "discover", "1"),
+                input_ports: Vec::new(),
+                output_ports: vec![OutputPort::new(port("result"), fact("discovered"))],
+                default_conformance_suite: "test/discover@1".to_owned(),
+                extensions: BTreeMap::new(),
+            },
             reason: "no provider".to_owned(),
         };
 
@@ -1969,10 +2540,13 @@ mod tests {
         let source = fact("external_source");
         let target = fact("external_target");
         let need = CapabilityNeed {
-            capability: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
-            requires: vec![Requirement::complete(source.clone())],
-            produces: vec![target.clone()],
-            conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+            specification: CapabilitySpec {
+                id: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
+                input_ports: vec![InputPort::complete(port("source"), source.clone())],
+                output_ports: vec![OutputPort::new(port("result"), target.clone())],
+                default_conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+                extensions: BTreeMap::new(),
+            },
             reason: "no installed provider".to_owned(),
         };
         let input = FactInstance::initial(
@@ -1987,7 +2561,7 @@ mod tests {
             &request,
             ProviderDescriptor {
                 id: ProviderId::new("test.provider", "external_agent", "1.0.0"),
-                capability: need.capability,
+                capability: need.specification.id,
                 implementation_digest: format!("sha256:{}", "a".repeat(64)),
             },
             vec![ProducedFact {
@@ -2051,10 +2625,13 @@ mod tests {
         let source = fact("external_source");
         let target = fact("external_target");
         let need = CapabilityNeed {
-            capability: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
-            requires: vec![Requirement::complete(source.clone())],
-            produces: vec![target.clone()],
-            conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+            specification: CapabilitySpec {
+                id: CapabilityId::new("test.capability", "external_generate", "1.0.0"),
+                input_ports: vec![InputPort::complete(port("source"), source.clone())],
+                output_ports: vec![OutputPort::new(port("result"), target.clone())],
+                default_conformance_suite: "test.conformance/external_generate@1.0.0".to_owned(),
+                extensions: BTreeMap::new(),
+            },
             reason: "no installed provider".to_owned(),
         };
         let input = FactInstance::initial(
@@ -2069,7 +2646,7 @@ mod tests {
             &request,
             ProviderDescriptor {
                 id: ProviderId::new("test.provider", "external_agent", "1.0.0"),
-                capability: need.capability,
+                capability: need.specification.id,
                 implementation_digest: format!("sha256:{}", "a".repeat(64)),
             },
             vec![ProducedFact {
@@ -2173,16 +2750,36 @@ mod tests {
         registry
             .register_spec(CapabilitySpec {
                 id: request.body.capability.clone(),
-                requires: request.body.requires.clone(),
-                produces: request.body.produces.clone(),
+                input_ports: request
+                    .body
+                    .requires
+                    .iter()
+                    .enumerate()
+                    .map(|(index, requirement)| InputPort {
+                        name: port(format!("input_{index}")),
+                        value_kind: requirement.fact.clone(),
+                        acceptance: requirement.acceptance,
+                        extensions: BTreeMap::new(),
+                    })
+                    .collect(),
+                output_ports: request
+                    .body
+                    .produces
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value_kind)| {
+                        OutputPort::new(port(format!("output_{index}")), value_kind.clone())
+                    })
+                    .collect(),
                 default_conformance_suite: request.body.conformance_suite.clone(),
+                extensions: BTreeMap::new(),
             })
             .unwrap();
         let admitted = admission.facts[0].clone();
         let resumed = registry
             .plan([admitted.fact_type.clone()], &admitted.fact_type)
             .unwrap();
-        assert!(resumed.is_executable());
+        assert!(resumed.has_provider_for_every_step());
         assert!(resumed.needs.is_empty());
         assert_eq!(
             registry
@@ -2313,6 +2910,162 @@ mod tests {
     }
 
     #[test]
+    fn repeated_input_and_output_ports_are_adapter_refusals_not_provider_failures() {
+        let source = fact("adapter_source");
+        let target = fact("adapter_target");
+
+        let repeated_input = CapabilitySpec {
+            id: CapabilityId::new("test", "repeated_input", "1"),
+            input_ports: vec![
+                InputPort::complete(port("left"), source.clone()),
+                InputPort::complete(port("right"), source.clone()),
+            ],
+            output_ports: vec![OutputPort::new(port("result"), target.clone())],
+            default_conformance_suite: "test/repeated_input@1".to_owned(),
+            extensions: BTreeMap::new(),
+        };
+        let mut input_registry = CapabilityRegistry::default();
+        input_registry
+            .register_spec(repeated_input.clone())
+            .unwrap();
+        register_copy(&mut input_registry, &repeated_input, target.clone());
+        let input_answer = answer(
+            &input_registry,
+            &DerivationRequest {
+                target: target.clone(),
+                inputs: vec![held(&source)],
+            },
+        );
+        assert!(matches!(
+            &input_answer,
+            Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
+                capability,
+                value_kind,
+            }) if **capability == repeated_input.id && **value_kind == source
+        ));
+        assert_eq!(
+            input_answer.remedy(),
+            "use an invocation adapter that binds exact named ports to fact identities"
+        );
+
+        let repeated_output = CapabilitySpec {
+            id: CapabilityId::new("test", "repeated_output", "1"),
+            input_ports: vec![InputPort::complete(port("source"), source.clone())],
+            output_ports: vec![
+                OutputPort::new(port("first"), target.clone()),
+                OutputPort::new(port("second"), target.clone()),
+            ],
+            default_conformance_suite: "test/repeated_output@1".to_owned(),
+            extensions: BTreeMap::new(),
+        };
+        let mut output_registry = CapabilityRegistry::default();
+        output_registry
+            .register_spec(repeated_output.clone())
+            .unwrap();
+        register_copy(&mut output_registry, &repeated_output, target.clone());
+        let output_answer = answer(
+            &output_registry,
+            &DerivationRequest {
+                target,
+                inputs: vec![held(&source)],
+            },
+        );
+        assert!(matches!(
+            output_answer,
+            Answer::Refused(RequestRefusal::LegacyAdapterRepeatedOutputKind {
+                capability,
+                value_kind,
+            }) if *capability == repeated_output.id && *value_kind == fact("adapter_target")
+        ));
+    }
+
+    struct CountingProvider {
+        descriptor: ProviderDescriptor,
+        invocations: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        output: FactType,
+    }
+
+    impl CapabilityProvider for CountingProvider {
+        fn descriptor(&self) -> ProviderDescriptor {
+            self.descriptor.clone()
+        }
+
+        fn invoke(
+            &self,
+            _: &CapabilitySpec,
+            _: &[FactInstance],
+        ) -> Result<Vec<ProducedFact>, String> {
+            self.invocations
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![ProducedFact {
+                fact_type: self.output.clone(),
+                coverage: FactCoverage::Complete,
+                payload: json!({"counted": true}),
+            }])
+        }
+    }
+
+    #[test]
+    fn legacy_execution_preflights_every_step_before_any_provider_runs() {
+        let a = fact("preflight_a");
+        let b = fact("preflight_b");
+        let c = fact("preflight_c");
+        let first = capability(
+            "preflight_first",
+            vec![Requirement::complete(a.clone())],
+            vec![b.clone()],
+        );
+        let second = CapabilitySpec {
+            id: CapabilityId::new("test", "preflight_second", "1"),
+            input_ports: vec![
+                InputPort::complete(port("left"), b.clone()),
+                InputPort::complete(port("right"), b.clone()),
+            ],
+            output_ports: vec![OutputPort::new(port("result"), c.clone())],
+            default_conformance_suite: "test/preflight_second@1".to_owned(),
+            extensions: BTreeMap::new(),
+        };
+        let invocations = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registry = CapabilityRegistry::default();
+        registry.register_spec(first.clone()).unwrap();
+        registry.register_spec(second.clone()).unwrap();
+        registry
+            .register_provider(CountingProvider {
+                descriptor: ProviderDescriptor {
+                    id: ProviderId::new("test.provider", "preflight_first", "1"),
+                    capability: first.id.clone(),
+                    implementation_digest: format!("sha256:{}", "1".repeat(64)),
+                },
+                invocations: invocations.clone(),
+                output: b,
+            })
+            .unwrap();
+        register_copy(&mut registry, &second, c.clone());
+
+        let plan = registry.plan([a.clone()], &c).unwrap();
+        assert!(matches!(
+            registry.execute(&plan, vec![held(&a)]),
+            Err(ExecutionError::RepeatedInputValueKindPortsUnsupported { .. })
+        ));
+        assert_eq!(
+            invocations.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a late adapter limitation must be found before the first provider runs"
+        );
+        assert!(matches!(
+            answer(
+                &registry,
+                &DerivationRequest {
+                    target: c,
+                    inputs: vec![held(&a)],
+                }
+            ),
+            Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind { .. })
+        ));
+        assert_eq!(invocations.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
     fn every_answer_variant_is_reachable() {
         let (registry, a, b) = one_hop(true);
         let produced = answer(
@@ -2431,7 +3184,7 @@ mod tests {
     }
 
     #[test]
-    fn the_five_remedies_are_distinct() {
+    fn outcome_categories_and_refusal_causes_have_distinct_remedies() {
         let (registry, a, b) = one_hop(true);
         let produced = answer(
             &registry,
@@ -2462,16 +3215,27 @@ mod tests {
                 inputs: vec![held(&a), held(&a)],
             },
         );
+        let adapter_refused = Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
+            capability: Box::new(CapabilityId::new("test", "compare", "1")),
+            value_kind: Box::new(a),
+        });
         let failed = Answer::Failed(ExecutionError::AmbiguousInput);
 
-        let remedies: BTreeSet<&str> = [&produced, &blocked, &unreachable, &refused, &failed]
-            .iter()
-            .map(|a| a.remedy())
-            .collect();
+        let remedies: BTreeSet<&str> = [
+            &produced,
+            &blocked,
+            &unreachable,
+            &refused,
+            &adapter_refused,
+            &failed,
+        ]
+        .iter()
+        .map(|a| a.remedy())
+        .collect();
         assert_eq!(
             remedies.len(),
-            5,
-            "two variants sharing a remedy means one of them is not earning its place"
+            6,
+            "different outcome ownership or refusal causes require different remedies"
         );
     }
 

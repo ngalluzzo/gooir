@@ -2,6 +2,19 @@
 
 Status: complete
 
+Amended by [0031](0031_MINIMAL_SEMANTIC_SUBSTRATE.md): pack protocol v2
+replaces anonymous `requires`/`produces` lists with exact, direction-scoped
+named ports. V1 manifests are rejected as a protocol mismatch; GOOIR never
+invents semantic role names while loading old data. Port names are exact
+within their direction, and two ports may deliberately carry the same exact
+value kind without being collapsed or renamed.
+
+V2 also preserves opaque unknown extension fields at the pack root, on each
+capability, and on each input or output port. Reading and writing a pack must
+round-trip those fields unchanged. The loader may validate the known envelope,
+but it must not discard ecosystem data merely because this GOOIR version does
+not interpret it.
+
 ## What was code that should not have been
 
 A capability is a promise about types: what it requires, what it produces, and
@@ -9,31 +22,38 @@ which suite a provider must eventually pass. None of that is code. Written as
 Rust struct literals, it meant **a graph could only be declared by someone
 compiling this workspace** — which is not an ecosystem.
 
-Eleven `CapabilitySpec` literals across two packs are now
-`org.gooi.pack/v1` manifests:
+Eleven `CapabilitySpec` literals across two packs became manifests. Their
+current wire form is `org.gooi.pack/v2`:
 
 ```json
 {
-  "protocol": "org.gooi.pack/v1",
+  "protocol": "org.gooi.pack/v2",
   "capabilities": [
     {
       "id": "org.gooi.capability/author_data_model@0.1.0",
-      "requires": [
-        { "fact": "org.gooi.source.authored/entity_spec@0.1.0",
+      "input_ports": [
+        { "name": "source",
+          "value_kind": "org.gooi.source.authored/entity_spec@0.1.0",
           "acceptance": "complete_only" }
       ],
-      "produces": ["org.gooi.semantics.data_model/model@1.0.0"],
+      "output_ports": [
+        { "name": "model",
+          "value_kind": "org.gooi.semantics.data_model/model@1.0.0" }
+      ],
       "default_conformance_suite": "org.gooi.conformance.authored_data_model@0.1.0"
     }
   ]
 }
 ```
 
-`read_pack` turns a manifest into ordinary specs; `register_pack` installs
-them; `write_pack` renders specs back out, so a host can publish the graph it
-installed. The registry validates a declared spec exactly as it validates a
-hand-written one — a manifest cannot declare something the kernel would refuse,
-and a test asserts that.
+`read_pack` turns a manifest into a semantic `CapabilityPack`, retaining both
+its ordinary specs and opaque pack-root data; `register_pack` installs its
+capabilities; `write_pack` validates and renders the entire pack back to v2
+JSON. Keeping the root is necessary: reducing the document to a vector of
+specs would destroy extension data before a round trip began. The registry
+validates a declared spec exactly as it validates a hand-written one — a
+manifest cannot declare something the kernel would refuse, and a test asserts
+that.
 
 ## Three decisions inside it
 
@@ -45,6 +65,12 @@ than filling in a default part — six malformed forms are covered.
 **Fact types are not listed separately.** They are exactly the identities the
 capabilities mention, so a separate list could only agree or drift. Derived
 beats duplicated.
+
+**Ports name roles exactly.** Direction plus port name identifies the role;
+the value kind identifies its meaning. Repeating one value kind on distinct
+ports is valid and does not license the loader, planner, or writer to merge the
+ports. Unknown extension fields at the pack, capability, and port levels
+survive every read/write cycle.
 
 **Providers stay code, because they are code.** What a manifest can declare is
 the *graph*; an implementation is an implementation. An out-of-process provider

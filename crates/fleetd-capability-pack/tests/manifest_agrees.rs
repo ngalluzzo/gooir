@@ -2,11 +2,15 @@
 //! Neither may drift from the other.
 
 use fleetd_capability_pack as pack;
-use gooir_capability::{CapabilityRegistry, PackManifest, read_pack};
+use gooir_capability::{CapabilityRegistry, read_pack};
 
 fn declared_capabilities() -> Vec<String> {
-    let manifest: PackManifest = serde_json::from_str(pack::MANIFEST).expect("pack.json is valid");
-    manifest.capabilities.into_iter().map(|c| c.id).collect()
+    let manifest = read_pack(pack::MANIFEST).expect("pack.json is valid");
+    manifest
+        .capabilities
+        .into_iter()
+        .map(|c| c.id.to_string())
+        .collect()
 }
 
 #[test]
@@ -33,12 +37,13 @@ fn every_capability_accessor_is_declared_by_the_manifest() {
 fn every_fact_accessor_is_mentioned_by_the_manifest() {
     let specs = read_pack(pack::MANIFEST).expect("manifest reads");
     let mentioned: Vec<String> = specs
+        .capabilities
         .iter()
         .flat_map(|s| {
-            s.produces
+            s.output_ports
                 .iter()
-                .map(ToString::to_string)
-                .chain(s.requires.iter().map(|r| r.fact.to_string()))
+                .map(|port| port.value_kind.to_string())
+                .chain(s.input_ports.iter().map(|port| port.value_kind.to_string()))
         })
         .collect();
     for accessor in [

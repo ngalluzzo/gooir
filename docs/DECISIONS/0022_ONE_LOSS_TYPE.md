@@ -85,8 +85,9 @@ written down.
 ## What this unblocks
 
 A lowering's whole result is now serialisable, so **a lowering can be a plugin**
-— written in any language, over `org.gooi.plugin/v1`. Nothing about the
-protocol needed to change; the obstacle was entirely on this side.
+— written in any language, over the plugin protocol (currently
+`org.gooi.plugin/v2`). This decision did not require a protocol change; the
+later named-port amendment did.
 
 ## Deliberately not done
 

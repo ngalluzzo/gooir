@@ -117,26 +117,17 @@ where
         capability: &CapabilitySpec,
         inputs: &[FactInstance],
     ) -> Result<Vec<ProducedFact>, String> {
-        let wanted = single(
-            &capability
-                .requires
-                .iter()
-                .map(|r| r.fact.clone())
-                .collect::<Vec<_>>(),
-        )
-        .ok_or("a transform needs exactly one declared input")?;
-        let produces =
-            single(&capability.produces).ok_or("a transform produces exactly one fact")?;
+        let wanted = match capability.input_ports.as_slice() {
+            [only] => only.value_kind.clone(),
+            _ => return Err("a transform needs exactly one declared input port".to_owned()),
+        };
+        let produces = match capability.output_ports.as_slice() {
+            [only] => only.value_kind.clone(),
+            _ => return Err("a transform produces exactly one output port".to_owned()),
+        };
         let decoded: I = input(inputs, &wanted)?;
         let result = (self.run)(decoded).into_defeasible()?;
         Ok(vec![publish(produces, &result)?])
-    }
-}
-
-fn single(facts: &[FactType]) -> Option<FactType> {
-    match facts {
-        [only] => Some(only.clone()),
-        _ => None,
     }
 }
 
@@ -175,15 +166,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gooir_capability::{FactAcceptance, Requirement, read_pack};
+    use gooir_capability::{FactAcceptance, InputPort, OutputPort, PortName, read_pack};
     use lift_defeasible::{Defeat, DefeatKind};
 
     const PACK: &str = r#"{
-      "protocol": "org.gooi.pack/v1",
+      "protocol": "org.gooi.pack/v2",
       "capabilities": [{
         "id": "test.capability/double@1.0.0",
-        "requires": [{ "fact": "test.fact/number@1.0.0", "acceptance": "complete_only" }],
-        "produces": ["test.fact/doubled@1.0.0"],
+        "input_ports": [{ "name": "number", "value_kind": "test.fact/number@1.0.0", "acceptance": "complete_only" }],
+        "output_ports": [{ "name": "result", "value_kind": "test.fact/doubled@1.0.0" }],
         "default_conformance_suite": "test.suite/double@1.0.0"
       }]
     }"#;
@@ -192,7 +183,7 @@ mod tests {
         run: impl Fn(u32) -> Defeasible<u32> + Send + Sync + 'static,
     ) -> CapabilityRegistry {
         let mut registry = CapabilityRegistry::default();
-        for spec in read_pack(PACK).unwrap() {
+        for spec in read_pack(PACK).unwrap().capabilities {
             registry.register_spec(spec).unwrap();
         }
         register_transform(
@@ -252,18 +243,26 @@ mod tests {
         registry
             .register_spec(CapabilitySpec {
                 id: CapabilityId::new("test.capability", "double", "1.0.0"),
-                requires: vec![
-                    Requirement {
-                        fact: FactType::new("test.fact", "number", "1.0.0"),
+                input_ports: vec![
+                    InputPort {
+                        name: PortName::parse("number").unwrap(),
+                        value_kind: FactType::new("test.fact", "number", "1.0.0"),
                         acceptance: FactAcceptance::CompleteOnly,
+                        extensions: Default::default(),
                     },
-                    Requirement {
-                        fact: FactType::new("test.fact", "other", "1.0.0"),
+                    InputPort {
+                        name: PortName::parse("other").unwrap(),
+                        value_kind: FactType::new("test.fact", "other", "1.0.0"),
                         acceptance: FactAcceptance::CompleteOnly,
+                        extensions: Default::default(),
                     },
                 ],
-                produces: vec![FactType::new("test.fact", "doubled", "1.0.0")],
+                output_ports: vec![OutputPort::new(
+                    PortName::parse("result").unwrap(),
+                    FactType::new("test.fact", "doubled", "1.0.0"),
+                )],
                 default_conformance_suite: "test.suite/double@1.0.0".to_owned(),
+                extensions: Default::default(),
             })
             .unwrap();
         register_transform(

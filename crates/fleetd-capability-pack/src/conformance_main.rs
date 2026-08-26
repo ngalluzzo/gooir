@@ -13,7 +13,7 @@ use serde::Serialize;
 struct Report {
     admission: gooir_capability::CapabilityAdmission,
     replanned: DerivationPlan,
-    replan_executable: bool,
+    replan_fully_provided: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     available.extend(admission.facts.iter().map(|fact| fact.fact_type.clone()));
     let replanned = registry()?.plan(available, &runnable_web_artifact_fact())?;
     let report = Report {
-        replan_executable: replanned.is_executable(),
+        replan_fully_provided: replanned.has_provider_for_every_step(),
         replanned,
         admission,
     };

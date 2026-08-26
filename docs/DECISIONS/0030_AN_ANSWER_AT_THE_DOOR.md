@@ -2,6 +2,29 @@
 
 Status: complete
 
+## Recovery classification
+
+This decision records a useful experimental Rust and CLI surface, not a stable
+wire protocol. `CapabilityNeed`, `DerivationPlan`, `DerivationRequest`, and
+`Answer` were unversioned workspace types. Their serialized shapes changed
+during recovery when dialect/value-kind identity and named ports corrected the
+graph model; they will change again when the authority plane replaces legacy
+fact instances. No compatibility is promised for previously serialized values,
+and no protocol envelope should be inferred or invented from the examples
+below.
+
+Named-port recovery also refined `Refused`: ambiguous legacy inputs and a
+legacy adapter that cannot represent repeated value kinds are both owned by
+the caller/adapter boundary, but they name different remedies. The five
+top-level categories remain historical ownership classes, not a claim that
+every refusal has the same next action.
+
+At the time of this decision `DerivationPlan::is_executable` meant only that
+every planned step had a provider. Recovery renamed that predicate
+`has_provider_for_every_step` because provider coverage is not sufficient to
+prove that a legacy adapter can represent or safely execute a plan. Historical
+references below describe the test as it was named then.
+
 ## The defect
 
 GOOIR had a front door and no shape for what comes back through it.
@@ -91,7 +114,7 @@ independent guard could not be mistaken for this one:
 
 | perturbation | caught |
 | --- | --- |
-| drop the `is_executable` guard | yes |
+| drop the provider-coverage guard (`is_executable` at the time) | yes |
 | never report `Blocked` | yes |
 | always report `Blocked` | yes |
 | stop refusing duplicate inputs | yes |

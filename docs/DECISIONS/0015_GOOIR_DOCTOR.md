@@ -2,6 +2,16 @@
 
 Status: complete
 
+## Recovery amendment
+
+[0031](0031_MINIMAL_SEMANTIC_SUBSTRATE.md) separates type-level provider
+coverage from linked invocation and execution. The historical Doctor rendered
+that predicate as **you can obtain**; named ports proved the wording too strong,
+because a legacy adapter may be unable to represent a fully provided route.
+Current Doctor output therefore says **terminal provider coverage** and reports
+`provided` or `needs`. The historical wording below records the original
+instrument rather than a current execution guarantee.
+
 ## Why
 
 The mechanics are far ahead of the ergonomics, and that gap was assertable but

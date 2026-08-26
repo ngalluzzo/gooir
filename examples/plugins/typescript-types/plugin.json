@@ -1,5 +1,5 @@
 {
-  "protocol": "org.gooi.plugin/v1",
+  "protocol": "org.gooi.plugin/v2",
   "provider": {
     "package": "org.gooi.plugin",
     "name": "typescript_types",

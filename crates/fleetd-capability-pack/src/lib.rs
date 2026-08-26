@@ -395,11 +395,14 @@ mod tests {
             .plan(sources, &runnable_web_artifact_fact())
             .unwrap();
 
-        assert!(web.is_executable());
+        assert!(web.has_provider_for_every_step());
         assert_eq!(web.steps.len(), 5);
-        assert!(!runnable.is_executable());
+        assert!(!runnable.has_provider_for_every_step());
         assert_eq!(runnable.needs.len(), 1);
-        assert_eq!(runnable.needs[0].capability, runnable_web_capability());
+        assert_eq!(
+            runnable.needs[0].specification.id,
+            runnable_web_capability()
+        );
     }
 
     #[test]
