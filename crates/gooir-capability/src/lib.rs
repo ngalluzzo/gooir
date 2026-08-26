@@ -5,6 +5,7 @@
 //! meanings of facts nor domain verbs such as lift, analyze, or lower; it only
 //! constructs derivations over multi-input capability edges.
 
+pub mod authority;
 mod manifest;
 pub mod protocol;
 
