@@ -699,11 +699,12 @@ fn assert_two_provider_plan(plan: &SemanticPlan) -> Result<(), ProofError> {
             "provider plan does not contain exactly one capability",
         ));
     };
-    let implementations: Vec<_> = capability
+    let mut implementations: Vec<_> = capability
         .offers
         .iter()
         .map(|offer| offer.implementation.clone())
         .collect();
+    implementations.sort();
     let mut expected = vec![
         fleetd_direct_conversation_reqwest_provider::implementation_id(),
         fleetd_direct_conversation_ureq_provider::implementation_id(),
@@ -1393,6 +1394,11 @@ mod tests {
         let reverse = install_two_provider_plan(true);
         assert_eq!(forward, reverse);
         assert_two_provider_plan(&forward).expect("two-provider plan");
+
+        let mut opposite_offer_order = forward;
+        opposite_offer_order.capabilities[0].offers.reverse();
+        assert_two_provider_plan(&opposite_offer_order)
+            .expect("provider-set assertion is independent of offer identity order");
     }
 
     #[test]
