@@ -20,6 +20,7 @@ members = [
     "crates/gooir-doctor",
     "crates/gooir-identity",
     "crates/gooir-plugin-process",
+    "crates/gooir-package",
     "crates/gooir-provider",
     "crates/interaction-activation-recurrence",
     "crates/semantics-activity-projection-v0",
@@ -64,6 +65,7 @@ gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
+gooir-package = { path = "crates/gooir-package" }
 gooir-provider = { path = "crates/gooir-provider" }
 interaction-activation-recurrence = { path = "crates/interaction-activation-recurrence" }
 semantics-activity-projection-v0 = { path = "crates/semantics-activity-projection-v0" }
