@@ -17,6 +17,7 @@ members = [
     "crates/gooir-author-data-model-contract",
     "crates/gooir-cli",
     "crates/gooir-datamodel-conformance",
+    "crates/gooir-datamodel-external-host-proof",
     "crates/gooir-datamodel-package-proof",
     "crates/gooir-datamodel-pack",
     "crates/gooir-doctor",
@@ -25,6 +26,7 @@ members = [
     "crates/gooir-package",
     "crates/gooir-planning",
     "crates/gooir-provider",
+    "crates/gooir-wasip1-command-runtime",
     "crates/interaction-activation-recurrence",
     "crates/semantics-activity-projection-v0",
     "crates/lift-defeasible",
@@ -65,6 +67,7 @@ gooir-capability = { path = "crates/gooir-capability" }
 gooir-author-data-model-contract = { path = "crates/gooir-author-data-model-contract" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-datamodel-conformance = { path = "crates/gooir-datamodel-conformance" }
+gooir-datamodel-external-host-proof = { path = "crates/gooir-datamodel-external-host-proof" }
 gooir-datamodel-package-proof = { path = "crates/gooir-datamodel-package-proof" }
 gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }
@@ -73,6 +76,7 @@ gooir-plugin-process = { path = "crates/gooir-plugin-process" }
 gooir-package = { path = "crates/gooir-package" }
 gooir-planning = { path = "crates/gooir-planning" }
 gooir-provider = { path = "crates/gooir-provider" }
+gooir-wasip1-command-runtime = { path = "crates/gooir-wasip1-command-runtime" }
 interaction-activation-recurrence = { path = "crates/interaction-activation-recurrence" }
 semantics-activity-projection-v0 = { path = "crates/semantics-activity-projection-v0" }
 lift-defeasible = { path = "crates/lift-defeasible" }
@@ -94,6 +98,10 @@ sha2 = "0.10"
 syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 toml = "1"
-rustix = { version = "1.1.4", features = ["fs"] }
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+wasmtime = { version = "=48.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "=48.0.1", default-features = false, features = ["p1"] }
+wasmparser = "=0.254.0"
+wat = "1"
 nix = { version = "0.31.3", features = ["fs"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }

@@ -1,9 +1,10 @@
 //! Content-addressed four-package proof for the external authored-data-model path.
 //!
-//! The stager consumes two already-final native executables. It never invokes a
+//! The stager consumes two already-final `WASIp1` modules. It never invokes a
 //! compiler, package manager, or Cargo, and it never appends a manifest to an
-//! executable. Instead it copies the exact measured bytes into two target-
-//! qualified packages. Package resources are written before the package
+//! module. The shared command-profile runtime compiles, links, and instantiates
+//! each module without calling `_start`; only then are the exact measured bytes
+//! copied into two runtime-qualified packages. Package resources precede the
 //! manifest. A complete, independently verified tree is published with one
 //! atomic no-replace rename, and a pre-existing output root is always refused.
 //!
@@ -41,46 +42,45 @@ use gooir_package::{
     load_local_package, read_manifest, write_manifest,
 };
 use gooir_planning::{InvocationLink, PlanLimits, PlanningError, SemanticPlan, SemanticPlanner};
+use gooir_wasip1_command_runtime::{MAX_MODULE_BYTES, RUNTIME_ID, qualify_module};
 use rustix::fs::{Mode, OFlags, RenameFlags, open, renameat_with};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 /// Exact proof report protocol. It describes a host-local deployment lock; it
 /// is not a GOOIR semantic or package protocol.
-pub const PROOF_REPORT_PROTOCOL: &str = "org.gooi.proof.data-model-external-packages/v1";
+pub const PROOF_REPORT_PROTOCOL: &str = "org.gooi.proof.data-model-external-packages/v2";
 
-/// Target-qualified package containing the final entity-spec provider bytes.
-pub const PROVIDER_PACKAGE: &str =
-    "org.gooi.implementation.entity_spec_rust.aarch64_apple_darwin@1.1.0";
+/// Runtime-qualified package containing the final entity-spec provider module.
+pub const PROVIDER_PACKAGE: &str = "org.gooi.implementation.entity_spec_rust.wasm32_wasip1@1.1.0";
 
-/// Target-qualified package containing the final independent attester bytes.
+/// Runtime-qualified package containing the final independent attester module.
 pub const ATTESTER_PACKAGE: &str =
-    "org.gooi.attester.author_data_model_tasks_entities_oracle.aarch64_apple_darwin@1.1.0";
+    "org.gooi.attester.author_data_model_tasks_entities_oracle.wasm32_wasip1@1.1.0";
 
-/// Package-local resource name of the provider executable.
-pub const PROVIDER_RESOURCE: &str = "provider-executable";
+/// Package-local resource name of the provider `WASIp1` module.
+pub const PROVIDER_RESOURCE: &str = "provider-wasip1-module";
 
-/// Package-local path of the provider executable.
-pub const PROVIDER_RESOURCE_PATH: &str = "bin/author_data_model_provider";
+/// Package-local path of the provider `WASIp1` module.
+pub const PROVIDER_RESOURCE_PATH: &str = "modules/author_data_model_provider.wasm";
 
-/// Package-local resource name of the attester executable.
-pub const ATTESTER_RESOURCE: &str = "attester-executable";
+/// Package-local resource name of the attester `WASIp1` module.
+pub const ATTESTER_RESOURCE: &str = "attester-wasip1-module";
 
-/// Package-local path of the attester executable.
-pub const ATTESTER_RESOURCE_PATH: &str = "bin/gooir-datamodel-conformance";
+/// Package-local path of the attester `WASIp1` module.
+pub const ATTESTER_RESOURCE_PATH: &str = "modules/gooir-datamodel-conformance.wasm";
 
 const VOCABULARY_DIRECTORY: &str = "01-data-model-vocabulary";
 const CONTRACT_DIRECTORY: &str = "02-author-data-model-contract";
-const PROVIDER_DIRECTORY: &str = "03-entity-spec-provider-aarch64-apple-darwin";
-const ATTESTER_DIRECTORY: &str = "04-tasks-entities-attester-aarch64-apple-darwin";
+const PROVIDER_DIRECTORY: &str = "03-entity-spec-provider-wasm32-wasip1";
+const ATTESTER_DIRECTORY: &str = "04-tasks-entities-attester-wasm32-wasip1";
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
-const MAX_RESOURCE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Inputs to one staging operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StageRequest {
-    pub provider_binary: PathBuf,
-    pub attester_binary: PathBuf,
+    pub provider_module: PathBuf,
+    pub attester_module: PathBuf,
     pub output_root: PathBuf,
 }
 
@@ -121,6 +121,7 @@ pub struct AttesterDeploymentLock {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProofReport {
     pub protocol: String,
+    pub runtime_profile: String,
     pub installation_order: Vec<PackageId>,
     pub packages: Vec<PackageCoordinate>,
     pub capability: String,
@@ -168,7 +169,7 @@ impl VerifiedPackageSet {
         &self.provider_offer
     }
 
-    /// Package-owned executable bytes bound to the exact provider offer.
+    /// Package-owned `WASIp1` bytes bound to the exact provider offer.
     #[must_use]
     pub fn provider_artifact(&self) -> &OwnedResource {
         &self.provider_artifact
@@ -210,31 +211,31 @@ impl VerifiedPackageSet {
     }
 }
 
-/// Stages the exact supplied executable bytes and verifies the resulting
-/// four-package graph without ever launching the executables.
+/// Qualifies and stages the exact supplied `WASIp1` module bytes, then verifies
+/// the resulting four-package graph without ever executing the modules.
 ///
-/// Each supplied final binary is opened and consumed exactly once. All later
+/// Each supplied final module is opened and consumed exactly once. All later
 /// validation reads only the staged, package-owned copies. The output root must
 /// not exist; a partial prior attempt is intentionally not overwritten.
 ///
 /// # Errors
 ///
-/// Refuses an existing output root, a non-regular or non-executable source,
+/// Refuses an existing output root, a non-regular or malformed module source,
 /// oversized bytes, invalid package construction, unsafe filesystem state, or
 /// any failed installation/planning invariant.
 pub fn stage(request: StageRequest) -> Result<ProofReport, ProofError> {
     let StageRequest {
-        provider_binary,
-        attester_binary,
+        provider_module,
+        attester_module,
         output_root,
     } = request;
     ensure_output_absent(&output_root)?;
 
-    let provider_bytes = read_final_binary(&provider_binary)?;
-    let attester_bytes = read_final_binary(&attester_binary)?;
+    let provider_bytes = read_final_module(&provider_module)?;
+    let attester_bytes = read_final_module(&attester_module)?;
     if sha256_identity(&provider_bytes) == sha256_identity(&attester_bytes) {
         return Err(ProofError::Invariant(
-            "provider and attester executable digests must be distinct".to_owned(),
+            "provider and attester module digests must be distinct".to_owned(),
         ));
     }
 
@@ -302,7 +303,6 @@ fn stage_packages(
         &[ResourceBytes {
             path: AUTHORED_SPEC_SCHEMA_PATH,
             bytes: AUTHORED_SPEC_SCHEMA_BYTES,
-            executable: false,
         }],
         &mut registry,
     )?;
@@ -318,7 +318,6 @@ fn stage_packages(
         &[ResourceBytes {
             path: PROVIDER_RESOURCE_PATH,
             bytes: provider_bytes,
-            executable: true,
         }],
         &mut registry,
     )?;
@@ -340,7 +339,6 @@ fn stage_packages(
         &[ResourceBytes {
             path: ATTESTER_RESOURCE_PATH,
             bytes: attester_bytes,
-            executable: true,
         }],
         &mut registry,
     )?;
@@ -378,7 +376,7 @@ pub fn verify(root: impl AsRef<Path>) -> Result<ProofReport, ProofError> {
 /// Independently loads, installs, and verifies an owned four-package proof.
 ///
 /// Unlike [`verify`], this retains the complete installed registry so an
-/// external execution host can use the exact verified executable bytes after
+/// external execution host can use the exact verified module bytes after
 /// the package directories disappear. Only the proof-bound provider and the
 /// explicitly locked attester are exposed.
 ///
@@ -479,6 +477,7 @@ fn build_report(
         .collect();
     Ok(ProofReport {
         protocol: PROOF_REPORT_PROTOCOL.to_owned(),
+        runtime_profile: RUNTIME_ID.to_owned(),
         installation_order,
         packages,
         capability: author_data_model_capability_id().to_string(),
@@ -529,15 +528,13 @@ fn validate_package_graph(installed: InstalledProof<'_>) -> Result<(), ProofErro
         ProofError::Invariant(format!("could not reconstruct contract package: {error}"))
     })?;
     assert_exact_manifest(contract, &expected_contract, "contract")?;
-    let expected_provider = provider_manifest(
-        contract,
-        retained_resource_bytes(provider, PROVIDER_RESOURCE)?,
-    )?;
+    let provider_bytes = retained_resource_bytes(provider, PROVIDER_RESOURCE)?;
+    let attester_bytes = retained_resource_bytes(attester, ATTESTER_RESOURCE)?;
+    qualify_final_module(Path::new(PROVIDER_RESOURCE_PATH), provider_bytes)?;
+    qualify_final_module(Path::new(ATTESTER_RESOURCE_PATH), attester_bytes)?;
+    let expected_provider = provider_manifest(contract, provider_bytes)?;
     assert_exact_manifest(provider, &expected_provider, "provider")?;
-    let expected_attester = attester_manifest(
-        contract,
-        retained_resource_bytes(attester, ATTESTER_RESOURCE)?,
-    )?;
+    let expected_attester = attester_manifest(contract, attester_bytes)?;
     assert_exact_manifest(attester, &expected_attester, "attester")?;
 
     if !provider.manifest().capabilities.is_empty()
@@ -624,7 +621,7 @@ fn provider_manifest(
     PackageManifest::new(
         package_id(PROVIDER_PACKAGE)?,
         vec![dependency(contract)],
-        vec![executable_resource(
+        vec![wasip1_module_resource(
             PROVIDER_RESOURCE,
             PROVIDER_RESOURCE_PATH,
             bytes,
@@ -650,7 +647,7 @@ fn attester_manifest(
     PackageManifest::new(
         package_id(ATTESTER_PACKAGE)?,
         vec![dependency(contract)],
-        vec![executable_resource(
+        vec![wasip1_module_resource(
             ATTESTER_RESOURCE,
             ATTESTER_RESOURCE_PATH,
             bytes,
@@ -664,7 +661,7 @@ fn attester_manifest(
     .map_err(ProofError::Manifest)
 }
 
-fn executable_resource(
+fn wasip1_module_resource(
     name: &str,
     path: &str,
     bytes: &[u8],
@@ -672,7 +669,7 @@ fn executable_resource(
     Ok(PackageResource {
         name: resource_name(name)?,
         path: path.to_owned(),
-        media_type: "application/octet-stream".to_owned(),
+        media_type: "application/wasm".to_owned(),
         size: u64::try_from(bytes.len()).map_err(|_| {
             ProofError::Invariant("resource length cannot be represented as u64".to_owned())
         })?,
@@ -698,73 +695,89 @@ fn resource_name(value: &str) -> Result<ResourceName, ProofError> {
     ResourceName::parse(value).map_err(|error| ProofError::Invariant(error.to_string()))
 }
 
-fn read_final_binary(path: &Path) -> Result<Vec<u8>, ProofError> {
+fn read_final_module(path: &Path) -> Result<Vec<u8>, ProofError> {
+    let max_resource_bytes = max_resource_bytes();
     let descriptor = open(
         path,
         OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
         Mode::empty(),
     )
     .map_err(|error| ProofError::Filesystem {
-        action: "open final executable",
+        action: "open final WASIp1 module",
         path: path.to_path_buf(),
         detail: error.to_string(),
     })?;
     let mut file = File::from(descriptor);
     let metadata = file.metadata().map_err(|error| ProofError::Io {
-        action: "inspect final executable",
+        action: "inspect final WASIp1 module",
         path: path.to_path_buf(),
         source: error,
     })?;
     if !metadata.is_file() {
-        return Err(ProofError::InvalidBinary {
+        return Err(ProofError::InvalidModule {
             path: path.to_path_buf(),
             detail: "not a regular file".to_owned(),
         });
     }
-    if metadata.permissions().mode() & 0o111 == 0 {
-        return Err(ProofError::InvalidBinary {
-            path: path.to_path_buf(),
-            detail: "no executable mode bit is set".to_owned(),
-        });
-    }
-    if metadata.len() > MAX_RESOURCE_BYTES {
-        return Err(ProofError::InvalidBinary {
+    if metadata.len() > max_resource_bytes {
+        return Err(ProofError::InvalidModule {
             path: path.to_path_buf(),
             detail: format!(
                 "declared length {} exceeds {} bytes",
                 metadata.len(),
-                MAX_RESOURCE_BYTES
+                max_resource_bytes
             ),
         });
     }
 
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).map_err(|_| {
-        ProofError::InvalidBinary {
+        ProofError::InvalidModule {
             path: path.to_path_buf(),
-            detail: "binary length cannot be represented in memory".to_owned(),
+            detail: "module length cannot be represented in memory".to_owned(),
         }
     })?);
     Read::by_ref(&mut file)
-        .take(MAX_RESOURCE_BYTES + 1)
+        .take(max_resource_bytes + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| ProofError::Io {
-            action: "read final executable",
+            action: "read final WASIp1 module",
             path: path.to_path_buf(),
             source: error,
         })?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != metadata.len() {
-        return Err(ProofError::InvalidBinary {
+        return Err(ProofError::InvalidModule {
             path: path.to_path_buf(),
-            detail: "binary changed length while it was being read".to_owned(),
+            detail: "module changed length while it was being read".to_owned(),
         });
     }
+    if !bytes.starts_with(b"\0asm\x01\0\0\0") {
+        return Err(ProofError::InvalidModule {
+            path: path.to_path_buf(),
+            detail: "missing the WebAssembly 1.0 module preamble".to_owned(),
+        });
+    }
+    qualify_final_module(path, &bytes)?;
     Ok(bytes)
+}
+
+fn qualify_final_module(path: &Path, bytes: &[u8]) -> Result<(), ProofError> {
+    let qualification = qualify_module(bytes).map_err(|error| ProofError::InvalidModule {
+        path: path.to_path_buf(),
+        detail: error.to_string(),
+    })?;
+    if qualification.runtime != RUNTIME_ID || qualification.module_digest != sha256_identity(bytes)
+    {
+        return Err(ProofError::InvalidModule {
+            path: path.to_path_buf(),
+            detail: "command-profile qualification changed runtime or module identity".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 struct ResourceBytes<'bytes> {
     path: &'static str,
     bytes: &'bytes [u8],
-    executable: bool,
 }
 
 fn ensure_output_absent(path: &Path) -> Result<(), ProofError> {
@@ -887,11 +900,7 @@ fn write_resource(root: &Path, resource: &ResourceBytes<'_>) -> Result<(), Proof
     if let Some(parent) = path.parent() {
         create_directory_tree(root, parent)?;
     }
-    write_new_file(
-        &path,
-        resource.bytes,
-        if resource.executable { 0o500 } else { 0o400 },
-    )?;
+    write_new_file(&path, resource.bytes, 0o400)?;
     if let Some(parent) = path.parent() {
         sync_directory(parent)?;
     }
@@ -965,12 +974,17 @@ fn load_install(
 }
 
 fn load_limits() -> LoadLimits {
+    let max_resource_bytes = max_resource_bytes();
     LoadLimits {
         max_manifest_bytes: MAX_MANIFEST_BYTES,
         max_resources: 4,
-        max_resource_bytes: MAX_RESOURCE_BYTES,
-        max_total_resource_bytes: MAX_RESOURCE_BYTES,
+        max_resource_bytes,
+        max_total_resource_bytes: max_resource_bytes,
     }
+}
+
+fn max_resource_bytes() -> u64 {
+    u64::try_from(MAX_MODULE_BYTES).expect("WASIp1 module bound fits u64")
 }
 
 fn planning_limits() -> PlanLimits {
@@ -1223,7 +1237,7 @@ fn sha256_identity(bytes: &[u8]) -> String {
 pub enum ProofError {
     OutputRootExists(PathBuf),
     InvalidOutputRoot(PathBuf),
-    InvalidBinary {
+    InvalidModule {
         path: PathBuf,
         detail: String,
     },
@@ -1257,10 +1271,10 @@ impl fmt::Display for ProofError {
             Self::InvalidOutputRoot(path) => {
                 write!(formatter, "invalid output root {}", path.display())
             }
-            Self::InvalidBinary { path, detail } => {
+            Self::InvalidModule { path, detail } => {
                 write!(
                     formatter,
-                    "invalid final binary {}: {detail}",
+                    "invalid final WASIp1 module {}: {detail}",
                     path.display()
                 )
             }
@@ -1297,7 +1311,7 @@ impl Error for ProofError {
             Self::Serialization(error) => Some(error),
             Self::OutputRootExists(_)
             | Self::InvalidOutputRoot(_)
-            | Self::InvalidBinary { .. }
+            | Self::InvalidModule { .. }
             | Self::Filesystem { .. }
             | Self::Invariant(_) => None,
         }
@@ -1308,10 +1322,22 @@ impl Error for ProofError {
 mod tests {
     use super::*;
 
-    fn executable(path: &Path, bytes: &[u8]) {
-        fs::write(path, bytes).expect("write synthetic executable");
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .expect("mark synthetic bytes executable");
+    fn wasm_module(path: &Path, discriminator: &[u8]) -> Vec<u8> {
+        let mut bytes = wat::parse_str("(module (func (export \"_start\")))")
+            .expect("valid synthetic WASIp1 command");
+        let section_name = b"proof-test";
+        let payload_len = 1 + section_name.len() + discriminator.len();
+        assert!(
+            payload_len < 128,
+            "test custom section uses one-byte LEB128"
+        );
+        bytes.push(0);
+        bytes.push(u8::try_from(payload_len).expect("one-byte custom-section length"));
+        bytes.push(u8::try_from(section_name.len()).expect("one-byte custom-section name"));
+        bytes.extend_from_slice(section_name);
+        bytes.extend_from_slice(discriminator);
+        fs::write(path, &bytes).expect("write synthetic WASIp1 module");
+        bytes
     }
 
     #[test]
@@ -1319,15 +1345,16 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider_source = temporary.path().join("provider-final");
         let attester_source = temporary.path().join("attester-final");
-        let provider_bytes = b"synthetic final provider executable bytes";
-        let attester_bytes = b"synthetic final independent attester executable bytes";
-        executable(&provider_source, provider_bytes);
-        executable(&attester_source, attester_bytes);
+        let provider_bytes = wasm_module(&provider_source, b"synthetic final provider module");
+        let attester_bytes = wasm_module(
+            &attester_source,
+            b"synthetic final independent attester module",
+        );
         let output = temporary.path().join("packages");
 
         let staged = stage(StageRequest {
-            provider_binary: provider_source,
-            attester_binary: attester_source,
+            provider_module: provider_source,
+            attester_module: attester_source,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1362,15 +1389,15 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"different attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
         let output = temporary.path().join("existing");
         fs::create_dir(&output).expect("existing output");
         fs::write(output.join("keep"), b"operator data").expect("existing data");
 
         let error = stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect_err("existing output must be refused");
@@ -1413,14 +1440,14 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"different attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
         let output = temporary.path().join("published");
         std::os::unix::fs::symlink("missing-target", &output).expect("broken symlink");
 
         let error = stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect_err("broken symlink must be refused");
@@ -1433,16 +1460,16 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_changed_staged_executable_bytes() {
+    fn verifier_rejects_changed_staged_module_bytes() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"different attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1461,12 +1488,12 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"different attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1508,16 +1535,60 @@ mod tests {
     }
 
     #[test]
+    fn independent_verifier_requalifies_installed_module_bytes() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
+        let output = temporary.path().join("packages");
+        stage(StageRequest {
+            provider_module: provider,
+            attester_module: attester,
+            output_root: output.clone(),
+        })
+        .expect("stage proof");
+
+        let invalid_module = wat::parse_str("(module)").expect("valid inert core module");
+        let mut registry = PackageRegistry::default();
+        let _vocabulary =
+            load_install(&output, VOCABULARY_DIRECTORY, &mut registry).expect("install vocabulary");
+        let contract =
+            load_install(&output, CONTRACT_DIRECTORY, &mut registry).expect("install contract");
+        let rewritten_manifest =
+            provider_manifest(&contract, &invalid_module).expect("rewritten provider manifest");
+        let provider_root = output.join(PROVIDER_DIRECTORY);
+        let provider_resource = provider_root.join(PROVIDER_RESOURCE_PATH);
+        let provider_manifest_path = provider_root.join(gooir_package::PACKAGE_MANIFEST_FILE);
+        fs::set_permissions(&provider_resource, fs::Permissions::from_mode(0o700))
+            .expect("make provider writable for mutation");
+        fs::write(&provider_resource, invalid_module).expect("rewrite provider module");
+        fs::set_permissions(&provider_manifest_path, fs::Permissions::from_mode(0o600))
+            .expect("make provider manifest writable for mutation");
+        fs::write(
+            &provider_manifest_path,
+            write_manifest(&rewritten_manifest).expect("serialize rewritten provider manifest"),
+        )
+        .expect("rewrite provider manifest");
+
+        let error = verify(&output).expect_err("installed module must be requalified");
+        assert!(matches!(
+            error,
+            ProofError::InvalidModule { detail, .. } if detail.contains("_start")
+        ));
+    }
+
+    #[test]
     fn verifier_rejects_a_self_consistent_self_attesting_artifact() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"different attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"different attester bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1554,16 +1625,16 @@ mod tests {
     }
 
     #[test]
-    fn source_binaries_must_be_distinct_regular_executables() {
+    fn source_modules_must_be_distinct_regular_wasm_modules() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"same bytes");
-        executable(&attester, b"same bytes");
+        wasm_module(&provider, b"same bytes");
+        wasm_module(&attester, b"same bytes");
 
         let error = stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: temporary.path().join("packages"),
         })
         .expect_err("self-attesting artifact identity must be refused");
@@ -1571,17 +1642,40 @@ mod tests {
     }
 
     #[test]
+    fn source_modules_must_be_invokable_under_the_shared_profile() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        fs::write(
+            &provider,
+            wat::parse_str("(module)").expect("valid inert module"),
+        )
+        .expect("write inert provider");
+        wasm_module(&attester, b"invokable attester");
+
+        let error = stage(StageRequest {
+            provider_module: provider,
+            attester_module: attester,
+            output_root: temporary.path().join("packages"),
+        })
+        .expect_err("module without typed _start must be refused");
+        assert!(matches!(
+            error,
+            ProofError::InvalidModule { detail, .. } if detail.contains("_start")
+        ));
+    }
+
+    #[test]
     fn verified_set_resolves_the_exact_offer_to_its_owned_provider_bytes() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        let provider_bytes = b"provider bytes retained behind exact offer";
-        executable(&provider, provider_bytes);
-        executable(&attester, b"distinct attester bytes");
+        let provider_bytes = wasm_module(&provider, b"provider bytes retained behind exact offer");
+        wasm_module(&attester, b"distinct attester bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1615,13 +1709,13 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        let attester_bytes = b"attester bytes retained behind deployment lock";
-        executable(&provider, b"distinct provider bytes");
-        executable(&attester, attester_bytes);
+        let attester_bytes =
+            wasm_module(&attester, b"attester bytes retained behind deployment lock");
+        wasm_module(&provider, b"distinct provider bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1644,18 +1738,16 @@ mod tests {
     }
 
     #[test]
-    fn verified_set_owns_executable_bytes_after_source_packages_disappear() {
+    fn verified_set_owns_module_bytes_after_source_packages_disappear() {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        let provider_bytes = b"provider bytes surviving source removal";
-        let attester_bytes = b"attester bytes surviving source removal";
-        executable(&provider, provider_bytes);
-        executable(&attester, attester_bytes);
+        let provider_bytes = wasm_module(&provider, b"provider bytes surviving source removal");
+        let attester_bytes = wasm_module(&attester, b"attester bytes surviving source removal");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");
@@ -1682,12 +1774,12 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let provider = temporary.path().join("provider-final");
         let attester = temporary.path().join("attester-final");
-        executable(&provider, b"provider bytes");
-        executable(&attester, b"distinct attester bytes");
+        wasm_module(&provider, b"provider bytes");
+        wasm_module(&attester, b"distinct attester bytes");
         let output = temporary.path().join("packages");
         stage(StageRequest {
-            provider_binary: provider,
-            attester_binary: attester,
+            provider_module: provider,
+            attester_module: attester,
             output_root: output.clone(),
         })
         .expect("stage proof");

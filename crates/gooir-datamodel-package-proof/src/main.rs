@@ -30,8 +30,8 @@ fn run(
 ) -> Result<gooir_datamodel_package_proof::ProofReport, String> {
     match arguments {
         [command, provider, attester, output] if command == "stage" => stage(StageRequest {
-            provider_binary: PathBuf::from(provider),
-            attester_binary: PathBuf::from(attester),
+            provider_module: PathBuf::from(provider),
+            attester_module: PathBuf::from(attester),
             output_root: PathBuf::from(output),
         })
         .map_err(|error| error.to_string()),
@@ -43,5 +43,5 @@ fn run(
 }
 
 fn usage() -> &'static str {
-    "usage:\n  gooir-datamodel-package-proof stage <provider-binary> <attester-binary> <fresh-output-root>\n  gooir-datamodel-package-proof verify <staged-root>"
+    "usage:\n  gooir-datamodel-package-proof stage <provider-wasip1-module> <attester-wasip1-module> <fresh-output-root>\n  gooir-datamodel-package-proof verify <staged-root>"
 }

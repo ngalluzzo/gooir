@@ -1,5 +1,5 @@
 [package]
-name = "gooir-datamodel-package-proof"
+name = "gooir-datamodel-external-host-proof"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 gooir-author-data-model-contract = { workspace = true }
 gooir-capability = { workspace = true }
 gooir-datamodel-conformance = { workspace = true }
-gooir-datamodel-pack = { workspace = true }
+gooir-datamodel-package-proof = { workspace = true }
 gooir-package = { workspace = true }
 gooir-planning = { workspace = true }
 gooir-wasip1-command-runtime = { workspace = true }
@@ -17,6 +17,7 @@ rustix = { workspace = true }
 semantics-data-model-v1 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_json_canonicalizer = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 
@@ -26,6 +27,3 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = "warn"
 pedantic = "warn"
-
-[dev-dependencies]
-wat = { workspace = true }
