@@ -23,6 +23,7 @@ members = [
     "crates/gooir-cli",
     "crates/gooir-datamodel-conformance",
     "crates/gooir-datamodel-external-host-proof",
+    "crates/gooir-fleetd-direct-conversation-package-proof",
     "crates/gooir-datamodel-package-proof",
     "crates/gooir-datamodel-pack",
     "crates/gooir-doctor",
@@ -78,6 +79,7 @@ gooir-author-data-model-contract = { path = "crates/gooir-author-data-model-cont
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-datamodel-conformance = { path = "crates/gooir-datamodel-conformance" }
 gooir-datamodel-external-host-proof = { path = "crates/gooir-datamodel-external-host-proof" }
+gooir-fleetd-direct-conversation-package-proof = { path = "crates/gooir-fleetd-direct-conversation-package-proof" }
 gooir-datamodel-package-proof = { path = "crates/gooir-datamodel-package-proof" }
 gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }

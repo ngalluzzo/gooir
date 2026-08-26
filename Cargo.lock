@@ -1072,6 +1072,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-fleetd-direct-conversation-package-proof"
+version = "0.1.0"
+dependencies = [
+ "fleetd-direct-conversation-attester",
+ "fleetd-direct-conversation-contract",
+ "fleetd-direct-conversation-reqwest-provider",
+ "fleetd-direct-conversation-ureq-provider",
+ "gooir-capability",
+ "gooir-package",
+ "gooir-planning",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "gooir-identity"
 version = "0.1.0"
 dependencies = [
