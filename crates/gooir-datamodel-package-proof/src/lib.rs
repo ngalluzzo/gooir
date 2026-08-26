@@ -30,13 +30,15 @@ use gooir_author_data_model_contract::{
     author_data_model_capability_id, author_data_model_spec, author_data_model_suite_id,
     authored_entity_spec_value_kind, package_manifest as contract_manifest,
 };
-use gooir_capability::protocol::{AdmittedFactRef, ArtifactDigest, AuthorityRecordId, LinkedInput};
+use gooir_capability::protocol::{
+    AdmittedFactRef, ArtifactDigest, AuthorityRecordId, CapabilityOffer, LinkedInput,
+};
 use gooir_capability::{Fact, PortName};
 use gooir_package::{
-    ImplementationOfferDeclaration, InstallError, InstalledPackage, LoadLimits, PackageDependency,
-    PackageDigest, PackageId, PackageLoadError, PackageManifest, PackageManifestError,
-    PackageRegistry, PackageResource, ResourceDigest, ResourceName, load_local_package,
-    read_manifest, write_manifest,
+    ImplementationOfferDeclaration, InstallError, InstalledPackage, LoadLimits, OwnedResource,
+    PackageDependency, PackageDigest, PackageId, PackageLoadError, PackageManifest,
+    PackageManifestError, PackageRegistry, PackageResource, ResourceDigest, ResourceName,
+    load_local_package, read_manifest, write_manifest,
 };
 use gooir_planning::{InvocationLink, PlanLimits, PlanningError, SemanticPlan, SemanticPlanner};
 use rustix::fs::{Mode, OFlags, RenameFlags, open, renameat_with};
@@ -130,6 +132,82 @@ pub struct ProofReport {
     pub provider_offer_id: String,
     pub provider_invocation_id: String,
     pub attester: AttesterDeploymentLock,
+}
+
+/// Fully owned result of independently loading and verifying one exact package set.
+///
+/// The installed registry retains the copied manifest and resource bytes, so
+/// callers do not need to keep the source package directories present. The
+/// registry itself remains private: an external execution host can resolve only
+/// the exact provider binding established by this proof and an attester resource
+/// named by the proof's explicit deployment lock.
+#[derive(Clone, Debug)]
+pub struct VerifiedPackageSet {
+    registry: PackageRegistry,
+    report: ProofReport,
+    provider_offer: CapabilityOffer,
+    provider_artifact: OwnedResource,
+}
+
+impl VerifiedPackageSet {
+    /// Exact report derived from the installed package set.
+    #[must_use]
+    pub fn report(&self) -> &ProofReport {
+        &self.report
+    }
+
+    /// Consumes the owned package set and returns its compatibility report.
+    #[must_use]
+    pub fn into_report(self) -> ProofReport {
+        self.report
+    }
+
+    /// Exact verified provider offer selected by this package proof.
+    #[must_use]
+    pub fn provider_offer(&self) -> &CapabilityOffer {
+        &self.provider_offer
+    }
+
+    /// Package-owned executable bytes bound to the exact provider offer.
+    #[must_use]
+    pub fn provider_artifact(&self) -> &OwnedResource {
+        &self.provider_artifact
+    }
+
+    /// Constructs a bounded planner from the exact verified installed inventory.
+    ///
+    /// The registry remains private, while the returned planner can plan and
+    /// link caller-selected invocations against precisely the package set that
+    /// produced [`Self::report`].
+    ///
+    /// # Errors
+    ///
+    /// Refuses any installed inventory that exceeds the caller's explicit
+    /// planning bounds or has become internally inconsistent.
+    pub fn planner(&self, limits: PlanLimits) -> Result<SemanticPlanner, PlanningError> {
+        SemanticPlanner::from_registry(&self.registry, limits)
+    }
+
+    /// Resolves the independently packaged attester only through its complete
+    /// host-owned deployment lock.
+    ///
+    /// This performs no semantic discovery. A caller must present the exact
+    /// suite, implementation, package, package digest, resource, and resource
+    /// digest recorded by [`Self::report`]. Any changed coordinate is refused.
+    #[must_use]
+    pub fn attester_resource(&self, deployment: &AttesterDeploymentLock) -> Option<&OwnedResource> {
+        if deployment != &self.report.attester {
+            return None;
+        }
+        let package = self.registry.package(&deployment.package)?;
+        if package.digest() != &deployment.package_digest {
+            return None;
+        }
+        let resource = self
+            .registry
+            .resource(&deployment.package, &deployment.resource)?;
+        (resource.digest() == &deployment.resource_digest).then_some(resource)
+    }
 }
 
 /// Stages the exact supplied executable bytes and verifies the resulting
@@ -294,6 +372,21 @@ fn stage_packages(
 /// Refuses any loader, dependency, digest, offer, planner, link, or proof
 /// invariant failure.
 pub fn verify(root: impl AsRef<Path>) -> Result<ProofReport, ProofError> {
+    verify_package_set(root).map(VerifiedPackageSet::into_report)
+}
+
+/// Independently loads, installs, and verifies an owned four-package proof.
+///
+/// Unlike [`verify`], this retains the complete installed registry so an
+/// external execution host can use the exact verified executable bytes after
+/// the package directories disappear. Only the proof-bound provider and the
+/// explicitly locked attester are exposed.
+///
+/// # Errors
+///
+/// Refuses any loader, dependency, digest, offer, planner, link, or proof
+/// invariant failure.
+pub fn verify_package_set(root: impl AsRef<Path>) -> Result<VerifiedPackageSet, ProofError> {
     let root = root.as_ref();
     let mut registry = PackageRegistry::default();
 
@@ -313,7 +406,7 @@ pub fn verify(root: impl AsRef<Path>) -> Result<ProofReport, ProofError> {
     let invocation = link_synthetic_invocation(&provider_planner, &provider_plan)?;
 
     let attester = load_install(root, ATTESTER_DIRECTORY, &mut registry)?;
-    build_report(
+    let report = build_report(
         InstalledProof {
             registry: &registry,
             vocabulary: &vocabulary,
@@ -326,7 +419,22 @@ pub fn verify(root: impl AsRef<Path>) -> Result<ProofReport, ProofError> {
             provider: &provider_plan,
             invocation: &invocation,
         },
-    )
+    )?;
+    let provider_offer = exact_provider_offer(&registry)?.clone();
+    let provider_artifact = registry
+        .offer_artifact(&provider_offer.offer_id)
+        .ok_or_else(|| {
+            ProofError::Invariant(
+                "verified provider offer did not retain its package-owned artifact".to_owned(),
+            )
+        })?
+        .clone();
+    Ok(VerifiedPackageSet {
+        registry,
+        report,
+        provider_offer,
+        provider_artifact,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -1460,5 +1568,161 @@ mod tests {
         })
         .expect_err("self-attesting artifact identity must be refused");
         assert!(matches!(error, ProofError::Invariant(_)));
+    }
+
+    #[test]
+    fn verified_set_resolves_the_exact_offer_to_its_owned_provider_bytes() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        let provider_bytes = b"provider bytes retained behind exact offer";
+        executable(&provider, provider_bytes);
+        executable(&attester, b"distinct attester bytes");
+        let output = temporary.path().join("packages");
+        stage(StageRequest {
+            provider_binary: provider,
+            attester_binary: attester,
+            output_root: output.clone(),
+        })
+        .expect("stage proof");
+
+        let verified = verify_package_set(&output).expect("verify owned package set");
+        let offer = verified.provider_offer();
+        let artifact = verified.provider_artifact();
+
+        assert_eq!(
+            offer.offer_id.to_string(),
+            verified.report().provider_offer_id
+        );
+        assert_eq!(offer.artifact_digest.as_str(), artifact.digest().as_str());
+        assert_eq!(artifact.name().as_str(), PROVIDER_RESOURCE);
+        assert_eq!(artifact.bytes(), provider_bytes);
+        let planner = verified
+            .planner(planning_limits())
+            .expect("planner from verified inventory");
+        let plan = planner
+            .plan(
+                [authored_entity_spec_value_kind()],
+                semantics_data_model_v1::model_contract(),
+            )
+            .expect("plan verified authoring capability");
+        assert_eq!(plan.capabilities.len(), 1);
+        assert_eq!(plan.capabilities[0].offers, vec![offer.clone()]);
+    }
+
+    #[test]
+    fn verified_set_resolves_attester_only_through_its_explicit_deployment_lock() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        let attester_bytes = b"attester bytes retained behind deployment lock";
+        executable(&provider, b"distinct provider bytes");
+        executable(&attester, attester_bytes);
+        let output = temporary.path().join("packages");
+        stage(StageRequest {
+            provider_binary: provider,
+            attester_binary: attester,
+            output_root: output.clone(),
+        })
+        .expect("stage proof");
+
+        let verified = verify_package_set(&output).expect("verify owned package set");
+        let deployment = verified.report().attester.clone();
+        let resource = verified
+            .attester_resource(&deployment)
+            .expect("resolve exact deployment lock");
+        assert_eq!(resource.name(), &deployment.resource);
+        assert_eq!(resource.digest(), &deployment.resource_digest);
+        assert_eq!(resource.bytes(), attester_bytes);
+
+        let mut altered = deployment;
+        altered.implementation.push_str(".altered");
+        assert!(
+            verified.attester_resource(&altered).is_none(),
+            "a changed deployment coordinate must not discover an attester"
+        );
+    }
+
+    #[test]
+    fn verified_set_owns_executable_bytes_after_source_packages_disappear() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        let provider_bytes = b"provider bytes surviving source removal";
+        let attester_bytes = b"attester bytes surviving source removal";
+        executable(&provider, provider_bytes);
+        executable(&attester, attester_bytes);
+        let output = temporary.path().join("packages");
+        stage(StageRequest {
+            provider_binary: provider,
+            attester_binary: attester,
+            output_root: output.clone(),
+        })
+        .expect("stage proof");
+
+        let verified = verify_package_set(&output).expect("verify owned package set");
+        let report = verified.report().clone();
+        let deployment = report.attester.clone();
+        fs::remove_dir_all(&output).expect("remove package source directories");
+
+        assert!(!output.exists());
+        assert_eq!(verified.report(), &report);
+        assert_eq!(verified.provider_artifact().bytes(), provider_bytes);
+        assert_eq!(
+            verified
+                .attester_resource(&deployment)
+                .expect("resolve retained attester")
+                .bytes(),
+            attester_bytes
+        );
+    }
+
+    #[test]
+    fn compatibility_verifier_rejects_an_altered_provider_package_coordinate() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let provider = temporary.path().join("provider-final");
+        let attester = temporary.path().join("attester-final");
+        executable(&provider, b"provider bytes");
+        executable(&attester, b"distinct attester bytes");
+        let output = temporary.path().join("packages");
+        stage(StageRequest {
+            provider_binary: provider,
+            attester_binary: attester,
+            output_root: output.clone(),
+        })
+        .expect("stage proof");
+
+        let manifest_path = output
+            .join(PROVIDER_DIRECTORY)
+            .join(gooir_package::PACKAGE_MANIFEST_FILE);
+        let original = read_manifest(
+            &fs::read_to_string(&manifest_path).expect("read installed provider manifest"),
+        )
+        .expect("parse installed provider manifest");
+        let altered = PackageManifest::new(
+            package_id("org.gooi.implementation.entity_spec_rust.altered_target@1.1.0")
+                .expect("altered exact package coordinate"),
+            original.dependencies,
+            original.resources,
+            original.dialects,
+            original.conformance_suites,
+            original.capabilities,
+            original.implementation_offers,
+            original.extensions,
+        )
+        .expect("self-consistent alternate package coordinate");
+        fs::set_permissions(&manifest_path, fs::Permissions::from_mode(0o600))
+            .expect("make manifest writable for mutation");
+        fs::write(
+            &manifest_path,
+            write_manifest(&altered).expect("serialize altered manifest"),
+        )
+        .expect("rewrite provider manifest");
+
+        let error = verify(&output).expect_err("altered coordinate must fail common verification");
+        assert!(matches!(
+            error,
+            ProofError::Invariant(detail) if detail.contains("wrong proof shape")
+        ));
     }
 }
