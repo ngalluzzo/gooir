@@ -1,5 +1,25 @@
 # Milestones
 
+## Recovery sequence
+
+[Decision 0031](DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) supersedes the
+architecture implied by the experimental milestones below. Recovery proceeds
+in this order:
+
+1. remove the parallel operation/claim IR;
+2. establish dialect, value-kind, fact, named-port, and extension-preservation
+   invariants;
+3. separate implementation offers and linked semantic invocations from
+   execution-host lifecycle;
+4. make implementation selection explicit and converge on one admission path;
+5. prove one existing deterministic capability through Fleetd as an external,
+   restart-safe execution host; and
+6. extract workflow, task, conversation, UI, and other ecosystem packages only
+   after independent implementations establish their boundaries.
+
+The older milestones remain as evidence from the exploration. They are not the
+dependency order for the recovery branch.
+
 ## GOOIR-000 — Kernel boundary invariants
 
 Status: merged at `f4eb97a453af9c6c4204cdc74c2f6ed5dad7720d` after independent exact-commit review.

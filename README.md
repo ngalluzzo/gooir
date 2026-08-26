@@ -8,6 +8,19 @@ It never guesses. An identity is matched exactly and never by range, a fact
 that could not be fully established says so, and a capability nobody implements
 stays in the plan as an assignable need rather than disappearing.
 
+## The recovery boundary
+
+GOOIR has one semantic graph, but not everything the compiler or an execution
+host does belongs in that graph. A dialect is a governed vocabulary containing
+named value kinds; a fact is one value of one kind; a capability relates named
+input and output ports. Process lifecycle, credentials, leases, sessions,
+retries, and persistence belong to replaceable execution hosts.
+
+[Decision 0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) is the
+normative recovery boundary. It supersedes the parallel operation/claim IR and
+prevents compiler/runtime plumbing from recursively becoming ecosystem
+vocabulary.
+
 ## Five concepts
 
 | | |
@@ -98,6 +111,7 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md) — interaction starts at observed activation, not a parallel component system
 - [0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md) — a screen is a state-scoped derived observation, not the semantic waist
 - [0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md) — agent activity recurs as a selected ordered projection
+- [0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) — dialects contain value kinds; execution hosts remain external
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).

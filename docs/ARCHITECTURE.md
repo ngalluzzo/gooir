@@ -1,5 +1,15 @@
 # Architecture
 
+## Recovery note
+
+[Decision 0031](DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) supersedes the
+parallel operation/claim architecture described below. The active recovery
+keeps one facts-and-capabilities graph, restores the distinction between a
+governed dialect and its named value kinds, and gives process lifecycle,
+credentials, leases, sessions, retries, and persistence to external execution
+hosts. Historical sections remain until their code is removed so the migration
+is reviewable rather than rewritten in place.
+
 ## Boundary
 
 GOOIR separates generic compiler machinery from application meaning.
