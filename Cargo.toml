@@ -8,6 +8,7 @@ members = [
     "crates/buzz-surface-profile",
     "crates/data-model-convergence",
     "crates/entity-spec",
+    "crates/fleetd-direct-conversation-contract",
     "crates/fleetd-control-lifter",
     "crates/fleetd-control-projection",
     "crates/fleetd-capability-pack",
@@ -58,6 +59,7 @@ buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
 data-model-convergence = { path = "crates/data-model-convergence" }
 entity-spec = { path = "crates/entity-spec" }
+fleetd-direct-conversation-contract = { path = "crates/fleetd-direct-conversation-contract" }
 fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }
 fleetd-control-projection = { path = "crates/fleetd-control-projection" }
 fleetd-capability-pack = { path = "crates/fleetd-capability-pack" }

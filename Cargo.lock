@@ -648,6 +648,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleetd-direct-conversation-contract"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-package",
+ "gooir-planning",
+ "jsonschema",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "fleetd-interaction-plan"
 version = "0.1.0"
 dependencies = [
