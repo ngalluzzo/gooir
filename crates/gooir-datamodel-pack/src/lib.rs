@@ -20,6 +20,8 @@ use lift_defeasible::Defeasible;
 use semantics_data_model_v1::DataModel;
 use serde::{Deserialize, Serialize};
 
+pub mod neutral;
+
 pub const PACK_VERSION: &str = "0.1.0";
 
 // ---------------------------------------------------------------- fact types
@@ -79,6 +81,7 @@ pub fn typescript_types_capability() -> CapabilityId {
 
 /// A hand-written specification and where it came from.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthoredSpec {
     pub origin: String,
     pub text: String,
