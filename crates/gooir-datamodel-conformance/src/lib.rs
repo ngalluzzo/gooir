@@ -164,6 +164,21 @@ impl AssessmentRequest {
     }
 }
 
+/// Returns the exact validated authored-source fact governed by this
+/// fixture-scoped conformance suite.
+///
+/// This exposes only the suite's public input fixture. The checked oracle
+/// bytes, expected output, and private oracle document shape remain internal
+/// to the independent attester.
+///
+/// # Errors
+///
+/// Refuses the embedded fixture if its fact identity, source coordinate, or
+/// other checked oracle invariants are inconsistent.
+pub fn tasks_entities_source_fact() -> Result<Fact, AttesterError> {
+    Ok(load_oracle(ORACLE_BYTES)?.source)
+}
+
 /// The one suite implemented by this fixture-scoped attester.
 pub fn suite_id() -> ConformanceSuiteId {
     author_data_model_suite_id()
@@ -756,6 +771,19 @@ mod tests {
         let evidence = oracle_evidence().unwrap();
         assert_eq!(evidence.digest.as_str(), sha256_identity(ORACLE_BYTES));
         assert_eq!(evidence.locator, ORACLE_LOCATOR);
+    }
+
+    #[test]
+    fn public_fixture_source_is_the_exact_validated_oracle_input() {
+        let expected = load_oracle(ORACLE_BYTES).unwrap().source;
+        let exposed = tasks_entities_source_fact().unwrap();
+
+        assert_eq!(exposed, expected);
+        exposed.validate().unwrap();
+
+        let mut changed = exposed;
+        changed.payload["text"] = json!("changed without a new fact identity");
+        assert!(changed.validate().is_err());
     }
 
     #[test]

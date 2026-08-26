@@ -9,3 +9,7 @@
 
 pub mod journal;
 pub mod wasm;
+
+mod driver;
+
+pub use driver::{AttemptExecutionLimits, HostError, HostRequest, resume, start};

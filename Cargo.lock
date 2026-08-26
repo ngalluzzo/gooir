@@ -898,6 +898,7 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2",
  "tempfile",
+ "wat",
 ]
 
 [[package]]
