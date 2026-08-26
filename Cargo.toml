@@ -11,6 +11,7 @@ members = [
     "crates/fleetd-direct-conversation-attester",
     "crates/fleetd-direct-conversation-command-abi",
     "crates/fleetd-direct-conversation-contract",
+    "crates/fleetd-direct-conversation-external-host-proof",
     "crates/fleetd-direct-conversation-reqwest-provider",
     "crates/fleetd-direct-conversation-ureq-provider",
     "crates/fleetd-control-lifter",
@@ -67,6 +68,7 @@ entity-spec = { path = "crates/entity-spec" }
 fleetd-direct-conversation-attester = { path = "crates/fleetd-direct-conversation-attester" }
 fleetd-direct-conversation-command-abi = { path = "crates/fleetd-direct-conversation-command-abi" }
 fleetd-direct-conversation-contract = { path = "crates/fleetd-direct-conversation-contract" }
+fleetd-direct-conversation-external-host-proof = { path = "crates/fleetd-direct-conversation-external-host-proof" }
 fleetd-direct-conversation-reqwest-provider = { path = "crates/fleetd-direct-conversation-reqwest-provider" }
 fleetd-direct-conversation-ureq-provider = { path = "crates/fleetd-direct-conversation-ureq-provider" }
 fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }

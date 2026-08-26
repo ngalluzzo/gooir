@@ -747,6 +747,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "fleetd-direct-conversation-external-host-proof"
+version = "0.1.0"
+dependencies = [
+ "fleetd-direct-conversation-contract",
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "fleetd-direct-conversation-reqwest-provider"
 version = "0.1.0"
 dependencies = [
