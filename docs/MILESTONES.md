@@ -18,6 +18,8 @@
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
   downstream consumer.
+- A neutral v1 provider-authoring SDK exercised independently by the
+  authored-data-model provider and the native HTTP-to-Axum-to-Rust ecosystem.
 
 ## Current boundary
 
@@ -27,10 +29,12 @@ route/offer/input/attester selection, execute it through their own effect
 boundary, and receive `Produced`, `Blocked`, `Unreachable`, `Refused`, or
 `Failed` without changing the kernel.
 
-An experimental provider-authoring surface now reduces neutral v1 providers to
+The established 0.1 provider-authoring surface reduces neutral v1 providers to
 one typed function over named inputs and outputs while retaining exact binding,
-conservative extension handling, and protocol framing. It is not established
-until two independent downstream consumers exercise it.
+conservative extension handling, and protocol framing. The data-model and
+native HTTP/Axum ecosystems exercise materially different provider shapes.
+Artifact measurement, execution policy, conformance, and admission remain host
+concerns and are not implied by SDK stability.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative

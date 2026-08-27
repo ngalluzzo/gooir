@@ -1,6 +1,6 @@
 # 0035 — Typed authoring for neutral v1 providers
 
-Status: experimental pending two independent consumers
+Status: established for 0.1 after two independent consumers
 
 ## Context
 
@@ -27,7 +27,7 @@ support the complete hyperedge rather than another source/target shortcut.
 
 ## Decision
 
-`gooir-provider::neutral` is the experimental Rust authoring surface for
+`gooir-provider::neutral` is the established 0.1 Rust authoring surface for
 neutral v1 package-backed providers. `Provider` binds one exact
 `CapabilitySpec` to one exact `ImplementationId`. It validates every invocation
 and checks both the complete specification and selected implementation before
@@ -88,5 +88,26 @@ are checked by `DerivationFacade::answer`.
   HTTP, Axum, Rust source, Fleetd, or filesystem concept enters GOOIR.
 - The top-level in-process helpers remain available for compatibility but are
   not the package-backed v1 execution path.
-- This interface remains experimental until two independent downstream
-  consumers exercise it; successful internal tests alone do not promote it.
+- Stability covers the typed authoring and framing contract only. Launch,
+  executable artifact measurement, execution policy, conformance, and
+  admission remain external-host responsibilities.
+
+## Promotion evidence
+
+Two independent downstream repositories now exercise the surface through
+different provider shapes:
+
+- `gooir-datamodel` commit
+  `f904e497466ce493af0fb3b3f964747f3e81b56e` migrated its
+  authored-data-model provider to the SDK and retained exact package
+  installation, external-host execution, and its behavioral suite. Other
+  providers in that pack remain on the legacy compatibility helper.
+- `gooir-http` commit `0bb518e45cef423686d25bb467aaba71b586d91b`
+  authors a named three-input HTTP-to-Axum provider and an Axum-to-Rust artifact
+  provider, exposes stdio entry points through the SDK, and proves direct exact
+  invocation plus their offer-free two-hop package plan.
+
+The second consumer forced fail-closed extension handling at the artifact
+boundary and exposed the distinction between semantic inability and provider
+implementation failure. Those are protocol-shaping corrections, not duplicate
+happy-path tests, so the two-consumer gate is satisfied.

@@ -1,10 +1,10 @@
 //! Writing a capability provider.
 //!
-//! [`neutral`] is the experimental authoring surface for package-backed
+//! [`neutral`] is the established 0.1 authoring surface for package-backed
 //! providers that consume and produce the v1 neutral protocol. It keeps exact
 //! contract validation at the boundary while reducing an implementation to
-//! typed named inputs and outputs. It remains experimental until two
-//! independent downstream consumers exercise it.
+//! typed named inputs and outputs. Execution, artifact measurement,
+//! conformance, and admission remain external-host responsibilities.
 //!
 //! The top-level registration helpers below are the older in-process
 //! compatibility surface. New package-backed providers should use

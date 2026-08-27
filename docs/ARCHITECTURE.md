@@ -148,11 +148,13 @@ concept, and GOOIR never imports their vocabulary.
 
 The identity, capability, package, planning, and authority protocols are the
 architectural center. `gooir-derive::{DerivationRequest, Answer}` is the 0.1
-host-facing product façade over them. `gooir-provider::neutral` is an
-experimental typed authoring surface for package-backed providers over the
+host-facing product façade over them. `gooir-provider::neutral` is the
+established 0.1 typed authoring surface for package-backed providers over the
 neutral v1 invocation and result documents. It validates exact provider
-binding and named-port shape but does not launch code or establish trust. It
-remains experimental until two independent downstream consumers exercise it.
+binding and named-port shape but does not launch code, measure the selected
+artifact, or establish trust. Independent data-model and native HTTP/Axum
+consumers exercise single- and multi-input providers, semantic inability,
+artifact production, and neutral framing.
 The older
 `gooir-capability::{CapabilityRegistry, DerivationRequest, Answer}`, the
 top-level in-process provider helpers, and `org.gooi.plugin/v2` are
@@ -165,7 +167,12 @@ meaning and it does not make WASI the required provider backend.
 ## Proven consumers
 
 The data-model ecosystem proves deterministic lifting/lowering, independent
-conformance, exact package installation, and recoverable external execution.
+conformance, exact package installation, recoverable external execution, and
+the neutral provider SDK in its authored-data-model provider. Its remaining
+legacy providers stay on the compatibility helper. The native HTTP/Axum
+ecosystem proves named three-input lowering followed by artifact generation,
+offer-free package planning, typed inability, and exact neutral provider
+document handling; its binaries expose the SDK's stdio entry point.
 The Fleetd direct-conversation ecosystem proves a stateful capability with two
 independent clients, a credential-free child command boundary, an independent
 attester, owner-fenced attempts, crash recovery, and deterministic terminal

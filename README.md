@@ -33,7 +33,7 @@ The repository also contains narrow, optional support:
 | Crate | Status |
 | --- | --- |
 | `gooir-cli` | neutral graph inspection and a legacy local execution adapter |
-| `gooir-provider` | experimental neutral v1 provider-authoring SDK plus legacy in-process adapter; not trusted kernel |
+| `gooir-provider` | established neutral v1 provider-authoring SDK plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
@@ -80,22 +80,28 @@ The same surface authors lifts, lowerings, analyses, bridges, and generators;
 those are capability meanings, not separate kernel mechanisms. Multiple
 inputs and outputs are first-class. `Context::input` refuses unhandled semantic
 extensions rather than dropping them, while `input_with_extensions` exposes
-the complete envelope to providers that understand them. This surface remains
-experimental until two independent downstream consumers exercise it.
+the complete envelope to providers that understand them. The data-model and
+native HTTP/Axum ecosystems independently exercise this surface; its authoring
+contract is established for 0.1. Execution, artifact measurement, and trust
+remain external-host responsibilities.
 
-## What moved out
+## Downstream ecosystems
 
-Two bodies of work survived the subtraction because they proved real consumer
-boundaries:
+Three downstream repositories prove real consumer boundaries:
 
 - [`../gooir-datamodel`](../gooir-datamodel) is the data-model contract,
   provider pack, transformations, fixtures, and package/host proofs.
+- [`../gooir-http`](../gooir-http) is the independently expressive native HTTP,
+  Axum implementation, and Rust-source ecosystem with a two-hop neutral
+  provider plan.
 - [`../gooir-fleetd-direct-conversation`](../gooir-fleetd-direct-conversation)
   is the stateful Fleetd contract, two independent providers, attester,
   package proof, and crash-recoverable external host proof.
 
 They depend on this repository through public crates. This repository has no
-dependency back to either one.
+dependency back to any of them. The data-model and Fleetd conversation
+ecosystems moved out during subtraction; the HTTP ecosystem was authored
+downstream afterward.
 
 Earlier lifters, UI/control experiments, interaction-activation and activity
 projection probes, and the representation corpus were superseded research.
