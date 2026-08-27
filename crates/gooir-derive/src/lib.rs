@@ -11,13 +11,17 @@ use std::fmt;
 use gooir_capability::PortName;
 use gooir_capability::authority::{
     AdmissionDecision, AdmissionDenial, AdmissionLedger, AdmissionOutcome, AdmissionPolicy,
-    AdmissionVerdict, AuthorityError, AuthorityRecord, ConformanceAssessment,
+    AdmissionVerdict, AuthorityError, AuthorityRecord, ConformanceAssessment, ConformanceAuthority,
 };
 use gooir_capability::protocol::{
     CapabilityCandidate, CapabilityFailure, CapabilityInvocation, CapabilityOutcome,
     CapabilityResult, ProtocolError,
 };
 use serde::{Deserialize, Serialize};
+
+mod facade;
+
+pub use facade::*;
 
 /// Effectful operations supplied by an execution host for one linked invocation.
 ///
@@ -50,6 +54,7 @@ pub trait DerivationHost {
         invocation: &CapabilityInvocation,
         result: &CapabilityResult,
         candidate: &CapabilityCandidate,
+        authority: &ConformanceAuthority,
     ) -> Result<ConformanceAssessment, Self::Error>;
 }
 
@@ -97,6 +102,7 @@ pub enum LinkedInvocationOutcome {
 pub enum LinkedInvocationError<E> {
     InvalidInvocation(ProtocolError),
     InvalidPolicy(AuthorityError),
+    InvalidAttester(AuthorityError),
     UnresolvedInput {
         port: PortName,
         error: AuthorityError,
@@ -113,6 +119,10 @@ pub enum LinkedInvocationError<E> {
     InvalidHostResult(ProtocolError),
     HostAssessment(E),
     InvalidHostAssessment(AuthorityError),
+    SubstitutedAttester {
+        expected: Box<ConformanceAuthority>,
+        actual: Box<ConformanceAuthority>,
+    },
     Admission(AuthorityError),
     AdmissionReturnedSourceLink,
     AdmittedOutputUnresolvable {
@@ -129,6 +139,9 @@ impl<E: fmt::Display> fmt::Display for LinkedInvocationError<E> {
                 write!(formatter, "invalid linked invocation: {error}")
             }
             Self::InvalidPolicy(error) => write!(formatter, "invalid admission policy: {error}"),
+            Self::InvalidAttester(error) => {
+                write!(formatter, "invalid selected conformance authority: {error}")
+            }
             Self::UnresolvedInput { port, error } => {
                 write!(formatter, "input `{port}` is not admitted: {error}")
             }
@@ -144,6 +157,8 @@ impl<E: fmt::Display> fmt::Display for LinkedInvocationError<E> {
             Self::InvalidHostAssessment(error) => {
                 write!(formatter, "host assessment is invalid: {error}")
             }
+            Self::SubstitutedAttester { .. } => formatter
+                .write_str("host assessment substituted the selected conformance authority"),
             Self::Admission(error) => write!(formatter, "candidate admission failed: {error}"),
             Self::AdmissionReturnedSourceLink => {
                 formatter.write_str("candidate admission returned a source link")
@@ -171,6 +186,7 @@ where
         match self {
             Self::InvalidInvocation(error) | Self::InvalidHostResult(error) => Some(error),
             Self::InvalidPolicy(error)
+            | Self::InvalidAttester(error)
             | Self::UnresolvedInput { error, .. }
             | Self::SubstitutedInput { error, .. }
             | Self::InvalidInputAuthority { error, .. }
@@ -178,7 +194,9 @@ where
             | Self::Admission(error)
             | Self::AdmittedOutputUnresolvable { error, .. } => Some(error),
             Self::HostInvocation(error) | Self::HostAssessment(error) => Some(error),
-            Self::AdmissionReturnedSourceLink | Self::UnexpectedAdmissionDecision(_) => None,
+            Self::SubstitutedAttester { .. }
+            | Self::AdmissionReturnedSourceLink
+            | Self::UnexpectedAdmissionDecision(_) => None,
         }
     }
 }
@@ -199,26 +217,10 @@ pub fn run_linked_invocation<H: DerivationHost>(
     ledger: &mut AdmissionLedger,
     policy: &AdmissionPolicy,
     invocation: &CapabilityInvocation,
+    attester: &ConformanceAuthority,
     host: &mut H,
 ) -> Result<LinkedInvocationOutcome, LinkedInvocationError<H::Error>> {
-    invocation
-        .validate()
-        .map_err(LinkedInvocationError::InvalidInvocation)?;
-    policy
-        .validate()
-        .map_err(LinkedInvocationError::InvalidPolicy)?;
-
-    for input in &invocation.inputs {
-        let resolved = ledger
-            .resolve(&input.admitted)
-            .map_err(|error| classify_input_error(input.port.clone(), error))?;
-        if resolved.fact != &input.fact {
-            return Err(LinkedInvocationError::SubstitutedInput {
-                port: input.port.clone(),
-                error: AuthorityError::LinkedInputMismatch(input.port.clone()),
-            });
-        }
-    }
+    preflight_linked_invocation(ledger, policy, invocation, attester)?;
 
     let result = host
         .invoke(invocation)
@@ -240,14 +242,73 @@ pub fn run_linked_invocation<H: DerivationHost>(
     )
     .map_err(LinkedInvocationError::InvalidHostResult)?;
     let assessment = host
-        .assess(invocation, &result, &candidate)
+        .assess(invocation, &result, &candidate, attester)
         .map_err(LinkedInvocationError::HostAssessment)?;
     assessment
         .validate_against(invocation, &result, &candidate)
         .map_err(LinkedInvocationError::InvalidHostAssessment)?;
+    if assessment.authority != *attester {
+        return Err(LinkedInvocationError::SubstitutedAttester {
+            expected: Box::new(attester.clone()),
+            actual: Box::new(assessment.authority),
+        });
+    }
 
+    admit_linked_candidate(ledger, policy, invocation, &result, &candidate, assessment)
+}
+
+fn preflight_linked_invocation<E>(
+    ledger: &AdmissionLedger,
+    policy: &AdmissionPolicy,
+    invocation: &CapabilityInvocation,
+    attester: &ConformanceAuthority,
+) -> Result<(), LinkedInvocationError<E>> {
+    invocation
+        .validate()
+        .map_err(LinkedInvocationError::InvalidInvocation)?;
+    policy
+        .validate()
+        .map_err(LinkedInvocationError::InvalidPolicy)?;
+    attester
+        .validate()
+        .map_err(LinkedInvocationError::InvalidAttester)?;
+    if attester.suite != invocation.conformance_suite {
+        return Err(LinkedInvocationError::InvalidAttester(
+            AuthorityError::ConformanceSuiteMismatch,
+        ));
+    }
+    if attester.attester.implementation == invocation.selection.offer.implementation
+        || attester.attester.artifact_digest == invocation.selection.offer.artifact_digest
+    {
+        return Err(LinkedInvocationError::InvalidAttester(
+            AuthorityError::AttesterNotIndependent,
+        ));
+    }
+
+    for input in &invocation.inputs {
+        let resolved = ledger
+            .resolve(&input.admitted)
+            .map_err(|error| classify_input_error(input.port.clone(), error))?;
+        if resolved.fact != &input.fact {
+            return Err(LinkedInvocationError::SubstitutedInput {
+                port: input.port.clone(),
+                error: AuthorityError::LinkedInputMismatch(input.port.clone()),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn admit_linked_candidate<E>(
+    ledger: &mut AdmissionLedger,
+    policy: &AdmissionPolicy,
+    invocation: &CapabilityInvocation,
+    result: &CapabilityResult,
+    candidate: &CapabilityCandidate,
+    assessment: ConformanceAssessment,
+) -> Result<LinkedInvocationOutcome, LinkedInvocationError<E>> {
     match ledger
-        .admit_candidate(policy, invocation, &result, &candidate, &assessment)
+        .admit_candidate(policy, invocation, result, candidate, &assessment)
         .map_err(LinkedInvocationError::Admission)?
     {
         AdmissionOutcome::Admitted { decision, links } => {
@@ -322,6 +383,8 @@ fn classify_input_error<E>(port: PortName, error: AuthorityError) -> LinkedInvoc
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::num::NonZeroUsize;
 
     use gooir_capability::authority::{
         AdmissionAuthorityId, AssessmentOutcome, AuthorityBasis, ConformanceAttester,
@@ -336,6 +399,12 @@ mod tests {
     use gooir_capability::{
         CapabilityId, CapabilitySpec, Fact, FactAcceptance, InputPort, OutputPort, ValueKindId,
     };
+    use gooir_package::{
+        ConformanceSuiteDeclaration, DialectDeclaration, ImplementationOfferDeclaration,
+        LoadLimits, PackageId, PackageManifest, PackageRegistry, PackageResource, ResourceDigest,
+        ResourceName, ValueKindDeclaration, load_local_package, write_manifest,
+    };
+    use gooir_planning::PlanLimits;
     use serde_json::json;
 
     use super::*;
@@ -369,7 +438,6 @@ mod tests {
 
     struct TestHost {
         output: Fact,
-        authority: ConformanceAuthority,
         provider: ProviderBehavior,
         assessment: AssessmentBehavior,
         invocations: usize,
@@ -377,10 +445,9 @@ mod tests {
     }
 
     impl TestHost {
-        fn new(output: Fact, authority: ConformanceAuthority) -> Self {
+        fn new(output: Fact) -> Self {
             Self {
                 output,
-                authority,
                 provider: ProviderBehavior::Produced,
                 assessment: AssessmentBehavior::Outcome(AssessmentOutcome::Passed),
                 invocations: 0,
@@ -431,6 +498,7 @@ mod tests {
             invocation: &CapabilityInvocation,
             result: &CapabilityResult,
             candidate: &CapabilityCandidate,
+            authority: &ConformanceAuthority,
         ) -> Result<ConformanceAssessment, Self::Error> {
             self.assessments += 1;
             let outcome = match self.assessment {
@@ -449,7 +517,7 @@ mod tests {
                 invocation,
                 result,
                 candidate,
-                self.authority.clone(),
+                authority.clone(),
                 checks,
                 Vec::new(),
                 BTreeMap::new(),
@@ -600,6 +668,139 @@ mod tests {
         format!("sha256:{}", byte.to_string().repeat(64))
     }
 
+    fn limits() -> DerivationLimits {
+        let bounded = NonZeroUsize::new(32).unwrap();
+        DerivationLimits {
+            planning: PlanLimits {
+                max_capabilities: bounded,
+                max_value_kinds: bounded,
+                max_ports_per_capability: bounded,
+                max_total_ports: bounded,
+                max_offers_per_capability: bounded,
+                max_total_offers: bounded,
+            },
+            max_inputs: bounded,
+            max_attesters: bounded,
+        }
+    }
+
+    fn package_registry(
+        specification: CapabilitySpec,
+        implementation: ImplementationId,
+        with_offer: bool,
+    ) -> PackageRegistry {
+        const EMPTY_SHA256: &str =
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let implementation_resource = ResourceName::parse("provider").unwrap();
+        let mut value_kinds = specification
+            .input_ports
+            .iter()
+            .map(|input| input.value_kind.clone())
+            .chain(
+                specification
+                    .output_ports
+                    .iter()
+                    .map(|output| output.value_kind.clone()),
+            )
+            .collect::<Vec<_>>();
+        value_kinds.sort();
+        value_kinds.dedup();
+        let dialect = value_kinds[0].dialect();
+        assert!(value_kinds.iter().all(|kind| kind.dialect() == dialect));
+        let resources = with_offer.then(|| PackageResource {
+            name: implementation_resource.clone(),
+            path: "provider.bin".to_owned(),
+            media_type: "application/octet-stream".to_owned(),
+            size: 0,
+            digest: ResourceDigest::parse(EMPTY_SHA256).unwrap(),
+            extensions: BTreeMap::new(),
+        });
+        let offers = with_offer.then(|| ImplementationOfferDeclaration {
+            implementation,
+            capability: specification.id.clone(),
+            artifact: implementation_resource,
+            extensions: BTreeMap::new(),
+        });
+        let manifest = PackageManifest::new(
+            PackageId::parse("test.package@1.0.0").unwrap(),
+            Vec::new(),
+            resources.into_iter().collect(),
+            vec![DialectDeclaration {
+                id: dialect,
+                value_kinds: value_kinds
+                    .into_iter()
+                    .map(|id| ValueKindDeclaration {
+                        id,
+                        schema: None,
+                        extensions: BTreeMap::new(),
+                    })
+                    .collect(),
+                extensions: BTreeMap::new(),
+            }],
+            vec![ConformanceSuiteDeclaration {
+                id: suite(),
+                extensions: BTreeMap::new(),
+            }],
+            vec![specification],
+            offers.into_iter().collect(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join(gooir_package::PACKAGE_MANIFEST_FILE),
+            write_manifest(&manifest).unwrap(),
+        )
+        .unwrap();
+        if with_offer {
+            fs::write(directory.path().join("provider.bin"), []).unwrap();
+        }
+        let package = load_local_package(
+            directory.path(),
+            &PackageRegistry::default(),
+            LoadLimits::default(),
+        )
+        .unwrap();
+        let mut registry = PackageRegistry::default();
+        registry.install(package).unwrap();
+        registry
+    }
+
+    struct FacadeFixture {
+        ledger: AdmissionLedger,
+        policy: AdmissionPolicy,
+        facade: DerivationFacade,
+        request: DerivationRequest,
+        attesters: AttesterInventory,
+        host: TestHost,
+    }
+
+    fn facade_fixture(accept_conformance: bool, with_offer: bool) -> FacadeFixture {
+        let fixture = fixture(accept_conformance);
+        let registry = package_registry(
+            fixture.invocation.specification.clone(),
+            fixture.invocation.selection.offer.implementation.clone(),
+            with_offer,
+        );
+        let request = DerivationRequest {
+            target: fixture.output.value_kind.clone(),
+            inputs: vec![fixture.invocation.inputs[0].admitted.clone()],
+            selection: DerivationSelection::UniqueOnly {
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        };
+        FacadeFixture {
+            ledger: fixture.ledger,
+            policy: fixture.policy,
+            facade: DerivationFacade::new(&registry, limits()).unwrap(),
+            request,
+            attesters: AttesterInventory::new([fixture.conformance], limits().max_attesters)
+                .unwrap(),
+            host: TestHost::new(fixture.output),
+        }
+    }
+
     #[test]
     fn unresolved_input_stops_before_any_host_effect() {
         let mut fixture = fixture(true);
@@ -625,11 +826,16 @@ mod tests {
             BTreeMap::new(),
         )
         .unwrap();
-        let mut host = TestHost::new(fixture.output, fixture.conformance);
+        let mut host = TestHost::new(fixture.output);
 
-        let error =
-            run_linked_invocation(&mut fixture.ledger, &fixture.policy, &invocation, &mut host)
-                .unwrap_err();
+        let error = run_linked_invocation(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &invocation,
+            &fixture.conformance,
+            &mut host,
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -643,12 +849,13 @@ mod tests {
     fn provider_inability_never_becomes_a_candidate() {
         let mut fixture = fixture(true);
         let baseline = fixture.ledger.export().unwrap();
-        let mut host = TestHost::new(fixture.output, fixture.conformance);
+        let mut host = TestHost::new(fixture.output);
         host.provider = ProviderBehavior::Unable;
         let outcome = run_linked_invocation(
             &mut fixture.ledger,
             &fixture.policy,
             &fixture.invocation,
+            &fixture.conformance,
             &mut host,
         )
         .unwrap();
@@ -666,12 +873,13 @@ mod tests {
     fn substituted_self_assessment_fails_without_admission() {
         let mut fixture = fixture(true);
         let baseline = fixture.ledger.export().unwrap();
-        let mut host = TestHost::new(fixture.output, fixture.conformance);
+        let mut host = TestHost::new(fixture.output);
         host.assessment = AssessmentBehavior::ProviderSelfAssessment;
         let error = run_linked_invocation(
             &mut fixture.ledger,
             &fixture.policy,
             &fixture.invocation,
+            &fixture.conformance,
             &mut host,
         )
         .unwrap_err();
@@ -687,11 +895,12 @@ mod tests {
     fn unaccepted_attester_is_a_policy_refusal_and_mutates_nothing() {
         let mut fixture = fixture(false);
         let baseline = fixture.ledger.export().unwrap();
-        let mut host = TestHost::new(fixture.output, fixture.conformance);
+        let mut host = TestHost::new(fixture.output);
         let outcome = run_linked_invocation(
             &mut fixture.ledger,
             &fixture.policy,
             &fixture.invocation,
+            &fixture.conformance,
             &mut host,
         )
         .unwrap();
@@ -713,11 +922,12 @@ mod tests {
     fn admitted_output_contains_and_resolves_its_complete_authority() {
         let mut fixture = fixture(true);
         let expected = fixture.output.clone();
-        let mut host = TestHost::new(fixture.output, fixture.conformance);
+        let mut host = TestHost::new(fixture.output);
         let outcome = run_linked_invocation(
             &mut fixture.ledger,
             &fixture.policy,
             &fixture.invocation,
+            &fixture.conformance,
             &mut host,
         )
         .unwrap();
@@ -751,12 +961,13 @@ mod tests {
         ] {
             let mut fixture = fixture(true);
             let baseline = fixture.ledger.export().unwrap();
-            let mut host = TestHost::new(fixture.output, fixture.conformance);
+            let mut host = TestHost::new(fixture.output);
             host.assessment = AssessmentBehavior::Outcome(assessment);
             let outcome = run_linked_invocation(
                 &mut fixture.ledger,
                 &fixture.policy,
                 &fixture.invocation,
+                &fixture.conformance,
                 &mut host,
             )
             .unwrap();
@@ -778,13 +989,14 @@ mod tests {
     #[test]
     fn host_failures_remain_outside_serialized_outcomes() {
         let mut provider_fixture = fixture(true);
-        let mut host = TestHost::new(provider_fixture.output, provider_fixture.conformance);
+        let mut host = TestHost::new(provider_fixture.output);
         host.provider = ProviderBehavior::HostFailure;
         assert!(matches!(
             run_linked_invocation(
                 &mut provider_fixture.ledger,
                 &provider_fixture.policy,
                 &provider_fixture.invocation,
+                &provider_fixture.conformance,
                 &mut host,
             ),
             Err(LinkedInvocationError::HostInvocation(TestHostError(
@@ -793,18 +1005,178 @@ mod tests {
         ));
 
         let mut assessment_fixture = fixture(true);
-        let mut host = TestHost::new(assessment_fixture.output, assessment_fixture.conformance);
+        let mut host = TestHost::new(assessment_fixture.output);
         host.assessment = AssessmentBehavior::HostFailure;
         assert!(matches!(
             run_linked_invocation(
                 &mut assessment_fixture.ledger,
                 &assessment_fixture.policy,
                 &assessment_fixture.invocation,
+                &assessment_fixture.conformance,
                 &mut host,
             ),
             Err(LinkedInvocationError::HostAssessment(TestHostError(
                 "attester host failed"
             )))
         ));
+    }
+
+    #[test]
+    fn facade_produces_only_an_admitted_target_with_complete_authority() {
+        let mut fixture = facade_fixture(true, true);
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        let Answer::Produced(produced) = answer else {
+            panic!("expected the product-facing admitted result");
+        };
+        assert_eq!(fixture.host.invocations, 1);
+        assert_eq!(fixture.host.assessments, 1);
+        assert!(!produced.admitted.is_empty());
+        let resolved = fixture.ledger.resolve(&produced.target).unwrap();
+        assert_eq!(resolved.fact.value_kind, fixture.request.target);
+        assert!(
+            produced
+                .admitted
+                .iter()
+                .any(|record| record.authority_record_id == produced.target.authority_record_id)
+        );
+    }
+
+    #[test]
+    fn facade_returns_an_already_admitted_target_without_host_effects() {
+        let mut fixture = facade_fixture(true, true);
+        fixture.request.target = fixture
+            .ledger
+            .resolve(&fixture.request.inputs[0])
+            .unwrap()
+            .fact
+            .value_kind
+            .clone();
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        let Answer::Produced(produced) = answer else {
+            panic!("expected the existing admitted input");
+        };
+        assert_eq!(produced.target, fixture.request.inputs[0]);
+        assert_eq!(produced.admitted.len(), 1);
+        assert_eq!(fixture.host.invocations, 0);
+        assert_eq!(fixture.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_distinguishes_missing_implementations_and_attesters_as_blockage() {
+        let mut no_offer = facade_fixture(true, false);
+        let answer = no_offer.facade.answer(
+            &mut no_offer.ledger,
+            &no_offer.policy,
+            &no_offer.attesters,
+            &mut no_offer.host,
+            &no_offer.request,
+        );
+        let Answer::Blocked(blocked) = answer else {
+            panic!("expected implementation blockage");
+        };
+        assert!(
+            !blocked
+                .implementation
+                .as_ref()
+                .unwrap()
+                .missing_needs
+                .is_empty()
+        );
+        assert!(blocked.missing_attesters.is_empty());
+        assert_eq!(no_offer.host.invocations, 0);
+        assert_eq!(no_offer.host.assessments, 0);
+
+        let mut no_attester = facade_fixture(true, true);
+        no_attester.attesters = AttesterInventory::new([], limits().max_attesters).unwrap();
+        let answer = no_attester.facade.answer(
+            &mut no_attester.ledger,
+            &no_attester.policy,
+            &no_attester.attesters,
+            &mut no_attester.host,
+            &no_attester.request,
+        );
+        let Answer::Blocked(blocked) = answer else {
+            panic!("expected attester blockage");
+        };
+        assert_eq!(blocked.missing_attesters.len(), 1);
+        assert_eq!(no_attester.host.invocations, 0);
+        assert_eq!(no_attester.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_reports_semantic_unreachability_without_host_effects() {
+        let mut fixture = facade_fixture(true, true);
+        fixture.request.target = value_kind("unreachable");
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        assert!(matches!(answer, Answer::Unreachable(_)));
+        assert_eq!(fixture.host.invocations, 0);
+        assert_eq!(fixture.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_treats_pre_execution_policy_ineligibility_as_refusal() {
+        let mut fixture = facade_fixture(false, true);
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        assert!(matches!(
+            answer,
+            Answer::Refused(refusal)
+                if matches!(*refusal, Refusal::AdmissionPolicy { decision: None, .. })
+        ));
+        assert_eq!(fixture.host.invocations, 0);
+        assert_eq!(fixture.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_retains_one_fixed_provider_inability_as_failure() {
+        let mut fixture = facade_fixture(true, true);
+        fixture.host.provider = ProviderBehavior::Unable;
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        let Answer::Failed(failed) = answer else {
+            panic!("expected one fixed attempt to fail");
+        };
+        assert_eq!(failed.stage, FailureStage::ProviderUnable);
+        assert!(failed.provider_failure.is_some());
+        assert_eq!(fixture.host.invocations, 1);
+        assert_eq!(fixture.host.assessments, 0);
     }
 }

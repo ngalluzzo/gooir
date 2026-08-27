@@ -97,6 +97,18 @@ pub enum RouteSelection {
     UniqueOnly,
 }
 
+/// One installed offer that a caller has established is available for route
+/// selection in its external execution context.
+///
+/// Availability is deliberately supplied by the caller. The planner can
+/// prove that the offer belongs to the exact inventory, but it cannot infer
+/// whether an external host can execute or independently attest it.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct AvailableOffer {
+    pub capability: CapabilityId,
+    pub offer: OfferId,
+}
+
 /// Exact source of one value consumed or returned by a selected route.
 ///
 /// Initial values remain type-level. Exact facts and their authority records
@@ -692,6 +704,53 @@ impl SemanticPlanner {
         plan: &SemanticPlan,
         selection: RouteSelection,
     ) -> Result<SelectedRoute, PlanningError> {
+        self.validate_exact_plan(plan)?;
+        plan.select_route(selection, self.limits)
+    }
+
+    /// Selects a route using only an exact caller-supplied subset of installed
+    /// offers while retaining the identity of the complete semantic plan.
+    ///
+    /// This is the bridge for external availability constraints such as host
+    /// launch support or independent attester inventory. The subset cannot add
+    /// or alter inventory. Empty or removed choices remain visible as blockage
+    /// against the original plan rather than becoming a different plan.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid or substituted plan, a subset entry absent from the
+    /// plan, ambiguity, or a plan whose routes are all blocked by the supplied
+    /// availability subset.
+    pub fn select_route_with_available_offers(
+        &self,
+        plan: &SemanticPlan,
+        available_offers: &BTreeSet<AvailableOffer>,
+        selection: RouteSelection,
+    ) -> Result<SelectedRoute, PlanningError> {
+        self.validate_exact_plan(plan)?;
+        for available in available_offers {
+            let planned = plan
+                .planned_capability(&available.capability)
+                .map_err(|_| PlanningError::CapabilityNotPlanned(available.capability.clone()))?;
+            if !planned
+                .offers
+                .iter()
+                .any(|offer| offer.offer_id == available.offer)
+            {
+                return Err(PlanningError::OfferNotPlanned {
+                    capability: available.capability.clone(),
+                    offer: available.offer.clone(),
+                });
+            }
+        }
+        match selection {
+            RouteSelection::UniqueOnly => {
+                select_unique_route_with_available_offers(plan, available_offers)
+            }
+        }
+    }
+
+    fn validate_exact_plan(&self, plan: &SemanticPlan) -> Result<(), PlanningError> {
         plan.validate(self.limits)?;
         if plan.planning_scope_digest != self.scope_digest {
             return Err(PlanningError::PlanningScopeMismatch {
@@ -706,7 +765,7 @@ impl SemanticPlanner {
         if &expected != plan {
             return Err(PlanningError::PlanInventoryMismatch);
         }
-        plan.select_route(selection, self.limits)
+        Ok(())
     }
 
     /// Explicitly links one exact planned capability and installed offer into
@@ -1263,7 +1322,24 @@ struct DraftDerivation {
 }
 
 fn select_unique_route(plan: &SemanticPlan) -> Result<SelectedRoute, PlanningError> {
-    let (available, executable) = offer_reachable(plan);
+    let available_offers = plan
+        .capabilities
+        .iter()
+        .flat_map(|planned| {
+            planned.offers.iter().map(|offer| AvailableOffer {
+                capability: planned.specification.id.clone(),
+                offer: offer.offer_id.clone(),
+            })
+        })
+        .collect();
+    select_unique_route_with_available_offers(plan, &available_offers)
+}
+
+fn select_unique_route_with_available_offers(
+    plan: &SemanticPlan,
+    available_offers: &BTreeSet<AvailableOffer>,
+) -> Result<SelectedRoute, PlanningError> {
+    let (available, executable) = offer_reachable(plan, available_offers);
     if !available.contains(&plan.target_value_kind) {
         return Err(PlanningError::AllRoutesBlocked(Box::new(
             blocked_route_analysis(plan, &available),
@@ -1309,8 +1385,18 @@ fn select_unique_route(plan: &SemanticPlan) -> Result<SelectedRoute, PlanningErr
         let planned_capability = planned
             .get(&capability)
             .ok_or_else(|| PlanningError::CapabilityNotPlanned(capability.clone()))?;
-        let [offer] = planned_capability.offers.as_slice() else {
-            return if planned_capability.offers.is_empty() {
+        let offers = planned_capability
+            .offers
+            .iter()
+            .filter(|offer| {
+                available_offers.contains(&AvailableOffer {
+                    capability: capability.clone(),
+                    offer: offer.offer_id.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let [offer] = offers.as_slice() else {
+            return if offers.is_empty() {
                 Err(PlanningError::AllRoutesBlocked(Box::new(
                     blocked_route_analysis(plan, &available),
                 )))
@@ -1687,7 +1773,10 @@ fn route_placeholder_port() -> PortName {
     PortName::parse("<none>").expect("the route placeholder port is exact")
 }
 
-fn offer_reachable(plan: &SemanticPlan) -> (BTreeSet<ValueKindId>, BTreeSet<CapabilityId>) {
+fn offer_reachable(
+    plan: &SemanticPlan,
+    available_offers: &BTreeSet<AvailableOffer>,
+) -> (BTreeSet<ValueKindId>, BTreeSet<CapabilityId>) {
     let mut available = plan
         .initial_value_kinds
         .iter()
@@ -1697,12 +1786,16 @@ fn offer_reachable(plan: &SemanticPlan) -> (BTreeSet<ValueKindId>, BTreeSet<Capa
     loop {
         let mut changed = false;
         for planned in &plan.capabilities {
-            if planned.offers.is_empty()
-                || !planned
-                    .specification
-                    .input_ports
-                    .iter()
-                    .all(|input| available.contains(&input.value_kind))
+            if !planned.offers.iter().any(|offer| {
+                available_offers.contains(&AvailableOffer {
+                    capability: planned.specification.id.clone(),
+                    offer: offer.offer_id.clone(),
+                })
+            }) || !planned
+                .specification
+                .input_ports
+                .iter()
+                .all(|input| available.contains(&input.value_kind))
             {
                 continue;
             }
@@ -2957,6 +3050,53 @@ mod tests {
             planner.select_route(&plan, RouteSelection::UniqueOnly),
             Err(PlanningError::AmbiguousOffer(capability)) if capability == only.id
         ));
+    }
+
+    #[test]
+    fn caller_availability_filters_selection_without_changing_plan_identity() {
+        let source = kind("source");
+        let result = kind("result");
+        let first = specification(
+            "first",
+            &[("source", source.clone())],
+            &[("result", result.clone())],
+        );
+        let second = specification(
+            "second",
+            &[("source", source.clone())],
+            &[("result", result.clone())],
+        );
+        let first_offer = offer(&first, "first", 'a');
+        let second_offer = offer(&second, "second", 'b');
+        let planner = SemanticPlanner::new(
+            [first.clone(), second],
+            [first_offer.clone(), second_offer],
+            limits(),
+        )
+        .unwrap();
+        let plan = planner.plan([source], result).unwrap();
+        let available = BTreeSet::from([AvailableOffer {
+            capability: first.id.clone(),
+            offer: first_offer.offer_id.clone(),
+        }]);
+
+        let selected = planner
+            .select_route_with_available_offers(&plan, &available, RouteSelection::UniqueOnly)
+            .unwrap();
+
+        assert_eq!(selected.plan_id, plan.plan_id);
+        assert_eq!(selected.steps[0].capability, first.id);
+        assert_eq!(selected.steps[0].offer, first_offer.offer_id);
+        selected.validate(&plan, limits()).unwrap();
+
+        let PlanningError::AllRoutesBlocked(blocked) = planner
+            .select_route_with_available_offers(&plan, &BTreeSet::new(), RouteSelection::UniqueOnly)
+            .unwrap_err()
+        else {
+            panic!("expected external availability blockage");
+        };
+        assert_eq!(blocked.plan_id, plan.plan_id);
+        assert!(blocked.nodes.iter().all(|node| !node.missing_offer));
     }
 
     #[test]
