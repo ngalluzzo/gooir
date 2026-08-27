@@ -9,6 +9,7 @@ use std::{fs, path::PathBuf, process};
 
 use gooir_capability::{
     Answer, CapabilityRegistry, DerivationRequest, FactInstance, FactType, RequestRefusal,
+    register_pack,
 };
 use gooir_cli::{known_facts, resolve};
 
@@ -20,37 +21,46 @@ fn main() {
 }
 
 const USAGE: &str = "\
-gooir — derive facts over a capability graph
+gooir — inspect and exercise an explicitly installed capability graph
 
-  gooir facts                        every fact type, and how it is reached
-  gooir capabilities                 every promise, and whether it has a provider
-  gooir needs                        promises with no provider, as work contracts
+  gooir facts                         every fact type, and how it is reached
+  gooir capabilities                  every promise, and whether it has a provider
+  gooir needs                         promises with no provider, as work contracts
   gooir doctor                        graph health
   gooir plan <target>                 the route to a target
-  gooir derive <target> --from FILE   run it, and print the derivation chain
+  gooir derive <target> --from FACT   run the legacy in-process adapter
 
+Add --pack MANIFEST (repeatable) to declare capabilities.
 Add --plugin MANIFEST (repeatable) to install an out-of-process provider.
+Nothing is installed implicitly.
 
-A target may be a full identity (org.gooi.artifact.sql/postgres_ddl@0.1.0) or a
-bare name (postgres_ddl) when it is unambiguous.
+A target may be a full value-kind identity or an unambiguous bare name.
 
-FILE is a hand-written .entities specification. Sources lifted from existing
-software are supplied by their own packs; see `gooir capabilities`.";
+FACT is a serialized FactInstance JSON document. Repeat --from for each input.
+Domain authoring formats and their conversion to facts belong to ecosystem
+packages, not this command.";
 
-/// Plugin manifests are named by the caller, never discovered. Scanning a
-/// directory for programs to execute would be a supply-chain hole.
-fn plugin_paths(args: &[String]) -> Vec<PathBuf> {
+/// Installation inputs are named by the caller, never discovered. Scanning a
+/// directory for declarations or programs would make the active graph depend
+/// on ambient filesystem state and turn provider loading into a supply-chain
+/// hole.
+fn value_paths(args: &[String], flag: &str) -> Vec<PathBuf> {
     args.iter()
         .enumerate()
-        .filter(|(_, a)| a.as_str() == "--plugin")
+        .filter(|(_, argument)| argument.as_str() == flag)
         .filter_map(|(i, _)| args.get(i + 1))
         .map(PathBuf::from)
         .collect()
 }
 
-fn installed(plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
+fn installed(packs: &[PathBuf], plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
     let mut registry = CapabilityRegistry::default();
-    gooir_datamodel_pack::register(&mut registry).map_err(|e| e.to_string())?;
+    for path in packs {
+        let manifest =
+            fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        register_pack(&mut registry, &manifest)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
     for path in plugins {
         let provider = gooir_plugin_process::ProcessProvider::load(path)
             .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -67,18 +77,11 @@ fn installed(plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
     Ok(registry)
 }
 
-fn authored_source(path: &PathBuf) -> Result<FactInstance, String> {
+fn input_fact(path: &PathBuf) -> Result<FactInstance, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let parsed = gooir_datamodel_pack::authored_fact(path.display().to_string(), &text)
-        .map_err(|e| e.to_string())?;
-    Ok(parsed)
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-/// Prints an artifact the way a person reads it.
-///
-/// A generated schema is text; showing it as a JSON string with escaped
-/// newlines would defeat the purpose of having one entry point. `--json` still
-/// gives the exact payload.
 /// Renders an answer that produced nothing, and says what to do about it.
 ///
 /// Every branch ends in the answer's own remedy rather than a message written
@@ -113,82 +116,9 @@ fn print_answer(target: &FactType, given: &Answer) {
     println!("\n-> {}", given.remedy());
 }
 
-fn print_payload(payload: &serde_json::Value) {
-    const TEXT_FIELDS: [&str; 4] = ["ddl", "text", "source", "content"];
-
-    // A generated schema is text. Unwrapping an envelope must not hand it back
-    // as a JSON string with escaped newlines.
-    if let Some(text) = payload.as_str() {
-        println!("{text}");
-        return;
-    }
-
-    // Every fact payload is a defeasible envelope: a value plus what could not
-    // be established. Show the value, then say what was lost, rather than
-    // making a reader dig the artifact out of its own provenance.
-    if let Some(object) = payload
-        .as_object()
-        .filter(|o| o.contains_key("value") && o.contains_key("defeater_set"))
-    {
-        {
-            print_payload(&object["value"]);
-            let defeats = object.get("defeats").and_then(|d| d.as_array());
-            match defeats.map(|d| d.len()).unwrap_or(0) {
-                0 => println!("\nnothing was lost"),
-                n => {
-                    println!("\n{n} thing(s) the target could not carry:");
-                    for defeat in defeats.into_iter().flatten() {
-                        println!(
-                            "  [{}] {}: {}",
-                            defeat["kind"].as_str().unwrap_or("?"),
-                            defeat["subject"].as_str().unwrap_or("?"),
-                            defeat["reason"].as_str().unwrap_or("?")
-                        );
-                    }
-                }
-            }
-            return;
-        }
-    }
-
-    if let Some(object) = payload.as_object() {
-        for field in TEXT_FIELDS {
-            if let Some(text) = object.get(field).and_then(|v| v.as_str()) {
-                println!("{text}");
-                let extra: Vec<&String> = object.keys().filter(|k| k.as_str() != field).collect();
-                if !extra.is_empty() {
-                    let names: Vec<&str> = extra.iter().map(|k| k.as_str()).collect();
-                    println!("(also carries: {}; --json for all of it)", names.join(", "));
-                }
-                return;
-            }
-        }
-        // A structured artifact: show its shape rather than its bytes.
-        let mut keys: Vec<&String> = object.keys().collect();
-        keys.sort();
-        for key in keys {
-            let value = &object[key];
-            let shape = match value {
-                serde_json::Value::Object(m) => format!("{} field(s)", m.len()),
-                serde_json::Value::Array(a) => format!("{} item(s)", a.len()),
-                serde_json::Value::String(s) => format!("{} character(s)", s.len()),
-                other => other.to_string(),
-            };
-            println!("  {key:<12} {shape}");
-        }
-        println!("\n--json for the exact payload");
-        return;
-    }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(payload).unwrap_or_default()
-    );
-}
-
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let command = args.first().map(String::as_str);
-    let registry = installed(&plugin_paths(&args))?;
 
     match command {
         None | Some("-h") | Some("--help") | Some("help") => {
@@ -196,6 +126,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("facts") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let facts = known_facts(&registry);
             println!("{} fact type(s)\n", facts.len());
             for fact in &facts {
@@ -218,6 +152,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("capabilities") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let provided: Vec<_> = registry
                 .provider_descriptors()
                 .into_iter()
@@ -244,6 +182,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("needs") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let report = gooir_doctor::diagnose(&registry);
             if report.unimplemented.is_empty() {
                 println!("no open needs: every capability has a provider");
@@ -261,6 +203,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("doctor") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let report = gooir_doctor::diagnose(&registry);
             println!("{report}");
             if report.blocking() > 0 {
@@ -269,6 +215,10 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("plan") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let wanted = args.get(1).ok_or("usage: gooir plan <target>")?;
             let target = resolve(&registry, wanted)?;
             let roots: Vec<FactType> = gooir_doctor::diagnose(&registry)
@@ -300,19 +250,24 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("derive") => {
+            let registry = installed(
+                &value_paths(&args, "--pack"),
+                &value_paths(&args, "--plugin"),
+            )?;
             let wanted = args
                 .get(1)
-                .ok_or("usage: gooir derive <target> --from FILE")?;
-            let from = args
-                .iter()
-                .position(|a| a == "--from")
-                .and_then(|i| args.get(i + 1))
-                .map(PathBuf::from)
-                .ok_or("usage: gooir derive <target> --from FILE")?;
+                .ok_or("usage: gooir derive <target> --from FACT")?;
+            let sources = value_paths(&args, "--from");
+            if sources.is_empty() {
+                return Err("usage: gooir derive <target> --from FACT".to_owned());
+            }
             let target = resolve(&registry, wanted)?;
             let request = DerivationRequest {
                 target: target.clone(),
-                inputs: vec![authored_source(&from)?],
+                inputs: sources
+                    .iter()
+                    .map(input_fact)
+                    .collect::<Result<Vec<_>, _>>()?,
             };
             // One call, and every outcome comes back as an answer. The CLI
             // renders; it no longer decides what counts as a failure.
@@ -325,15 +280,13 @@ fn run() -> Result<(), String> {
                     println!("  coverage {:?}", report.target.coverage);
                     println!("  chain    {} fact(s)", report.facts.len());
                     println!();
-                    if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report.target.payload)
-                                .unwrap_or_default()
-                        );
-                    } else {
-                        print_payload(&report.target.payload);
-                    }
+                    // Payload meaning belongs to its ecosystem. The neutral
+                    // CLI renders the exact JSON and never guesses presentation
+                    // semantics from coincidental field names.
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report.target.payload).unwrap_or_default()
+                    );
                     Ok(())
                 }
                 other => {
@@ -355,5 +308,79 @@ fn run() -> Result<(), String> {
             }
         }
         Some(other) => Err(format!("unknown command `{other}`\n\n{USAGE}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gooir_capability::{FactCoverage, FactType};
+
+    const PACK: &str = r#"{
+      "protocol": "org.gooi.pack/v2",
+      "capabilities": [{
+        "id": "test.capability/copy@1.0.0",
+        "input_ports": [{
+          "name": "source",
+          "value_kind": "test.value/source@1.0.0",
+          "acceptance": "complete_only"
+        }],
+        "output_ports": [{
+          "name": "result",
+          "value_kind": "test.value/result@1.0.0"
+        }],
+        "default_conformance_suite": "test.conformance/copy@1.0.0"
+      }]
+    }"#;
+
+    #[test]
+    fn installation_is_empty_until_a_pack_is_named() {
+        let empty = installed(&[], &[]).unwrap();
+        assert_eq!(empty.specs().count(), 0);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pack.json");
+        fs::write(&path, PACK).unwrap();
+        let explicit = installed(&[path], &[]).unwrap();
+        assert_eq!(explicit.specs().count(), 1);
+    }
+
+    #[test]
+    fn repeated_installation_and_input_flags_keep_caller_order() {
+        let args = vec![
+            "derive".to_owned(),
+            "result".to_owned(),
+            "--pack".to_owned(),
+            "one.json".to_owned(),
+            "--from".to_owned(),
+            "first.json".to_owned(),
+            "--pack".to_owned(),
+            "two.json".to_owned(),
+            "--from".to_owned(),
+            "second.json".to_owned(),
+        ];
+        assert_eq!(
+            value_paths(&args, "--pack"),
+            [PathBuf::from("one.json"), PathBuf::from("two.json")]
+        );
+        assert_eq!(
+            value_paths(&args, "--from"),
+            [PathBuf::from("first.json"), PathBuf::from("second.json")]
+        );
+    }
+
+    #[test]
+    fn input_is_a_domain_neutral_fact_document() {
+        let fact = FactInstance::initial(
+            FactType::new("test.value", "source", "1.0.0"),
+            FactCoverage::Complete,
+            serde_json::json!({"any": "payload"}),
+            "test fixture",
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("fact.json");
+        fs::write(&path, serde_json::to_vec(&fact).unwrap()).unwrap();
+        assert_eq!(input_fact(&path).unwrap(), fact);
     }
 }

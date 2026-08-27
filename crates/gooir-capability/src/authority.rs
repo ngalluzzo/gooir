@@ -2971,7 +2971,7 @@ mod tests {
             "retry",
             "credential",
             "attempt",
-            "fleetd",
+            "scheduler",
             "priority",
             "provider",
             "deadline",

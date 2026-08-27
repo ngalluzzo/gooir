@@ -3266,9 +3266,9 @@ mod tests {
         );
     }
 
-    /// The orchestrator owns ownership, deadlines, and settlement; Fleetd's
-    /// `work.capability.attempt/v2` envelope already carries them. An answer
-    /// that repeated any of them would create two authorities on one meaning.
+    /// The orchestrator owns ownership, deadlines, and settlement in its own
+    /// attempt envelope. An answer that repeated any of them would create two
+    /// authorities on one meaning.
     #[test]
     fn an_answer_carries_no_field_the_orchestrator_owns() {
         const ORCHESTRATOR_OWNED: [&str; 9] = [

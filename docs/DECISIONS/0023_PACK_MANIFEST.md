@@ -98,8 +98,8 @@ The guard was verified rather than assumed. Changing one manifest identity from
 `org.gooi.capability/author_data_model@0.1.0` is named in code but not in pack.json
 ```
 
-That check is itself an instrument, and [0016](0016_ONE_EXACT_IDENTITY.md) is
-the reason it was tested against real drift before being trusted.
+That check is itself an instrument; the later exact-identity consolidation is
+why it was tested against real drift before being trusted.
 
 ## Something the data says better than the code did
 

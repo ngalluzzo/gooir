@@ -2,6 +2,10 @@
 
 Status: accepted recovery boundary
 
+Repository amendment: [0033](0033_SUBTRACT_AND_EXTRACT.md) completes this
+boundary physically. The domain families and proof-local host code discussed
+below now live in downstream repositories rather than this workspace.
+
 ## Context
 
 GOOIR discovered the right center and then implemented it twice.
