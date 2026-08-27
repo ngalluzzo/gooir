@@ -757,6 +757,7 @@ dependencies = [
  "gooir-fleetd-direct-conversation-package-proof",
  "gooir-package",
  "gooir-planning",
+ "httparse",
  "libc",
  "object",
  "reqwest",

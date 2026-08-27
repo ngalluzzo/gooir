@@ -18,11 +18,15 @@
 //!       --test fleetd_real -- --ignored --exact \
 //!       real_fleetd_two_provider_restart_and_terminal_replay
 //!
-//! This direct slice proves create/resolve through stable public state, not the
-//! exact HTTP status or commit-before-response crash window. Those require the
-//! later bounded-proxy checkpoint.
+//! This direct slice proves create/resolve through stable public state. The
+//! separate `fleetd_crash` ignored proof closes the exact HTTP-status and
+//! commit-before-response recovery window through a bounded loopback proxy.
 
 #![cfg(target_os = "macos")]
+
+#[path = "support/fleetd_crash.rs"]
+#[allow(dead_code)]
+pub(crate) mod crash;
 
 use std::collections::BTreeMap;
 use std::env;
