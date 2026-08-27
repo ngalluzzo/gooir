@@ -533,6 +533,7 @@ mod tests {
         assessment: AssessmentBehavior,
         invocations: usize,
         assessments: usize,
+        seen_invocations: Vec<CapabilityInvocation>,
     }
 
     impl TestHost {
@@ -543,6 +544,7 @@ mod tests {
                 assessment: AssessmentBehavior::Outcome(AssessmentOutcome::Passed),
                 invocations: 0,
                 assessments: 0,
+                seen_invocations: Vec::new(),
             }
         }
     }
@@ -555,6 +557,7 @@ mod tests {
             invocation: &CapabilityInvocation,
         ) -> Result<CapabilityResult, Self::Error> {
             self.invocations += 1;
+            self.seen_invocations.push(invocation.clone());
             match self.provider {
                 ProviderBehavior::Produced => CapabilityResult::produced(
                     invocation,
@@ -1133,6 +1136,13 @@ mod tests {
         };
         assert_eq!(fixture.host.invocations, 1);
         assert_eq!(fixture.host.assessments, 1);
+        assert_eq!(
+            fixture.host.seen_invocations[0]
+                .selection
+                .extensions
+                .get(COMPLETE_SELECTION_EXTENSION),
+            Some(&json!(produced.selection_id.as_str()))
+        );
         assert!(!produced.admitted.is_empty());
         let resolved = fixture.ledger.resolve(&produced.target).unwrap();
         assert_eq!(resolved.fact.value_kind, fixture.request.target);

@@ -31,6 +31,10 @@ use crate::{
 /// Exact in-memory shape of façade blockage analysis.
 pub const DERIVATION_BLOCKAGE_PROTOCOL: &str = "org.gooi.derive.blockage/v1";
 
+/// Understood invocation-selection extension binding host correlation to the
+/// complete façade selection rather than only its provider step.
+pub const COMPLETE_SELECTION_EXTENSION: &str = "org.gooi.derive.complete_selection_id";
+
 /// Bounds for one product-facing derivation request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DerivationLimits {
@@ -147,7 +151,25 @@ pub struct CompleteSelectionId(String);
 
 impl CompleteSelectionId {
     fn derive(selection: &ExplicitSelection) -> Result<Self, String> {
-        canonical_digest(selection).and_then(Self::parse)
+        let mut canonical = selection.clone();
+        canonical.initial_bindings.sort_by(|left, right| {
+            (
+                &left.capability,
+                &left.input_port,
+                &left.admitted.fact_id,
+                &left.admitted.authority_record_id,
+            )
+                .cmp(&(
+                    &right.capability,
+                    &right.input_port,
+                    &right.admitted.fact_id,
+                    &right.admitted.authority_record_id,
+                ))
+        });
+        canonical
+            .attesters
+            .sort_by(|left, right| left.capability.cmp(&right.capability));
+        canonical_digest(&canonical).and_then(Self::parse)
     }
 
     fn parse(value: String) -> Result<Self, String> {
@@ -192,6 +214,7 @@ pub struct SelectionAlternative {
 /// One admitted product answer. Every fact remains inside its authority chain.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProducedAnswer {
+    pub selection_id: CompleteSelectionId,
     pub target: AdmittedFactRef,
     pub admitted: Vec<AuthorityRecord>,
 }
@@ -282,6 +305,7 @@ pub enum FailureStage {
 /// Failure after route and implementation selection were fixed.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FailedAnswer {
+    pub selection_id: CompleteSelectionId,
     pub route: SelectedRoute,
     pub capability: Option<CapabilityId>,
     pub stage: FailureStage,
@@ -541,8 +565,10 @@ impl DerivationFacade {
                 alternatives,
             });
         }
-        let selection = *alternatives.remove(0).selection;
+        let alternative = alternatives.remove(0);
+        let selection = *alternative.selection;
         Preparation::Ready(Box::new(PreparedDerivation {
+            selection_id: alternative.selection_id,
             plan,
             route: selection.route,
             inputs,
@@ -598,7 +624,16 @@ impl DerivationFacade {
                 ),
             });
         }
+        let selection_id = match CompleteSelectionId::derive(explicit) {
+            Ok(selection_id) => selection_id,
+            Err(detail) => {
+                return refused(Refusal::InvalidSelection {
+                    detail: format!("complete selection identity failed: {detail}"),
+                });
+            }
+        };
         Preparation::Ready(Box::new(PreparedDerivation {
+            selection_id,
             plan,
             route: explicit.route.clone(),
             inputs,
@@ -653,6 +688,7 @@ impl DerivationFacade {
         };
         let Some(target) = target else {
             return failed(
+                &prepared.selection_id,
                 &prepared.route,
                 prepared.route.steps.last().map(|step| &step.capability),
                 FailureStage::Admission,
@@ -664,6 +700,7 @@ impl DerivationFacade {
             Ok(resolved) => resolved,
             Err(error) => {
                 return failed(
+                    &prepared.selection_id,
                     &prepared.route,
                     prepared.route.steps.last().map(|step| &step.capability),
                     FailureStage::Admission,
@@ -675,7 +712,11 @@ impl DerivationFacade {
         if prepared.route.steps.is_empty() {
             admitted.push(resolved.authority.clone());
         }
-        Answer::Produced(Box::new(ProducedAnswer { target, admitted }))
+        Answer::Produced(Box::new(ProducedAnswer {
+            selection_id: prepared.selection_id.clone(),
+            target,
+            admitted,
+        }))
     }
 
     fn execute_step<H>(
@@ -696,6 +737,7 @@ impl DerivationFacade {
             .find(|attester| attester.capability == step.capability)
             .ok_or_else(|| {
                 failed(
+                    &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     FailureStage::Linking,
@@ -712,6 +754,7 @@ impl DerivationFacade {
             )
             .map_err(|(stage, detail)| {
                 failed(
+                    &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     stage,
@@ -730,6 +773,7 @@ impl DerivationFacade {
             Ok(LinkedInvocationOutcome::ProviderUnable(provider_failure)) => {
                 let provider_failure = *provider_failure;
                 Err(failed(
+                    &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     FailureStage::ProviderUnable,
@@ -748,6 +792,7 @@ impl DerivationFacade {
             ) => {
                 let withheld = *withheld;
                 Err(failed(
+                    &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     FailureStage::Conformance,
@@ -763,6 +808,7 @@ impl DerivationFacade {
             Err(error) => {
                 let (stage, detail, attempt) = linked_error(&error, &invocation);
                 Err(failed(
+                    &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     stage,
@@ -842,7 +888,10 @@ impl DerivationFacade {
                 InvocationLink {
                     capability: &step.capability,
                     offer: &step.offer,
-                    selection_extensions: BTreeMap::new(),
+                    selection_extensions: BTreeMap::from([(
+                        COMPLETE_SELECTION_EXTENSION.to_owned(),
+                        Value::String(prepared.selection_id.to_string()),
+                    )]),
                     inputs: linked_inputs,
                     conformance_suite: suite.clone(),
                     invocation_extensions: BTreeMap::new(),
@@ -899,6 +948,7 @@ struct ResolvedInput {
 }
 
 struct PreparedDerivation {
+    selection_id: CompleteSelectionId,
     plan: SemanticPlan,
     route: SelectedRoute,
     inputs: Vec<ResolvedInput>,
@@ -1364,6 +1414,7 @@ impl FailureEvidence {
 }
 
 fn failed(
+    selection_id: &CompleteSelectionId,
     route: &SelectedRoute,
     capability: Option<&CapabilityId>,
     stage: FailureStage,
@@ -1371,6 +1422,7 @@ fn failed(
     evidence: FailureEvidence,
 ) -> Answer {
     Answer::Failed(Box::new(FailedAnswer {
+        selection_id: selection_id.clone(),
         route: route.clone(),
         capability: capability.cloned(),
         stage,
