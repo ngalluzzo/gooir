@@ -1,294 +1,146 @@
 # Architecture
 
-## Recovery note
+GOOIR is a semantic compiler substrate, not an application framework,
+workflow engine, plugin daemon, or agent orchestrator. It represents semantic
+values and typed ways to derive other values. It stops before effectful
+execution.
 
-[Decision 0031](DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) supersedes the
-parallel operation/claim architecture described below. The active recovery
-keeps one facts-and-capabilities graph, restores the distinction between a
-governed dialect and its named value kinds, and gives process lifecycle,
-credentials, leases, sessions, retries, and persistence to external execution
-hosts. The removed architecture remains in historical decisions as exploration
-evidence. References to operations and claims below describe that exploration,
-not an active second semantic substrate.
-
-## Boundary
-
-GOOIR separates generic compiler machinery from application meaning.
+## The object graph
 
 ```text
-Semantically agnostic microkernel
-  operations, types, attributes, symbols, containment/dependency edges
-  exact contract identities, opaque interface transport/query
-  passes, legality, artifacts, provenance, diagnostics
-
-Separately governed semantic contracts
-  vocabulary, observable meaning, laws/trace model
-  verifier obligations, exact versions, conversion artifacts
-  conformance evidence
-
-Dialect implementations
-  lossless source representations
-  provenance-bearing claims against contracts
-
-Analyzers
-  consume contracts, never concrete dialect names
-
-Target packs and distributions
-  compatible lowerings, runtimes, defaults, coherent UX
+Fact --Capability--> Candidate Fact
 ```
 
-## Capability composition
+A capability may have several named input and output ports, including distinct
+ports with the same value kind. Planning therefore operates over typed
+hyperedges, not over a list of verbs or a source/target pair.
 
-A capability is a separately versioned typed promise: exact required fact
-types, exact produced fact types, coverage acceptance, and a named conformance
-suite. Capabilities form directed hyperedges because one derivation may require
-several independent semantic facts. The finite planner may relate those edges
-without learning what any fact means; it never executes them.
+There is only one edge kind. Lift, analysis, bridge, projection, lowering,
+generation, and semantic validation describe what a capability means in its
+own ecosystem; they are not parallel kernel mechanisms.
 
-`gooir-planning` copies one complete installed capability-and-offer inventory
-from `gooir-package`, applies caller-chosen finite bounds, and emits a
-content-identified AND/OR graph slice from caller-held input value kinds to one
-target kind. Every reachable target-relevant capability and every installed
-offer for it remains visible. A capability with no offer remains as an
-explicit need. Planning chooses neither a route nor an implementation.
-
-Linking is a separate explicit operation. The caller names one capability and
-one exact offer from the plan and supplies exact named facts plus the authority-
-record references it has already resolved under contextual admission. The
-structural linker does not resolve those records; it forms the existing
-content-identified capability invocation. A serialized plan is untrusted
-structure: linking revalidates its bounds and requires its exact capability
-specification and selected offer to match the planner's immutable installed
-inventory. The complete planning inventory has its own digest, so two plans derived from
-different installed scopes cannot silently share an identity even when their
-visible target slices happen to match. Planning state, graph traversal, host
-deployment compatibility, execution, conformance, and admission do not become
-ecosystem capabilities merely because the plan can be serialized.
-
-The default conformance suite is part of the exact versioned capability
-promise. Correcting or replacing that obligation publishes a new capability
-version; it never silently redefines the old coordinate.
-
-Capabilities are not protocols. An in-process call, ACP session, HTTP service,
-external compiler, or durable Fleetd worker may provide the same capability.
-The protocol handles transport and lifecycle. A concrete work contract binds
-one invocation to exact facts, authority, expected outputs, ownership, and
-acceptance checks. An agent session is therefore a domain-specific composition
-of lifecycle and communication capabilities, not a microkernel concept.
-
-Provider registration establishes availability only. It does not establish
-conformance or trust. Coverage and trust remain distinct: a complete produced
-fact reports no unresolved defeat under the provider's mechanism, while
-admission still requires evidence bound to the exact provider, implementation,
-suite, inputs, and output. A providerless edge remains visible as a typed
-capability need so an orchestrator can acquire an implementation without
-changing semantic meaning.
-
-Before handoff, a need may be bound to exact input fact instances as a
-provider-neutral capability request. Its RFC 8785/SHA-256 identity covers the
-capability, requirements, facts, expected outputs, and conformance suite. The
-request contains no agent, harness, transport, authority, or lease. An
-orchestrator such as Fleetd adds those execution concerns durably.
-
-The return boundary is a strict lift, not trust by response shape. A
-`CapabilityCandidate` binds one request to an exact semantic provider,
-implementation digest, output fact set, and opaque digest of the durable
-attempt. Candidate identity uses the same RFC 8785/SHA-256 convention. It says
-only what was proposed.
-
-Admission requires a separately identified conformance provider whose exact
-suite matches the request. The generating provider cannot attest its own
-candidate, and sharing its implementation digest with the verifier also fails
-closed. A failing check remains an immutable conformance result with no facts.
-A passing result constructs facts whose derivations bind the exact request,
-candidate, inputs, provider implementation, and conformance result. The result
-is still evidence subject to the consuming host's contextual trust policy; it
-is not universal proof.
-
-See [decision 0011](DECISIONS/0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md).
-See [decision 0012](DECISIONS/0012_CANDIDATES_REQUIRE_INDEPENDENT_CONFORMANCE.md).
-
-The first concrete implementation of this boundary is deliberately outside
-the generic crate. `fleetd-capability-pack` defines Fleetd's runnable-web
-artifact schema and conformance provider. The candidate names an exact trusted
-Git revision and content-addressed served assets; the verifier independently
-checks out that revision and injects its own black-box behavioral test. The
-served `/operator/contract.json` must equal the exact web target IR, so source
-meaning, generated UI, and runtime verification share one center without
-teaching the semantic substrate about pages, JavaScript, Fleetd, or HTTP.
-
-See [decision 0013](DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
-
-## Exact external-host composition
-
-Execution remains outside the generic semantic substrate. The stateful Fleetd
-proof composes one exact installed package set, caller-selected offer, measured
-native provider and attester artifacts, qualified runtime, host-validated
-target deployment, process limits, replay laws, and contextual admission
-policy. Fleetd-specific values and HTTP behavior live in separately versioned
-contract/provider/attester packages and one proof-local host crate; none enter
-`gooir-capability`, `gooir-package`, or `gooir-planning`.
-
-The proof host alone resolves deployment locks and owns credentials. Provider
-and attester semantic requests travel over standard input, while bounded live
-operator authority travels over a separate inherited pipe and is excluded from
-semantic documents, receipts, journals, and diagnostics. The provider's result
-is only a candidate. A distinct attester artifact independently performs a
-bounded Fleetd GET, and admission still applies local policy.
-
-Fleetd is also the first durable consumer. A distinct Host Fleetd H retains an
-opaque request, lease/fence state, block/requeue history, and opaque result. An
-external runner prepares and validates the exact GOOIR attempt before H arms
-it, then drives a distinct Target Fleetd T and completes H through public APIs.
-H learns no value kind, provider payload, target credential, or admission law.
-The current proof covers controlled runner discontinuities, admitted terminal
-replay, and lost H-completion response; H-daemon restart, H-carried
-`Unable`/`Withheld`, and one nested H-kill/T-commit injection remain outside its
-claim. See [decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md).
-
-## Multiple semantic waists
-
-GOOIR does not flatten every software domain into one universal semantic
-dialect. The microkernel is the common structural and evidentiary substrate;
-separately versioned semantic dialects may coexist and refer to the same
-subjects.
+## Three semantic levels
 
 ```text
-source-native dialects
-  OpenAPI     Rust control flow     database catalogs
-      \              |                    /
-       \             |                   /
-        DataModel   FleetdControl   other semantic contracts
-             \        /
-          interaction projection
-             /        \
-        web target   terminal target
+DialectId
+  an independently governed, versioned vocabulary family
+
+ValueKindId
+  one exact named type within that dialect
+
+Fact
+  one content-identified value of that exact kind
 ```
 
-Neutrality is relative. `semantics-data-model-v1` is neutral between Prisma,
-PostgreSQL, OpenAPI, and compatible data targets; it is not a place to encode
-authority, workflow transitions, or presentation intent. Product-specific
-contracts are preferred until repeated evidence from independent products
-earns a reusable semantic dialect.
+Requests, messages, receipts, scopes, and faults do not each become dialects
+when one authority governs them as a vocabulary. Conversely, unrelated
+authorities do not become one dialect merely because a workflow composes them.
 
-A multi-hop lowering is valid only when every bridge names the meaning it
-preserves and unresolved meaning remains explicit. Mixed-dialect programs are
-expected during progressive lifting and lowering.
+A fact identity covers its exact value kind, payload, and preserved semantic
+extensions. It does not silently absorb provenance, implementation choice,
+conformance, or host policy. Those are evidence about the value.
 
-Unknown means maximally interfering, never safe. A generic pass must not reorder, duplicate, eliminate, or otherwise reinterpret an operation unless installed contracts establish the required semantics.
+## Five kernel concepts
 
-### Interaction enters as an optional projection
+### Fact
 
-The first ecosystem recurrence probe uses source-specific AST projections over
-the independent React DOM and Vue runtime-dom lineages to earn only an
-activation-to-registered-handler contract. It does not introduce a universal
-component tree. React and Vue programs may continue through their native
-compiler/runtime routes without producing an Interaction fact; Ink participates
-as non-voting React-lineage evidence with a terminal host configuration.
-shadcn/ui participates through its exact registry and project materialization
-APIs, while Mantine participates through exact package exports, types, CSS, and
-provider setup.
+An immutable semantic value. Unknown extension data survives serialization.
+Malformed, ambiguous, unverified, or incompatible inputs are rejected or
+retained as explicit uncertainty; absence is never upgraded into safety.
 
-A portable realization requires the interaction fact together with native
-handler/effect implementation, host policy, and an evidence-bearing component
-or input realization. The requested target may be native source, a runnable
-artifact, or an observed behavior fact. No framework is the universal endpoint.
-See [decision 0027](DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
+### Capability
 
-### Representation is not a universal semantic container
+An exact, versioned promise over named typed ports. It declares the default
+conformance obligation. It is not code, a transport, a worker, or a lease.
 
-Production React, Vue, and Ink application sources do not share a source-
-attested `Screen` or `Document` identity. Route bindings, application/provider
-wrappers, host documents, render contributions, portals/outlets, guarded
-alternatives, terminal layouts, and stdout are distinct native facts owned by
-different authorities.
+### Provider
 
-A screen-like result may be requested, but it is a state-scoped derived
-observation over exact routing, configuration, permissions, layout, host, and
-runtime output. Generic analyzers must not consume React/Vue/Ink syntax as its
-meaning. Ecosystem-specific providers establish native facts and explicit
-semantic adapters project only independently earned contracts. See
-[decision 0028](DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
+One implementation claiming to satisfy a capability. Provider identity and
+implementation digest are distinct from the capability. Multiple providers
+remain alternatives until a caller links one explicitly.
 
-### Activity is a selected projection, not a representation tree
+### Plan
 
-Exact upstream selectors from two distinct current Svelte product repositories,
-plus Gemini CLI's exact React `useHistory` state machine, produce concrete
-verified values of a smaller semantic object: an exact source scope emits an
-ordered selection of activity locators with explicit source extent. The Gemini
-trace uses projection-local keys because its numeric UI ids are neither durable
-recording ids nor chronology; exact AppContainer, UI context, normal App/layout,
-MainContent, and display sources retain its downstream aliased-Ink lineage
-without claiming terminal visibility. React DOM and Rust/Ratatui products
-continue to corroborate the candidate through
-different graphs and thread-local containers. The backing model is not the
-common waist.
+A provider-neutral composition of capability steps followed by an explicit
+linked invocation. Installing a package can add offers; it cannot silently
+select an implementation.
 
-`ActivityProjection` deliberately carries no portable payload, actor enum,
-pending request, composer, stream reducer, or render tree. Those meanings are
-separate facts that can join the same opaque source references. A native target
-provider composes whichever facts its requested output requires; React, Vue,
-Svelte, Ink, Ratatui, shadcn/ui, Mantine, and other ecosystem authorities remain
-at native lift, materialization, build, renderer, or observation hops.
+### Admission
 
-React and the other ecosystems can participate without semantic projection at
-all. There is no universal lowering endpoint: the requested target might be the
-projection itself, native source, a runnable artifact, or observed web/terminal
-behavior. See
-[decision 0029](DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).
+The evidence plane that distinguishes proposed output, independent
+conformance, and local policy. A provider cannot attest itself into truth, and
+a passing suite does not bypass the admitting host's policy.
 
-## Lifting
+## Packages
 
-Lifters should prefer authoritative representations such as Prisma DMMF, PostgreSQL catalogs, OpenAPI/Smithy models, Cedar schemas/ASTs, Terraform plan JSON, and `cargo metadata`. A native source dialect preserves target-specific information losslessly. Bridges into shared contracts are explicit and may be partial.
+`org.gooi.package/v1` packages bind exact content-addressed resources,
+dependencies, capability declarations, provider offers, conformance offers,
+and exports. Installation produces immutable locks and rejects coordinate or
+content substitution.
 
-Lifted knowledge distinguishes:
+Packages describe what is available. Selection belongs to planning. Launch
+authority belongs to a host.
 
-- observed facts from an authoritative artifact;
-- declared claims from an adapter or implementation;
-- statically inferred claims;
-- runtime-observed evidence;
-- unknown intent;
-- opaque behavior.
+## Execution boundary
 
-Negative findings must name the closed-world scope that justifies them. Runtime observation proves that a path exists; lack of an observation does not prove that no path exists.
+The substrate may emit and validate neutral documents such as:
 
-Software-surface facts also carry an artifact role: `production`, `test`, `mock`, or `documentation`. These roles are not interchangeable. A test bridge that fabricates an event proves test coverage; it cannot satisfy a production `Produces` requirement.
+- a linked invocation;
+- a candidate;
+- an independent conformance assessment; and
+- an admission decision and authority record.
 
-Provenance explains where a lifted fact came from. A separate coverage witness explains why an absence is meaningful. A negative result requires exhaustive coverage for every mechanism named by the selected profile under one compatible scope. Excluded or failed artifacts, unresolved expansions, partial extraction, and incompatible build scopes degrade the result to unknown.
+An external host owns:
 
-## Contract compatibility
+- credentials and secret transport;
+- process or network launch;
+- deadlines, cancellation, and resource limits;
+- leases, fencing, retries, and idempotency;
+- durable journals and crash recovery;
+- implementation selection policy; and
+- target-specific authority.
 
-Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that changes only the contract identity while preserving the claim payload and evidence. A conformance declaration is evidence, not universal proof.
+The host is not modeled recursively as another semantic dialect merely because
+its state can be serialized. Host facts may be lifted into an ecosystem when a
+real consumer needs their meaning, but that does not move host machinery into
+the kernel.
 
-Trust is contextual rather than intrinsic to serialized facts. Authority records
-bind an exact attester, suite identity/version, subject digest, and result
-digest to the exact fact or invocation they qualify; the default policy admits
-nothing. Copying an admitted authority record onto a different fact, value
-kind, payload, or source cannot make that fact safe. Conflicting records remain
-ambiguous rather than being resolved by trust precedence. See
-[decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
-
-## Historical first product corpus
-
-Buzz was the first product probe. Its source dialects modeled protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These were never kernel concepts.
-
-The retired analyzer consumed generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps were acceptance cases, never hard-coded analyzer branches.
-
-That probe received only a generic `SurfaceProfile`, resolved relation claims,
-and coverage-witness claims. Its source-scope document and decision records are
-preserved as historical evidence; the operation/claim implementation and its
-product-specific projection are no longer active workspace packages.
-
-## Open-world contract parametricity
-
-An analyzer result depends only on resolved, versioned semantic-contract projections. It must not depend on native dialect identity, operation names, raw attribute layout, or package identity.
-
-GOOIR-000 tests this metamorphically:
+## Extension direction
 
 ```text
-unfamiliar representation + verified projection → same semantic result
-same representation - projection              → unknown
-familiar-looking decoy - projection            → unknown
+domain contract/package
+          |
+          v
+GOOIR public protocols and planning
+          |
+          v
+external host policy and execution
 ```
 
-This invariant was identified by Pollen in `RESEARCH/GOOIR_000_CONTRACT_PARAMETRICITY.md`; the source delegation and result are Buzz events `e9932a9361b46060d70c733f91d1b1639cb5fd7ac22eda3cac4348f19ca407be` and `3354c91a9f0623a4b1131d6512080f250a6035cbe803121af793b38be7aa93bb`.
+The dependency direction is one-way. Domain ecosystems consume GOOIR. Fleetd
+or another orchestrator may host provider attempts. Neither becomes a kernel
+concept, and GOOIR never imports their vocabulary.
+
+## Compatibility and support status
+
+The identity, capability, package, planning, and authority protocols are the
+architectural center. `CapabilityRegistry`, `DerivationRequest`, `Answer`, the
+in-process provider SDK, and `org.gooi.plugin/v2` are useful local or
+transitional surfaces, not universal execution protocols. Their presence does
+not authorize a second runtime inside GOOIR.
+
+`gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
+meaning and it does not make WASI the required provider backend.
+
+## Proven consumers
+
+The data-model ecosystem proves deterministic lifting/lowering, independent
+conformance, exact package installation, and recoverable external execution.
+The Fleetd direct-conversation ecosystem proves a stateful capability with two
+independent clients, a credential-free child command boundary, an independent
+attester, owner-fenced attempts, crash recovery, and deterministic terminal
+replay.
+
+Those proofs are deliberately downstream. Their source and evidence live in
+their own repositories so the kernel cannot grow by copying the next
+consumer's nouns into itself.

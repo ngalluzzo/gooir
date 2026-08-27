@@ -28,7 +28,7 @@ contracts, not a Rust dynamic-library ABI"*, followed by *"keep plugin loading
 in-process… dynamic loading, registry governance, and sandboxing remain
 undecided."*
 
-[0011](0011_CAPABILITIES_AS_TYPED_DERIVATIONS.md) restated it as a known gap.
+The first capability experiment restated it as a known gap.
 Because the boundary was chosen correctly, closing it needed no new
 architecture: **a provider is any program that reads one JSON document and
 writes another.**
@@ -44,14 +44,14 @@ capability, as 0011 said it was.
 
 ## The first plugin is not Rust
 
-The graph had been reporting `lower_typescript_types` as an open need since
-[0014](0014_AUTHORING_AS_A_CAPABILITY.md). It is now filled by
-`examples/plugins/typescript-types/provider.py`:
+The data-model graph had been reporting `lower_typescript_types` as an open
+need. The provider fixture now lives in the extracted data-model ecosystem:
 
 ```bash
-cargo run -q --bin gooir -- derive model_types \
-  --from examples/tasks.entities \
-  --plugin examples/plugins/typescript-types/plugin.json
+gooir derive model_types \
+  --pack /path/to/data-model-pack.json \
+  --from /path/to/input-fact.json \
+  --plugin /path/to/typescript-types/plugin.json
 ```
 
 Hand-written text becomes a data model in Rust, crosses a process boundary into

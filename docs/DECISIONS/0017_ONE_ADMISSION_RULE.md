@@ -4,10 +4,10 @@ Status: complete
 
 ## What the two systems turned out to be
 
-`gooir doctor` reported 9 of 9 providers unadmitted, and
-[0016](0016_ONE_EXACT_IDENTITY.md) predicted the remaining half of the split
-kernel was a duplicated trust path. Reading both first showed that prediction
-was wrong in an important way. They are **sequential stages, not duplicates**:
+`gooir doctor` reported 9 of 9 providers unadmitted, and the earlier exact-
+identity consolidation predicted the remaining half of the split kernel was a
+duplicated trust path. Reading both first showed that prediction was wrong in
+an important way. They are **sequential stages, not duplicates**:
 
 | | [0002](0002_EVIDENCE_TRUST_POLICY.md) `EvidenceTrustPolicy` | capability `verify_and_admit` |
 | --- | --- | --- |
@@ -78,10 +78,9 @@ one, which is the honest default for a host that has not stated its position.
 `gooir_core::ConformanceEvidence` is the transport shape for a conformance
 result crossing a process boundary. Sharing it with the capability path would
 let the two worlds exchange results — but **no result crosses that boundary
-today**, because 0011 leaves providers in-process. Unifying the transport now
-would be building for an absent consumer, which is the discipline
-[0003](0003_LIFT_FAMILIES.md) established when it declined to extract a seam
-with one member.
+today**, because the first capability experiment leaves providers in-process.
+Unifying the transport now would be building for an absent consumer, the same
+discipline that declined to extract a lift-family seam with one member.
 
 The seam is named here so it is a decision rather than an oversight. It becomes
 real work when a provider is invoked out of process.

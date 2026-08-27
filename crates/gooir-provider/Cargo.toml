@@ -3,7 +3,6 @@ name = "gooir-provider"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-repository.workspace = true
 
 [dependencies]
 gooir-capability = { workspace = true }

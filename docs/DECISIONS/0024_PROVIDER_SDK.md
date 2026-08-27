@@ -4,7 +4,8 @@ Status: complete
 
 ## What this closes
 
-[0022](0022_ONE_LOSS_TYPE.md) measured the ceremony and named the target:
+The data-model loss study, now retained with the extracted data-model
+ecosystem, measured the ceremony and named the target:
 
 > **842 lines of pack. Nine of them call a lifter or a lowering.**
 
@@ -130,9 +131,8 @@ data-model fact and would have failed in production looking like an empty
 model. One test with an enveloped input closed it, and the perturbation then
 failed as it should.
 
-The test count is against this branch's starting point, not against
-[0022](0022_ONE_LOSS_TYPE.md)'s 305 — [0023](0023_PACK_MANIFEST.md) landed in
-between.
+The test count is against this branch's starting point, not the data-model
+study's 305 — [0023](0023_PACK_MANIFEST.md) landed in between.
 
 ## State
 
