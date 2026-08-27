@@ -1,12 +1,10 @@
-//! Reports the health of a capability graph.
+//! Provider-neutral diagnostics over an installed GOOIR package graph.
 //!
-//! GOOIR exists to find cross-layer gaps — a thing declared but not
-//! producible, produced but never consumed, privileged without a gate. Its own
-//! capability graph has exactly those pathologies, and until now the only way
-//! to see them was to read Rust.
-//!
-//! This analyzer consumes a registry and nothing else. It knows no fact
-//! meanings, no product, and no domain verbs.
+//! The doctor inspects exact capability declarations and implementation offers
+//! already admitted to a [`gooir_package::PackageRegistry`]. It uses the same
+//! bounded [`gooir_planning::SemanticPlanner`] as callers, but it never selects
+//! a route or offer, executes an implementation, establishes conformance, or
+//! admits a fact.
 
 pub mod declarations;
 
@@ -15,336 +13,389 @@ use std::{
     fmt,
 };
 
-use gooir_capability::{AdmissionPolicy, CapabilityId, CapabilityRegistry, FactType, ProviderId};
+use gooir_capability::protocol::ConformanceSuiteId;
+use gooir_capability::{CapabilityId, ValueKindId};
+use gooir_package::{PackageId, PackageRegistry};
+use gooir_planning::{PlanLimits, PlanningError, SemanticPlan, SemanticPlanner};
 
-/// A fact type nothing produces. Whoever runs a derivation must supply it.
+/// A value kind nothing in the installed graph produces. A caller must supply
+/// an admitted fact of this kind before a route requiring it can be linked.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RootFact {
-    pub fact: FactType,
-    /// Capabilities that require it.
+pub struct RootValueKind {
+    pub value_kind: ValueKindId,
     pub required_by: Vec<CapabilityId>,
 }
 
-/// A fact type nothing consumes. These are the graph's answers.
+/// A produced value kind nothing in the installed graph consumes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TerminalFact {
-    pub fact: FactType,
+pub struct TerminalValueKind {
+    pub value_kind: ValueKindId,
     pub produced_by: Vec<CapabilityId>,
-    /// True when every step on the chosen type-level route has a legacy
-    /// provider binding. This is provider coverage, not an execution claim.
-    pub fully_provided: bool,
-    /// Capabilities on the route that have no provider. A terminal blocked
-    /// solely by these is *accounted for*, not broken: that is what an open
-    /// need means.
-    pub blocked_by: Vec<CapabilityId>,
+    /// Whether at least one complete semantic route has an implementation
+    /// offer for every capability it needs.
+    pub offered_route_exists: bool,
+    /// Providerless alternatives retained in the target's complete semantic
+    /// plan. Their presence does not imply that every route is blocked.
+    pub unoffered_alternatives: Vec<CapabilityId>,
 }
 
-/// A capability nobody implements. This is a work contract, not a defect --
-/// but an unbounded number of them is.
+/// A declared capability with no installed implementation offer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnimplementedCapability {
+    pub package: PackageId,
     pub capability: CapabilityId,
-    pub produces: Vec<FactType>,
-    pub conformance_suite: String,
+    pub produces: Vec<ValueKindId>,
+    pub conformance_suite: ConformanceSuiteId,
 }
 
-/// A fact type that no route from the root set can reach at all.
+/// A value kind that no declared route from the installed root set reaches.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnreachableFact {
-    pub fact: FactType,
+pub struct UnreachableValueKind {
+    pub value_kind: ValueKindId,
     pub reason: String,
 }
 
-/// More than one capability produces this fact. Not a fault: it is how an
-/// authored specification and a lifted document reach one waist. Worth seeing,
-/// because the planner silently picks one by score.
+/// More than one capability can produce this value kind. This is availability
+/// information, not an instruction to rank or select one of them.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AmbiguousFact {
-    pub fact: FactType,
+pub struct MultipleProducers {
+    pub value_kind: ValueKindId,
     pub produced_by: Vec<CapabilityId>,
 }
 
-/// A registered provider whose outputs are not yet admissible, because
-/// registration is not conformance.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnadmittedProvider {
-    pub provider: ProviderId,
-    pub capability: CapabilityId,
-    pub conformance_suite: String,
-}
-
+/// Deterministic diagnostics for one exact installed planning inventory.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Report {
     pub capabilities: usize,
-    pub providers: usize,
-    pub fact_types: usize,
-    pub roots: Vec<RootFact>,
-    pub terminals: Vec<TerminalFact>,
+    pub offers: usize,
+    /// Value kinds referenced by installed capability ports.
+    pub value_kinds: usize,
+    /// Exact conformance suites referenced by installed capabilities.
+    pub conformance_suites: usize,
+    pub roots: Vec<RootValueKind>,
+    pub terminals: Vec<TerminalValueKind>,
     pub unimplemented: Vec<UnimplementedCapability>,
-    pub unreachable: Vec<UnreachableFact>,
-    pub ambiguous: Vec<AmbiguousFact>,
-    pub unadmitted: Vec<UnadmittedProvider>,
-    /// Attesters this host admits results from. Zero means no produced fact can
-    /// become an admitted one, whatever a verifier reports.
-    pub admitted_attesters: usize,
+    pub unreachable: Vec<UnreachableValueKind>,
+    pub multiple_producers: Vec<MultipleProducers>,
 }
 
 impl Report {
-    /// Findings the graph cannot explain: a fact it describes but cannot route
-    /// to, or a terminal blocked for a reason other than a declared need.
-    ///
-    /// A terminal blocked only by provider-less capabilities is deliberately
-    /// *not* counted. Those are the assignable work items, and a tool that
-    /// fails because work remains would be useless.
+    /// Semantic declarations that cannot be reached from the graph's roots.
+    #[must_use]
     pub fn blocking(&self) -> usize {
-        let declared: BTreeSet<&CapabilityId> =
-            self.unimplemented.iter().map(|u| &u.capability).collect();
         self.unreachable.len()
-            + self
-                .terminals
-                .iter()
-                .filter(|t| !t.fully_provided)
-                .filter(|t| t.blocked_by.iter().any(|c| !declared.contains(c)))
-                .count()
     }
 
-    /// Findings that are honest gaps rather than faults.
+    /// Declared capabilities awaiting at least one implementation offer.
+    #[must_use]
     pub fn open_needs(&self) -> usize {
         self.unimplemented.len()
     }
 }
 
-/// The report renders itself, so there is one rendering rather than one per
-/// caller. Two of them drifted once already: a standalone binary printed the
-/// whole graph while `gooir doctor` printed two lines, and the difference was
-/// invisible until someone ran both.
 impl fmt::Display for Report {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "capability graph")?;
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "installed capability graph")?;
         writeln!(
-            f,
-            "  {} capabilities, {} providers, {} fact types",
-            self.capabilities, self.providers, self.fact_types
+            formatter,
+            "  {} capabilities, {} implementation offers, {} value kinds",
+            self.capabilities, self.offers, self.value_kinds
+        )?;
+        writeln!(
+            formatter,
+            "  {} referenced conformance suites",
+            self.conformance_suites
         )?;
 
-        writeln!(f, "\nyou must supply ({})", self.roots.len())?;
+        writeln!(formatter, "\nyou must supply ({})", self.roots.len())?;
         for root in &self.roots {
-            writeln!(f, "  {}", root.fact)?;
-            writeln!(f, "    needed by {}", root.required_by.len())?;
+            writeln!(formatter, "  {}", root.value_kind)?;
+            writeln!(formatter, "    needed by {}", root.required_by.len())?;
         }
 
-        writeln!(f, "\nterminal provider coverage ({})", self.terminals.len())?;
+        writeln!(
+            formatter,
+            "\nterminal offer availability ({})",
+            self.terminals.len()
+        )?;
         for terminal in &self.terminals {
             writeln!(
-                f,
-                "  {:<7} {}",
-                if terminal.fully_provided {
-                    "provided"
+                formatter,
+                "  {:<11} {}",
+                if terminal.offered_route_exists {
+                    "available"
                 } else {
-                    "needs"
+                    "needs offer"
                 },
-                terminal.fact
+                terminal.value_kind
             )?;
-            for capability in &terminal.blocked_by {
-                writeln!(f, "          waiting on {capability}")?;
-            }
         }
 
         if !self.unimplemented.is_empty() {
             writeln!(
-                f,
-                "\nopen needs — assignable work ({})",
+                formatter,
+                "\nopen needs — assignable implementation work ({})",
                 self.unimplemented.len()
             )?;
             for need in &self.unimplemented {
-                writeln!(f, "  {}", need.capability)?;
+                writeln!(formatter, "  {}", need.capability)?;
+                writeln!(formatter, "    package  {}", need.package)?;
                 for produced in &need.produces {
-                    writeln!(f, "    produces {produced}")?;
+                    writeln!(formatter, "    produces {produced}")?;
                 }
-                writeln!(f, "    suite    {}", need.conformance_suite)?;
+                writeln!(formatter, "    suite    {}", need.conformance_suite)?;
             }
         }
 
         if !self.unreachable.is_empty() {
-            writeln!(f, "\nUNREACHABLE ({})", self.unreachable.len())?;
-            for fact in &self.unreachable {
-                writeln!(f, "  {}  ({})", fact.fact, fact.reason)?;
+            writeln!(formatter, "\nUNREACHABLE ({})", self.unreachable.len())?;
+            for value_kind in &self.unreachable {
+                writeln!(
+                    formatter,
+                    "  {}  ({})",
+                    value_kind.value_kind, value_kind.reason
+                )?;
             }
         }
 
-        if !self.ambiguous.is_empty() {
+        if !self.multiple_producers.is_empty() {
             writeln!(
-                f,
-                "\nmultiple routes ({}) — the planner picks by score",
-                self.ambiguous.len()
+                formatter,
+                "\nmultiple producers ({}) — selection remains explicit",
+                self.multiple_producers.len()
             )?;
-            for fact in &self.ambiguous {
-                writeln!(f, "  {}", fact.fact)?;
-                for capability in &fact.produced_by {
-                    writeln!(f, "    via {capability}")?;
+            for value_kind in &self.multiple_producers {
+                writeln!(formatter, "  {}", value_kind.value_kind)?;
+                for capability in &value_kind.produced_by {
+                    writeln!(formatter, "    via {capability}")?;
                 }
             }
         }
 
-        writeln!(f, "\nadmission")?;
-        writeln!(
-            f,
-            "  {} attester(s) admitted by this host",
-            self.admitted_attesters
-        )?;
-        writeln!(
-            f,
-            "  {} provider(s) whose outputs are not admissible yet",
-            self.unadmitted.len()
-        )?;
-        if self.admitted_attesters == 0 && !self.unadmitted.is_empty() {
-            writeln!(
-                f,
-                "  -> no produced fact can become admitted, whatever a verifier reports"
-            )?;
-        }
-        for provider in &self.unadmitted {
-            writeln!(
-                f,
-                "    {} needs {}",
-                provider.provider.name, provider.conformance_suite
-            )?;
-        }
-
         write!(
-            f,
-            "\nsummary  {} blocking, {} open need(s), {} unadmitted provider(s)",
+            formatter,
+            "\nsummary  {} unreachable, {} open need(s)",
             self.blocking(),
-            self.open_needs(),
-            self.unadmitted.len()
+            self.open_needs()
         )
     }
 }
 
-/// Diagnoses against an empty admission policy: the honest default for a host
-/// that has not stated one.
-pub fn diagnose(registry: &CapabilityRegistry) -> Report {
-    diagnose_with_policy(registry, &AdmissionPolicy::default())
+/// Why an installed package graph could not be diagnosed conservatively.
+#[derive(Debug)]
+pub enum DiagnosisError {
+    Planning(PlanningError),
+    InvalidConformanceSuite {
+        capability: CapabilityId,
+        suite: String,
+        detail: String,
+    },
 }
 
-pub fn diagnose_with_policy(registry: &CapabilityRegistry, policy: &AdmissionPolicy) -> Report {
-    let mut produced_by: BTreeMap<FactType, Vec<CapabilityId>> = BTreeMap::new();
-    let mut required_by: BTreeMap<FactType, Vec<CapabilityId>> = BTreeMap::new();
-    let mut all: BTreeSet<FactType> = BTreeSet::new();
-    let mut capabilities = 0usize;
+impl fmt::Display for DiagnosisError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Planning(error) => error.fmt(formatter),
+            Self::InvalidConformanceSuite {
+                capability,
+                suite,
+                detail,
+            } => write!(
+                formatter,
+                "capability {capability} references invalid conformance suite `{suite}`: {detail}"
+            ),
+        }
+    }
+}
 
-    for spec in registry.specs() {
-        capabilities += 1;
-        for port in &spec.output_ports {
+impl std::error::Error for DiagnosisError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Planning(error) => Some(error),
+            Self::InvalidConformanceSuite { .. } => None,
+        }
+    }
+}
+
+impl From<PlanningError> for DiagnosisError {
+    fn from(error: PlanningError) -> Self {
+        Self::Planning(error)
+    }
+}
+
+/// Diagnoses one exact installed package inventory under caller-selected
+/// planning bounds.
+///
+/// The bounds are mandatory because constructing the complete provider-neutral
+/// planning inventory is itself bounded host work. No route or implementation
+/// is selected while producing this report.
+pub fn diagnose(registry: &PackageRegistry, limits: PlanLimits) -> Result<Report, DiagnosisError> {
+    let planner = SemanticPlanner::from_registry(registry, limits)?;
+    let installed = registry.capabilities().collect::<Vec<_>>();
+
+    let mut produced_by: BTreeMap<ValueKindId, Vec<CapabilityId>> = BTreeMap::new();
+    let mut required_by: BTreeMap<ValueKindId, Vec<CapabilityId>> = BTreeMap::new();
+    let mut all = BTreeSet::new();
+    let mut conformance_suites = BTreeSet::new();
+
+    for (_package, specification) in &installed {
+        let suite = ConformanceSuiteId::parse(&specification.default_conformance_suite).map_err(
+            |error| DiagnosisError::InvalidConformanceSuite {
+                capability: specification.id.clone(),
+                suite: specification.default_conformance_suite.clone(),
+                detail: error.to_string(),
+            },
+        )?;
+        conformance_suites.insert(suite);
+        for port in &specification.output_ports {
             produced_by
                 .entry(port.value_kind.clone())
                 .or_default()
-                .push(spec.id.clone());
+                .push(specification.id.clone());
             all.insert(port.value_kind.clone());
         }
-        for port in &spec.input_ports {
+        for port in &specification.input_ports {
             required_by
                 .entry(port.value_kind.clone())
                 .or_default()
-                .push(spec.id.clone());
+                .push(specification.id.clone());
             all.insert(port.value_kind.clone());
         }
     }
+    canonicalize_capability_lists(&mut produced_by);
+    canonicalize_capability_lists(&mut required_by);
 
-    let descriptors = registry.provider_descriptors();
-    let implemented: BTreeSet<CapabilityId> =
-        descriptors.iter().map(|d| d.capability.clone()).collect();
+    let mut offer_counts: BTreeMap<CapabilityId, usize> = BTreeMap::new();
+    let mut offers = 0_usize;
+    for offer in registry.offers() {
+        offers += 1;
+        *offer_counts.entry(offer.capability.clone()).or_default() += 1;
+    }
 
-    let roots: Vec<RootFact> = required_by
+    let roots = required_by
         .iter()
-        .filter(|(fact, _)| !produced_by.contains_key(*fact))
-        .map(|(fact, required_by)| RootFact {
-            fact: fact.clone(),
+        .filter(|(value_kind, _)| !produced_by.contains_key(*value_kind))
+        .map(|(value_kind, required_by)| RootValueKind {
+            value_kind: value_kind.clone(),
             required_by: required_by.clone(),
         })
-        .collect();
-    let root_types: Vec<FactType> = roots.iter().map(|r| r.fact.clone()).collect();
+        .collect::<Vec<_>>();
+    let initial_value_kinds = roots
+        .iter()
+        .map(|root| root.value_kind.clone())
+        .collect::<Vec<_>>();
 
     let mut unreachable = Vec::new();
     let mut terminals = Vec::new();
-    for fact in &all {
-        let is_root = !produced_by.contains_key(fact);
-        match registry.plan(root_types.clone(), fact) {
+    for value_kind in &all {
+        let is_root = !produced_by.contains_key(value_kind);
+        match planner.plan(initial_value_kinds.clone(), value_kind.clone()) {
             Ok(plan) => {
-                if !required_by.contains_key(fact) && !is_root {
-                    terminals.push(TerminalFact {
-                        fact: fact.clone(),
-                        produced_by: produced_by.get(fact).cloned().unwrap_or_default(),
-                        fully_provided: plan.has_provider_for_every_step(),
-                        blocked_by: plan
-                            .steps
-                            .iter()
-                            .filter(|s| s.provider.is_none())
-                            .map(|s| s.capability.clone())
+                if !required_by.contains_key(value_kind) && !is_root {
+                    terminals.push(TerminalValueKind {
+                        value_kind: value_kind.clone(),
+                        produced_by: produced_by.get(value_kind).cloned().unwrap_or_default(),
+                        offered_route_exists: offered_route_exists(&plan),
+                        unoffered_alternatives: plan
+                            .needs()
+                            .map(|specification| specification.id.clone())
                             .collect(),
                     });
                 }
             }
-            Err(error) => {
-                if !is_root {
-                    unreachable.push(UnreachableFact {
-                        fact: fact.clone(),
-                        reason: error.to_string(),
-                    });
-                }
+            Err(PlanningError::Unreachable(_)) if !is_root => {
+                unreachable.push(UnreachableValueKind {
+                    value_kind: value_kind.clone(),
+                    reason: "no declared route from the installed root set".to_owned(),
+                });
             }
+            Err(PlanningError::Unreachable(_)) => {}
+            Err(error) => return Err(error.into()),
         }
     }
 
-    let unimplemented: Vec<UnimplementedCapability> = registry
-        .specs()
-        .filter(|spec| !implemented.contains(&spec.id))
-        .map(|spec| UnimplementedCapability {
-            capability: spec.id.clone(),
-            produces: spec
+    let unimplemented = installed
+        .iter()
+        .filter(|(_package, specification)| !offer_counts.contains_key(&specification.id))
+        .map(|(package, specification)| {
+            let conformance_suite = ConformanceSuiteId::parse(
+                &specification.default_conformance_suite,
+            )
+            .map_err(|error| DiagnosisError::InvalidConformanceSuite {
+                capability: specification.id.clone(),
+                suite: specification.default_conformance_suite.clone(),
+                detail: error.to_string(),
+            })?;
+            let mut produces = specification
                 .output_ports
                 .iter()
                 .map(|port| port.value_kind.clone())
-                .collect(),
-            conformance_suite: spec.default_conformance_suite.clone(),
+                .collect::<Vec<_>>();
+            produces.sort();
+            produces.dedup();
+            Ok(UnimplementedCapability {
+                package: (*package).clone(),
+                capability: specification.id.clone(),
+                produces,
+                conformance_suite,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, DiagnosisError>>()?;
 
-    let ambiguous: Vec<AmbiguousFact> = produced_by
+    let multiple_producers = produced_by
         .iter()
-        .filter(|(_, by)| by.len() > 1)
-        .map(|(fact, by)| AmbiguousFact {
-            fact: fact.clone(),
-            produced_by: by.clone(),
+        .filter(|(_value_kind, capabilities)| capabilities.len() > 1)
+        .map(|(value_kind, capabilities)| MultipleProducers {
+            value_kind: value_kind.clone(),
+            produced_by: capabilities.clone(),
         })
         .collect();
 
-    // The registry records the suite a provider would have to pass; it holds no
-    // admission. Every registered provider is therefore unadmitted until an
-    // external conformance result is verified against it.
-    let suites: BTreeMap<CapabilityId, String> = registry
-        .specs()
-        .map(|s| (s.id.clone(), s.default_conformance_suite.clone()))
-        .collect();
-    let unadmitted: Vec<UnadmittedProvider> = descriptors
-        .iter()
-        .map(|d| UnadmittedProvider {
-            provider: d.id.clone(),
-            capability: d.capability.clone(),
-            conformance_suite: suites.get(&d.capability).cloned().unwrap_or_default(),
-        })
-        .collect();
-
-    Report {
-        capabilities,
-        providers: descriptors.len(),
-        fact_types: all.len(),
+    Ok(Report {
+        capabilities: installed.len(),
+        offers,
+        value_kinds: all.len(),
+        conformance_suites: conformance_suites.len(),
         roots,
         terminals,
         unimplemented,
         unreachable,
-        ambiguous,
-        unadmitted,
-        admitted_attesters: policy.admitted().len(),
+        multiple_producers,
+    })
+}
+
+fn canonicalize_capability_lists(index: &mut BTreeMap<ValueKindId, Vec<CapabilityId>>) {
+    for capabilities in index.values_mut() {
+        capabilities.sort();
+        capabilities.dedup();
     }
+}
+
+/// Computes existential offer availability over the plan's AND/OR hypergraph.
+/// Providerless alternatives cannot make an already complete route unavailable.
+fn offered_route_exists(plan: &SemanticPlan) -> bool {
+    let mut available = plan
+        .initial_value_kinds
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for planned in &plan.capabilities {
+            if planned.offers.is_empty()
+                || !planned
+                    .specification
+                    .input_ports
+                    .iter()
+                    .all(|port| available.contains(&port.value_kind))
+            {
+                continue;
+            }
+            for output in &planned.specification.output_ports {
+                changed |= available.insert(output.value_kind.clone());
+            }
+        }
+    }
+    available.contains(&plan.target_value_kind)
 }

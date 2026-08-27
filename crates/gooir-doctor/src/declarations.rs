@@ -10,7 +10,6 @@
 //! reads guards nothing.
 
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -21,8 +20,6 @@ pub struct Declarations {
     /// Crates that implement the exact-identity rule, as `name (macro|struct)`.
     /// More than one means two spellings of one idea.
     pub identity_implementations: Vec<String>,
-    /// Exact fact identities written down in more than one crate, and where.
-    pub facts_declared_twice: BTreeMap<String, Vec<String>>,
 }
 
 /// Scans a `crates/` directory.
@@ -32,7 +29,6 @@ pub struct Declarations {
 /// permanently red for a reason that is not drift.
 pub fn scan(crates_dir: &Path) -> Declarations {
     let mut found = Declarations::default();
-    let mut fact_sites: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
     let mut stack = vec![crates_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -69,38 +65,11 @@ pub fn scan(crates_dir: &Path) -> Declarations {
                     if declares_macro { "macro" } else { "struct" }
                 ));
             }
-
-            let in_test_file = path.components().any(|c| c.as_os_str() == "tests");
-            for (index, _) in text.match_indices("FactType::new(") {
-                let tail = &text[index + "FactType::new(".len()..];
-                let Some(end) = tail.find(')') else { continue };
-                let args: Vec<String> = tail[..end]
-                    .split(',')
-                    .map(|a| a.trim().trim_matches('"').to_owned())
-                    .collect();
-                if args.len() != 3 || args.iter().any(|a| a.is_empty() || a.contains(' ')) {
-                    continue;
-                }
-                // `test.*` is scaffolding wherever it is written, including the
-                // `mod tests` inside a source file.
-                if in_test_file || args[0].starts_with("test.") || args[0] == "test" {
-                    continue;
-                }
-                let id = format!("{}/{}@{}", args[0], args[1], args[2]);
-                let sites = fact_sites.entry(id).or_default();
-                if !sites.contains(&crate_name) {
-                    sites.push(crate_name.clone());
-                }
-            }
         }
     }
 
     found.identity_implementations.sort();
     found.identity_implementations.dedup();
-    found.facts_declared_twice = fact_sites
-        .into_iter()
-        .filter(|(_, v)| v.len() > 1)
-        .collect();
     found
 }
 

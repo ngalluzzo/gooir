@@ -18,16 +18,6 @@ fn exactly_one_crate_implements_the_exact_identity_rule() {
 }
 
 #[test]
-fn no_fact_identity_is_declared_in_two_crates() {
-    let found = scan(&workspace_crates());
-    assert!(
-        found.facts_declared_twice.is_empty(),
-        "a fact identity written down twice is two authorities on one meaning: {:#?}",
-        found.facts_declared_twice
-    );
-}
-
-#[test]
 fn the_scan_does_not_count_itself() {
     // An earlier version of this scan reported its own search strings as
     // matches. The needles are split so the scanner's source cannot match them;

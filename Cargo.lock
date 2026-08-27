@@ -585,7 +585,9 @@ name = "gooir-doctor"
 version = "0.1.0"
 dependencies = [
  "gooir-capability",
- "serde_json",
+ "gooir-package",
+ "gooir-planning",
+ "tempfile",
 ]
 
 [[package]]
