@@ -1,4 +1,16 @@
-//! Writing an in-process capability provider.
+//! Writing a capability provider.
+//!
+//! [`neutral`] is the experimental authoring surface for package-backed
+//! providers that consume and produce the v1 neutral protocol. It keeps exact
+//! contract validation at the boundary while reducing an implementation to
+//! typed named inputs and outputs. It remains experimental until two
+//! independent downstream consumers exercise it.
+//!
+//! The top-level registration helpers below are the older in-process
+//! compatibility surface. New package-backed providers should use
+//! [`neutral::Provider`].
+//!
+//! # Legacy in-process adapter
 //!
 //! A provider's job is one transformation. Everything around it — decoding the
 //! input fact, deciding coverage, wrapping the output, describing itself — is
@@ -23,6 +35,8 @@ use gooir_capability::{
 use lift_defeasible::Defeasible;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
+
+pub mod neutral;
 
 /// Package under which in-process providers are identified.
 pub const IN_PROCESS: &str = "org.gooi.provider.in_process";
