@@ -19,9 +19,13 @@ use gooir_capability::protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+mod driver;
 mod facade;
+mod local_stdio;
 
+pub use driver::*;
 pub use facade::*;
+pub use local_stdio::*;
 
 /// Effectful operations supplied by an execution host for one linked invocation.
 ///

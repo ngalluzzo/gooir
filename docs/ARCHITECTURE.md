@@ -104,6 +104,12 @@ Every accepted request ends in one remedy-preserving answer:
 This façade selects and validates neutral documents. It does not add a runtime
 or move launch, transport, retry, or recovery policy into the semantic graph.
 
+`gooir-derive::CompilerDriver` is the ergonomic in-memory entry over that same
+façade. It stages source-observation admission and uses conservative complete
+selection so downstream hosts do not reconstruct plans, offers, named input
+bindings, invocations, or authority records. It adds no serialized compile
+protocol.
+
 ## Execution boundary
 
 The substrate may emit and validate neutral documents such as:
@@ -127,6 +133,16 @@ The host is not modeled recursively as another semantic dialect merely because
 its state can be serialized. Host facts may be lifted into an ecosystem when a
 real consumer needs their meaning, but that does not move host machinery into
 the kernel.
+
+The optional bounded local stdio host is one concrete `DerivationHost`, not a
+universal runtime. It dispatches provider artifacts only by exact installed
+`OfferId` to `PackageRegistry::offer_artifact` copied bytes. Attesters are
+explicit complete `ConformanceAuthority` bindings to copied package resources
+with the same digest. Artifacts run from private temporary paths with no
+arguments, environment, or `PATH` lookup under mandatory positive byte and
+deadline bounds; timeout kills and reaps the child. The child retains the
+caller's ordinary OS authority, so this is not a sandbox, credential boundary,
+daemon lifecycle, or durable host.
 
 ## Extension direction
 
@@ -155,6 +171,9 @@ binding and named-port shape but does not launch code, measure the selected
 artifact, or establish trust. Independent data-model and native HTTP/Axum
 consumers exercise single- and multi-input providers, semantic inability,
 artifact production, and neutral framing.
+`gooir-provider::attester` is the matching narrow authoring surface over the
+versioned neutral assessment request. The executing host, not the attester,
+still binds the complete authority to measured artifact bytes.
 The older
 `gooir-capability::{CapabilityRegistry, DerivationRequest, Answer}`, the
 top-level in-process provider helpers, and `org.gooi.plugin/v2` are

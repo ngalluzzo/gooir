@@ -2,6 +2,11 @@
 
 Status: established for 0.1 after two independent consumers
 
+Amendment: [Decision 0036](0036_COMPILER_DRIVER.md) adds the corresponding
+narrow neutral attester assessment-request and authoring seam. It does not
+change provider offer ownership or make either stdio surface a universal
+runtime.
+
 ## Context
 
 Decision 0034 established one host-facing derivation façade over exact package,

@@ -4,13 +4,24 @@
 //! Its temporary `derive` subcommand remains a visibly separate compatibility
 //! bridge for legacy declaration packs and process plugins.
 
-use std::{collections::BTreeSet, fs, num::NonZeroUsize, path::PathBuf, process};
+use std::{
+    collections::BTreeSet,
+    fs,
+    num::{NonZeroU64, NonZeroUsize},
+    path::PathBuf,
+    process,
+};
 
+use gooir_capability::authority::{AdmissionPolicy, SourceObservation};
 use gooir_capability::{
-    Answer, CapabilityRegistry, DerivationRequest, FactInstance, FactType, RequestRefusal,
-    register_pack,
+    Answer as LegacyAnswer, CapabilityRegistry, DerivationRequest as LegacyDerivationRequest,
+    FactInstance, FactType, RequestRefusal, register_pack,
 };
 use gooir_cli::{known_value_kinds, resolve_value_kind};
+use gooir_derive::{
+    Answer as CompileAnswer, CompilerDriver, DerivationLimits, LocalAttesterBinding,
+    LocalStdioHost, LocalStdioLimits, Refusal,
+};
 use gooir_package::{LoadLimits, PackageRegistry, load_local_package};
 use gooir_planning::{PlanLimits, SemanticPlanner};
 
@@ -22,7 +33,22 @@ fn main() {
 }
 
 const USAGE: &str = "\
-gooir — inspect and exercise an explicitly installed capability graph
+gooir — compile over an explicitly installed capability graph
+
+Compiler driver (GOOIR 0.1):
+  gooir compile <target> --package DIR --policy JSON [--observation JSON]
+      [--attester JSON] --stdin-bytes N --stdout-bytes N --stderr-bytes N
+      --timeout-ms N [--json]
+
+The compile command admits explicit source observations, conservatively fixes
+one complete route/offer/attester selection, invokes exact copied package
+artifacts over bounded local stdio, independently assesses every candidate,
+and admits each step before linking the next. Provider artifacts come only
+from installed offers. Each attester binding names a complete authority plus
+an exact installed package resource with the same copied digest. N must be
+positive for every bound. Nothing is scanned, resolved through PATH, or
+materialized to a target-specific file. JSON output is the existing derivation
+Answer shape, not a new stable compile receipt protocol.
 
 Package inspection and planning (GOOIR 0.1):
   gooir facts --package DIR                 every value kind and its producers
@@ -67,6 +93,15 @@ fn planning_limits() -> PlanLimits {
         max_total_ports: aggregate,
         max_offers_per_capability: graph,
         max_total_offers: aggregate,
+    }
+}
+
+fn derivation_limits() -> DerivationLimits {
+    let request = NonZeroUsize::new(4_096).expect("constant is nonzero");
+    DerivationLimits {
+        planning: planning_limits(),
+        max_inputs: request,
+        max_attesters: request,
     }
 }
 
@@ -173,34 +208,127 @@ fn input_fact(path: &PathBuf) -> Result<FactInstance, String> {
 ///
 /// Every branch ends in the answer's own remedy rather than a message written
 /// here, so a new variant cannot be rendered as a bare failure.
-fn print_answer(target: &FactType, given: &Answer) {
+fn print_answer(target: &FactType, given: &LegacyAnswer) {
     match given {
-        Answer::Produced(_) => unreachable!("rendered by the caller"),
-        Answer::Blocked(plan) => {
+        LegacyAnswer::Produced(_) => unreachable!("rendered by the caller"),
+        LegacyAnswer::Blocked(plan) => {
             println!("cannot derive {target} yet:");
             for need in &plan.needs {
                 println!("  need {}", need.specification.id);
             }
         }
-        Answer::Unreachable(error) => println!("no route to {target}: {error}"),
-        Answer::Refused(RequestRefusal::AmbiguousInput(fact)) => {
+        LegacyAnswer::Unreachable(error) => println!("no route to {target}: {error}"),
+        LegacyAnswer::Refused(RequestRefusal::AmbiguousInput(fact)) => {
             println!("refused: two inputs both declare {fact}");
         }
-        Answer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
+        LegacyAnswer::Refused(RequestRefusal::LegacyAdapterRepeatedInputKind {
             capability,
             value_kind,
         }) => println!(
             "refused: legacy adapter cannot bind repeated input kind {value_kind} for {capability}"
         ),
-        Answer::Refused(RequestRefusal::LegacyAdapterRepeatedOutputKind {
+        LegacyAnswer::Refused(RequestRefusal::LegacyAdapterRepeatedOutputKind {
             capability,
             value_kind,
         }) => println!(
             "refused: legacy adapter cannot bind repeated output kind {value_kind} for {capability}"
         ),
-        Answer::Failed(error) => println!("legacy execution failed deriving {target}: {error}"),
+        LegacyAnswer::Failed(error) => {
+            println!("legacy execution failed deriving {target}: {error}");
+        }
     }
     println!("\n-> {}", given.remedy());
+}
+
+fn read_policy(path: &PathBuf) -> Result<AdmissionPolicy, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn read_observation(path: &PathBuf) -> Result<SourceObservation, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn read_attester_binding(path: &PathBuf) -> Result<LocalAttesterBinding, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn one_path(args: &[String], flag: &str) -> Result<PathBuf, String> {
+    one_flag_value(args, flag).map(PathBuf::from)
+}
+
+fn positive_usize(args: &[String], flag: &str) -> Result<NonZeroUsize, String> {
+    let value = one_flag_value(args, flag)?;
+    let parsed = value
+        .parse::<usize>()
+        .map_err(|_| format!("{flag} must be a positive integer"))?;
+    NonZeroUsize::new(parsed).ok_or_else(|| format!("{flag} must be positive"))
+}
+
+fn positive_u64(args: &[String], flag: &str) -> Result<NonZeroU64, String> {
+    let value = one_flag_value(args, flag)?;
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{flag} must be a positive integer"))?;
+    NonZeroU64::new(parsed).ok_or_else(|| format!("{flag} must be positive"))
+}
+
+fn one_flag_value<'args>(args: &'args [String], flag: &str) -> Result<&'args str, String> {
+    let values = args
+        .iter()
+        .enumerate()
+        .filter(|(_, argument)| argument.as_str() == flag)
+        .map(|(index, _)| {
+            args.get(index + 1)
+                .map(String::as_str)
+                .filter(|value| !value.starts_with("--"))
+                .ok_or_else(|| format!("{flag} requires a value"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match values.as_slice() {
+        [value] => Ok(value),
+        [] => Err(format!("gooir compile requires {flag}")),
+        _ => Err(format!("gooir compile accepts {flag} exactly once")),
+    }
+}
+
+fn print_compile_answer(answer: &CompileAnswer) {
+    match answer {
+        CompileAnswer::Produced(produced) => {
+            println!("produced admitted target {}", produced.target.fact_id);
+            println!("  authority {}", produced.target.authority_record_id);
+            println!("  admitted {} route output(s)", produced.admitted.len());
+        }
+        CompileAnswer::Blocked(blocked) => {
+            println!("blocked plan {}", blocked.plan.plan_id);
+            for node in &blocked.blockage.nodes {
+                if node.missing_offer {
+                    println!("  missing implementation for {}", node.capability);
+                }
+                for need in &node.missing_attesters {
+                    println!(
+                        "  missing independent attester for {} / {}",
+                        need.capability, need.suite
+                    );
+                }
+            }
+        }
+        CompileAnswer::Unreachable(unreachable) => {
+            println!("unreachable target {}", unreachable.target);
+        }
+        CompileAnswer::Refused(refusal) => match refusal.as_ref() {
+            Refusal::InvalidRequest { detail }
+            | Refusal::InvalidSelection { detail }
+            | Refusal::AmbiguousSelection { detail, .. }
+            | Refusal::AdmissionPolicy { detail, .. } => println!("refused: {detail}"),
+        },
+        CompileAnswer::Failed(failed) => {
+            println!("failed at {:?}: {}", failed.stage, failed.detail);
+        }
+    }
+    println!("\n-> {}", answer.remedy());
 }
 
 fn run() -> Result<(), String> {
@@ -240,6 +368,53 @@ fn run() -> Result<(), String> {
                 println!("  {value_kind}\n      {how}");
             }
             Ok(())
+        }
+        Some("compile") => {
+            reject_flags(
+                &args,
+                &["--pack", "--plugin", "--from"],
+                "the GOOIR 0.1 compiler driver",
+            )?;
+            let wanted = args.get(1).ok_or("usage: gooir compile <target>")?;
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
+            let target = resolve_value_kind(&registry, wanted)?;
+            let policy = read_policy(&one_path(&args, "--policy")?)?;
+            let observations = value_paths(&args, "--observation")
+                .iter()
+                .map(read_observation)
+                .collect::<Result<Vec<_>, _>>()?;
+            let bindings = value_paths(&args, "--attester")
+                .iter()
+                .map(read_attester_binding)
+                .collect::<Result<Vec<_>, _>>()?;
+            let limits = LocalStdioLimits {
+                max_stdin_bytes: positive_usize(&args, "--stdin-bytes")?,
+                max_stdout_bytes: positive_usize(&args, "--stdout-bytes")?,
+                max_stderr_bytes: positive_usize(&args, "--stderr-bytes")?,
+                timeout_milliseconds: positive_u64(&args, "--timeout-ms")?,
+            };
+            let host = LocalStdioHost::new(&registry, bindings, limits)
+                .map_err(|error| error.to_string())?;
+            let authorities = host.authorities().cloned().collect::<Vec<_>>();
+            let mut driver =
+                CompilerDriver::new(&registry, policy, authorities, host, derivation_limits())
+                    .map_err(|error| error.to_string())?;
+            let answer = driver.compile(target, observations);
+            if args.iter().any(|argument| argument == "--json") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&answer).map_err(|error| error.to_string())?
+                );
+            } else {
+                print_compile_answer(&answer);
+            }
+            match answer {
+                CompileAnswer::Produced(_) => Ok(()),
+                CompileAnswer::Blocked(_) => process::exit(3),
+                CompileAnswer::Unreachable(_)
+                | CompileAnswer::Refused(_)
+                | CompileAnswer::Failed(_) => process::exit(1),
+            }
         }
         Some("capabilities") => {
             reject_flags(
@@ -379,7 +554,7 @@ fn run() -> Result<(), String> {
                 return Err("usage: gooir derive <target> --from FACT".to_owned());
             }
             let target = resolve_legacy_value_kind(&registry, wanted)?;
-            let request = DerivationRequest {
+            let request = LegacyDerivationRequest {
                 target: target.clone(),
                 inputs: sources
                     .iter()
@@ -391,7 +566,7 @@ fn run() -> Result<(), String> {
             let given = gooir_capability::answer(&registry, &request);
             let json = args.iter().any(|a| a == "--json");
             match &given {
-                Answer::Produced(report) => {
+                LegacyAnswer::Produced(report) => {
                     println!("{target}");
                     println!("  id       {}", report.target.id);
                     println!("  coverage {:?}", report.target.coverage);
@@ -418,7 +593,7 @@ fn run() -> Result<(), String> {
                         print_answer(&target, other);
                     }
                     process::exit(match other {
-                        Answer::Blocked(_) => 3,
+                        LegacyAnswer::Blocked(_) => 3,
                         _ => 1,
                     });
                 }
@@ -464,6 +639,10 @@ mod tests {
 
     #[test]
     fn help_separates_package_planning_from_legacy_execution() {
+        assert!(USAGE.contains("Compiler driver (GOOIR 0.1)"));
+        assert!(USAGE.contains("exact copied package"));
+        assert!(USAGE.contains("N must be\npositive"));
+        assert!(USAGE.contains("not a new stable compile receipt protocol"));
         assert!(USAGE.contains("Package inspection and planning (GOOIR 0.1)"));
         assert!(USAGE.contains("--package DIR"));
         assert!(USAGE.contains("Legacy execution compatibility bridge"));
@@ -508,6 +687,41 @@ mod tests {
         assert_eq!(
             value_paths(&args, "--from"),
             [PathBuf::from("first.json"), PathBuf::from("second.json")]
+        );
+    }
+
+    #[test]
+    fn local_compile_limits_are_required_positive_and_single_valued() {
+        let valid = vec!["--stdout-bytes".to_owned(), "1024".to_owned()];
+        assert_eq!(
+            positive_usize(&valid, "--stdout-bytes").unwrap().get(),
+            1024
+        );
+
+        let missing = Vec::new();
+        assert!(
+            positive_usize(&missing, "--stdout-bytes")
+                .unwrap_err()
+                .contains("requires")
+        );
+
+        let zero = vec!["--stdout-bytes".to_owned(), "0".to_owned()];
+        assert!(
+            positive_usize(&zero, "--stdout-bytes")
+                .unwrap_err()
+                .contains("positive")
+        );
+
+        let duplicate = vec![
+            "--timeout-ms".to_owned(),
+            "1".to_owned(),
+            "--timeout-ms".to_owned(),
+            "2".to_owned(),
+        ];
+        assert!(
+            positive_u64(&duplicate, "--timeout-ms")
+                .unwrap_err()
+                .contains("exactly once")
         );
     }
 

@@ -574,6 +574,7 @@ name = "gooir-cli"
 version = "0.1.0"
 dependencies = [
  "gooir-capability",
+ "gooir-derive",
  "gooir-doctor",
  "gooir-package",
  "gooir-planning",
@@ -591,6 +592,7 @@ dependencies = [
  "gooir-planning",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
