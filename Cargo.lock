@@ -575,6 +575,8 @@ version = "0.1.0"
 dependencies = [
  "gooir-capability",
  "gooir-doctor",
+ "gooir-package",
+ "gooir-planning",
  "gooir-plugin-process",
  "serde_json",
  "tempfile",

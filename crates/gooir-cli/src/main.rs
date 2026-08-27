@@ -1,17 +1,18 @@
 //! `gooir` — one way in.
 //!
-//! Everything this system does is a derivation over a capability graph. This
-//! command shows the graph, plans a route through it, runs one, and names what
-//! is missing. It replaces having to know which of a dozen crates holds the
-//! entry point for a given question.
+//! The command inspects installed packages and emits provider-neutral plans.
+//! Its temporary `derive` subcommand remains a visibly separate compatibility
+//! bridge for legacy declaration packs and process plugins.
 
-use std::{fs, path::PathBuf, process};
+use std::{collections::BTreeSet, fs, num::NonZeroUsize, path::PathBuf, process};
 
 use gooir_capability::{
     Answer, CapabilityRegistry, DerivationRequest, FactInstance, FactType, RequestRefusal,
     register_pack,
 };
-use gooir_cli::{known_facts, resolve};
+use gooir_cli::{known_value_kinds, resolve_value_kind};
+use gooir_package::{LoadLimits, PackageRegistry, load_local_package};
+use gooir_planning::{PlanLimits, SemanticPlanner};
 
 fn main() {
     if let Err(error) = run() {
@@ -23,22 +24,25 @@ fn main() {
 const USAGE: &str = "\
 gooir — inspect and exercise an explicitly installed capability graph
 
-  gooir facts                         every fact type, and how it is reached
-  gooir capabilities                  every promise, and whether it has a provider
-  gooir needs                         promises with no provider, as work contracts
-  gooir doctor                        graph health
-  gooir plan <target>                 the route to a target
-  gooir derive <target> --from FACT   run the legacy in-process adapter
+Package inspection and planning (GOOIR 0.1):
+  gooir facts --package DIR                 every value kind and its producers
+  gooir capabilities --package DIR          every promise and exact offer
+  gooir needs --package DIR                 promises with no implementation offer
+  gooir doctor --package DIR                installed package-graph health
+  gooir plan <target> --package DIR         complete provider-neutral graph slice
 
-Add --pack MANIFEST (repeatable) to declare capabilities.
-Add --plugin MANIFEST (repeatable) to install an out-of-process provider.
-Nothing is installed implicitly.
+Repeat --package DIR to install explicit org.gooi.package/v1 directories in
+dependency order. Nothing is discovered or installed implicitly. Planning
+does not select a route, implementation, attester, or execution transport.
 
-A target may be a full value-kind identity or an unambiguous bare name.
+Legacy execution compatibility bridge (not the GOOIR 0.1 host boundary):
+  gooir derive <target> --from FACT --pack MANIFEST [--plugin MANIFEST]
 
-FACT is a serialized FactInstance JSON document. Repeat --from for each input.
-Domain authoring formats and their conversion to facts belong to ecosystem
-packages, not this command.";
+The compatibility bridge accepts repeatable legacy --pack and --plugin inputs.
+It does not execute org.gooi.package/v1 offers. It is not a universal provider
+transport. FACT is a serialized legacy FactInstance JSON document.
+
+A target may be a full value-kind identity or an unambiguous bare name.";
 
 /// Installation inputs are named by the caller, never discovered. Scanning a
 /// directory for declarations or programs would make the active graph depend
@@ -53,7 +57,32 @@ fn value_paths(args: &[String], flag: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn installed(packs: &[PathBuf], plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
+fn planning_limits() -> PlanLimits {
+    let graph = NonZeroUsize::new(4_096).expect("constant is nonzero");
+    let aggregate = NonZeroUsize::new(16_384).expect("constant is nonzero");
+    PlanLimits {
+        max_capabilities: graph,
+        max_value_kinds: graph,
+        max_ports_per_capability: graph,
+        max_total_ports: aggregate,
+        max_offers_per_capability: graph,
+        max_total_offers: aggregate,
+    }
+}
+
+fn installed_packages(package_directories: &[PathBuf]) -> Result<PackageRegistry, String> {
+    let mut registry = PackageRegistry::default();
+    for directory in package_directories {
+        let package = load_local_package(directory, &registry, LoadLimits::default())
+            .map_err(|error| format!("{}: {error}", directory.display()))?;
+        registry
+            .install(package)
+            .map_err(|error| format!("{}: {error}", directory.display()))?;
+    }
+    Ok(registry)
+}
+
+fn installed_legacy(packs: &[PathBuf], plugins: &[PathBuf]) -> Result<CapabilityRegistry, String> {
     let mut registry = CapabilityRegistry::default();
     for path in packs {
         let manifest =
@@ -75,6 +104,64 @@ fn installed(packs: &[PathBuf], plugins: &[PathBuf]) -> Result<CapabilityRegistr
             .map_err(|error| format!("{}: {error}", path.display()))?;
     }
     Ok(registry)
+}
+
+fn reject_flags(args: &[String], flags: &[&str], context: &str) -> Result<(), String> {
+    if let Some(flag) = flags
+        .iter()
+        .find(|flag| args.iter().any(|argument| argument == **flag))
+    {
+        return Err(format!("{context} does not accept {flag}\n\n{USAGE}"));
+    }
+    Ok(())
+}
+
+fn legacy_value_kinds(registry: &CapabilityRegistry) -> Vec<FactType> {
+    registry
+        .specs()
+        .flat_map(|specification| {
+            specification
+                .input_ports
+                .iter()
+                .map(|port| port.value_kind.clone())
+                .chain(
+                    specification
+                        .output_ports
+                        .iter()
+                        .map(|port| port.value_kind.clone()),
+                )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn resolve_legacy_value_kind(
+    registry: &CapabilityRegistry,
+    wanted: &str,
+) -> Result<FactType, String> {
+    let value_kinds = legacy_value_kinds(registry);
+    if let Some(exact) = value_kinds
+        .iter()
+        .find(|value_kind| value_kind.to_string() == wanted)
+    {
+        return Ok(exact.clone());
+    }
+    let matches = value_kinds
+        .iter()
+        .filter(|value_kind| value_kind.name == wanted)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [one] => Ok((*one).clone()),
+        [] => Err(format!("no legacy fact type named `{wanted}`")),
+        many => Err(format!(
+            "legacy fact type `{wanted}` is ambiguous; name one exactly:\n  {}",
+            many.iter()
+                .map(|value_kind| value_kind.to_string())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        )),
+    }
 }
 
 fn input_fact(path: &PathBuf) -> Result<FactInstance, String> {
@@ -126,74 +213,89 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("facts") => {
-            let registry = installed(
-                &value_paths(&args, "--pack"),
-                &value_paths(&args, "--plugin"),
+            reject_flags(
+                &args,
+                &["--pack", "--plugin"],
+                "GOOIR 0.1 package inspection",
             )?;
-            let facts = known_facts(&registry);
-            println!("{} fact type(s)\n", facts.len());
-            for fact in &facts {
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
+            let value_kinds = known_value_kinds(&registry);
+            println!("{} value kind(s)\n", value_kinds.len());
+            for value_kind in &value_kinds {
                 let producers: Vec<String> = registry
-                    .specs()
-                    .filter(|spec| {
-                        spec.output_ports
+                    .capabilities()
+                    .filter(|(_package, specification)| {
+                        specification
+                            .output_ports
                             .iter()
-                            .any(|port| &port.value_kind == fact)
+                            .any(|port| &port.value_kind == value_kind)
                     })
-                    .map(|s| s.id.name.clone())
+                    .map(|(_package, specification)| specification.id.to_string())
                     .collect();
                 let how = if producers.is_empty() {
                     "supplied by you".to_owned()
                 } else {
                     format!("via {}", producers.join(" | "))
                 };
-                println!("  {fact}\n      {how}");
+                println!("  {value_kind}\n      {how}");
             }
             Ok(())
         }
         Some("capabilities") => {
-            let registry = installed(
-                &value_paths(&args, "--pack"),
-                &value_paths(&args, "--plugin"),
+            reject_flags(
+                &args,
+                &["--pack", "--plugin"],
+                "GOOIR 0.1 package inspection",
             )?;
-            let provided: Vec<_> = registry
-                .provider_descriptors()
-                .into_iter()
-                .map(|d| d.capability)
-                .collect();
-            println!("{} capability(ies)\n", registry.specs().count());
-            for spec in registry.specs() {
-                let mark = if provided.contains(&spec.id) {
-                    "have"
-                } else {
-                    "NEED"
-                };
-                println!("  {mark}  {}", spec.id);
-                for port in &spec.input_ports {
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
+            println!(
+                "{} capability(ies), {} exact offer(s)\n",
+                registry.capabilities().count(),
+                registry.offers().count()
+            );
+            for (package, specification) in registry.capabilities() {
+                let offers = registry
+                    .offers()
+                    .filter(|offer| offer.capability == specification.id)
+                    .collect::<Vec<_>>();
+                let mark = if offers.is_empty() { "NEED" } else { "have" };
+                println!("  {mark}  {}", specification.id);
+                println!("          package {package}");
+                for port in &specification.input_ports {
                     println!(
                         "          <- {}: {} ({:?})",
                         port.name, port.value_kind, port.acceptance
                     );
                 }
-                for port in &spec.output_ports {
+                for port in &specification.output_ports {
                     println!("          -> {}: {}", port.name, port.value_kind);
+                }
+                for offer in offers {
+                    println!(
+                        "          offer {} ({})",
+                        offer.offer_id, offer.implementation
+                    );
                 }
             }
             Ok(())
         }
         Some("needs") => {
-            let registry = installed(
-                &value_paths(&args, "--pack"),
-                &value_paths(&args, "--plugin"),
+            reject_flags(
+                &args,
+                &["--pack", "--plugin"],
+                "GOOIR 0.1 package diagnostics",
             )?;
-            let report = gooir_doctor::diagnose(&registry);
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
+            let report = gooir_doctor::diagnose(&registry, planning_limits())
+                .map_err(|error| error.to_string())?;
             if report.unimplemented.is_empty() {
-                println!("no open needs: every capability has a provider");
+                println!("no open needs: every capability has an implementation offer");
                 return Ok(());
             }
             println!("{} open need(s)\n", report.unimplemented.len());
             for need in &report.unimplemented {
                 println!("  {}", need.capability);
+                println!("    package  {}", need.package);
                 for p in &need.produces {
                     println!("    produces {p}");
                 }
@@ -203,11 +305,14 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("doctor") => {
-            let registry = installed(
-                &value_paths(&args, "--pack"),
-                &value_paths(&args, "--plugin"),
+            reject_flags(
+                &args,
+                &["--pack", "--plugin"],
+                "GOOIR 0.1 package diagnostics",
             )?;
-            let report = gooir_doctor::diagnose(&registry);
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
+            let report = gooir_doctor::diagnose(&registry, planning_limits())
+                .map_err(|error| error.to_string())?;
             println!("{report}");
             if report.blocking() > 0 {
                 process::exit(2);
@@ -215,42 +320,54 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         Some("plan") => {
-            let registry = installed(
-                &value_paths(&args, "--pack"),
-                &value_paths(&args, "--plugin"),
+            reject_flags(
+                &args,
+                &["--pack", "--plugin"],
+                "GOOIR 0.1 semantic planning",
             )?;
+            let registry = installed_packages(&value_paths(&args, "--package"))?;
             let wanted = args.get(1).ok_or("usage: gooir plan <target>")?;
-            let target = resolve(&registry, wanted)?;
-            let roots: Vec<FactType> = gooir_doctor::diagnose(&registry)
+            let target = resolve_value_kind(&registry, wanted)?;
+            let limits = planning_limits();
+            let roots = gooir_doctor::diagnose(&registry, limits)
+                .map_err(|error| error.to_string())?
                 .roots
                 .into_iter()
-                .map(|r| r.fact)
-                .collect();
-            let plan = registry.plan(roots, &target).map_err(|e| e.to_string())?;
+                .map(|root| root.value_kind)
+                .collect::<Vec<_>>();
+            let planner = SemanticPlanner::from_registry(&registry, limits)
+                .map_err(|error| error.to_string())?;
+            let plan = planner
+                .plan(roots, target.clone())
+                .map_err(|error| error.to_string())?;
+            println!("provider-neutral plan {}", plan.plan_id);
             println!("target {target}");
-            for step in &plan.steps {
-                println!(
-                    "  {} {}",
-                    if step.provider.is_some() {
-                        "run "
-                    } else {
-                        "NEED"
-                    },
-                    step.capability
-                );
-            }
-            println!(
-                "\n{}",
-                if plan.has_provider_for_every_step() {
-                    "legacy provider binding present for every plan step"
+            for planned in &plan.capabilities {
+                if planned.offers.is_empty() {
+                    println!("  NEED  {}", planned.specification.id);
                 } else {
-                    "legacy provider binding missing: see `gooir needs`"
+                    println!("  have  {}", planned.specification.id);
+                    for offer in &planned.offers {
+                        println!(
+                            "        offer {} ({})",
+                            offer.offer_id, offer.implementation
+                        );
+                    }
                 }
-            );
+            }
+            println!("\nNo route or implementation was selected.");
             Ok(())
         }
         Some("derive") => {
-            let registry = installed(
+            reject_flags(
+                &args,
+                &["--package"],
+                "the legacy derive compatibility bridge",
+            )?;
+            eprintln!(
+                "warning: `gooir derive` is the legacy compatibility bridge; it does not execute GOOIR 0.1 package offers"
+            );
+            let registry = installed_legacy(
                 &value_paths(&args, "--pack"),
                 &value_paths(&args, "--plugin"),
             )?;
@@ -261,7 +378,7 @@ fn run() -> Result<(), String> {
             if sources.is_empty() {
                 return Err("usage: gooir derive <target> --from FACT".to_owned());
             }
-            let target = resolve(&registry, wanted)?;
+            let target = resolve_legacy_value_kind(&registry, wanted)?;
             let request = DerivationRequest {
                 target: target.clone(),
                 inputs: sources
@@ -334,15 +451,40 @@ mod tests {
     }"#;
 
     #[test]
-    fn installation_is_empty_until_a_pack_is_named() {
-        let empty = installed(&[], &[]).unwrap();
+    fn legacy_installation_is_empty_until_a_pack_is_named() {
+        let empty = installed_legacy(&[], &[]).unwrap();
         assert_eq!(empty.specs().count(), 0);
 
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("pack.json");
         fs::write(&path, PACK).unwrap();
-        let explicit = installed(&[path], &[]).unwrap();
+        let explicit = installed_legacy(&[path], &[]).unwrap();
         assert_eq!(explicit.specs().count(), 1);
+    }
+
+    #[test]
+    fn help_separates_package_planning_from_legacy_execution() {
+        assert!(USAGE.contains("Package inspection and planning (GOOIR 0.1)"));
+        assert!(USAGE.contains("--package DIR"));
+        assert!(USAGE.contains("Legacy execution compatibility bridge"));
+        assert!(USAGE.contains("not a universal provider"));
+    }
+
+    #[test]
+    fn modern_and_legacy_installation_flags_cannot_be_mixed() {
+        let modern = vec!["facts".to_owned(), "--pack".to_owned()];
+        assert!(
+            reject_flags(&modern, &["--pack", "--plugin"], "modern")
+                .unwrap_err()
+                .contains("does not accept --pack")
+        );
+
+        let legacy = vec!["derive".to_owned(), "--package".to_owned()];
+        assert!(
+            reject_flags(&legacy, &["--package"], "legacy")
+                .unwrap_err()
+                .contains("does not accept --package")
+        );
     }
 
     #[test]
