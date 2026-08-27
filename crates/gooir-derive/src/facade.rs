@@ -99,6 +99,52 @@ pub struct DerivationRequest {
     pub extensions: BTreeMap<String, Value>,
 }
 
+impl DerivationRequest {
+    /// Constructs an untrusted request using conservative unique-only selection.
+    ///
+    /// This preserves input iteration order and supplies canonical empty request
+    /// and selection extensions. It does not establish validity or authority;
+    /// [`DerivationFacade::answer`] checks every request invariant before any
+    /// host effect.
+    #[must_use]
+    pub fn unique_only(
+        target: ValueKindId,
+        inputs: impl IntoIterator<Item = AdmittedFactRef>,
+    ) -> Self {
+        Self {
+            target,
+            inputs: inputs.into_iter().collect(),
+            selection: DerivationSelection::UniqueOnly {
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    /// Constructs an untrusted request using one caller-supplied explicit selection.
+    ///
+    /// This preserves input iteration order and supplies canonical empty request
+    /// and selection extensions. It does not establish validity or authority;
+    /// [`DerivationFacade::answer`] checks every request invariant before any
+    /// host effect.
+    #[must_use]
+    pub fn explicit(
+        target: ValueKindId,
+        inputs: impl IntoIterator<Item = AdmittedFactRef>,
+        selection: ExplicitSelection,
+    ) -> Self {
+        Self {
+            target,
+            inputs: inputs.into_iter().collect(),
+            selection: DerivationSelection::Explicit {
+                selection: Box::new(selection),
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
 /// Caller-owned selection policy for one request.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
@@ -1496,5 +1542,81 @@ fn linked_error<E>(
             "linked invocation preflight failed".to_owned(),
             initial(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gooir_capability::FactId;
+    use gooir_capability::protocol::AuthorityRecordId;
+    use gooir_planning::{PlanId, RouteId, SELECTED_ROUTE_PROTOCOL};
+
+    fn admitted(fact: char, authority: char) -> AdmittedFactRef {
+        AdmittedFactRef::new(
+            FactId::parse(format!("sha256:{}", fact.to_string().repeat(64))).unwrap(),
+            AuthorityRecordId::parse(format!("sha256:{}", authority.to_string().repeat(64)))
+                .unwrap(),
+            BTreeMap::new(),
+        )
+        .unwrap()
+    }
+
+    fn target() -> ValueKindId {
+        ValueKindId::new("org.example.dialect", "target", "1.0.0")
+    }
+
+    #[test]
+    fn unique_only_constructor_preserves_input_order_and_uses_empty_extensions() {
+        let first = admitted('1', 'a');
+        let second = admitted('2', 'b');
+
+        let request = DerivationRequest::unique_only(target(), [second.clone(), first.clone()]);
+
+        assert_eq!(request.inputs, vec![second, first]);
+        assert!(request.extensions.is_empty());
+        assert!(matches!(
+            request.selection,
+            DerivationSelection::UniqueOnly { extensions } if extensions.is_empty()
+        ));
+    }
+
+    #[test]
+    fn explicit_constructor_preserves_input_order_and_wraps_the_selection() {
+        let first = admitted('1', 'a');
+        let second = admitted('2', 'b');
+        let selection = ExplicitSelection {
+            route: SelectedRoute {
+                route_id: RouteId::parse(format!("sha256:{}", "3".repeat(64))).unwrap(),
+                protocol: SELECTED_ROUTE_PROTOCOL.to_owned(),
+                plan_id: PlanId::parse(format!("sha256:{}", "4".repeat(64))).unwrap(),
+                target: RouteValueSource::Initial {
+                    value_kind: target(),
+                    extensions: BTreeMap::new(),
+                },
+                steps: Vec::new(),
+                extensions: BTreeMap::new(),
+            },
+            initial_bindings: Vec::new(),
+            target_input: Some(first.clone()),
+            attesters: Vec::new(),
+            extensions: BTreeMap::new(),
+        };
+
+        let request = DerivationRequest::explicit(
+            target(),
+            vec![second.clone(), first.clone()],
+            selection.clone(),
+        );
+
+        assert_eq!(request.inputs, vec![second, first]);
+        assert!(request.extensions.is_empty());
+        assert_eq!(
+            request.selection,
+            DerivationSelection::Explicit {
+                selection: Box::new(selection),
+                extensions: BTreeMap::new(),
+            }
+        );
     }
 }

@@ -148,11 +148,16 @@ concept, and GOOIR never imports their vocabulary.
 
 The identity, capability, package, planning, and authority protocols are the
 architectural center. `gooir-derive::{DerivationRequest, Answer}` is the 0.1
-host-facing product façade over them. The older
+host-facing product façade over them. `gooir-provider::neutral` is an
+experimental typed authoring surface for package-backed providers over the
+neutral v1 invocation and result documents. It validates exact provider
+binding and named-port shape but does not launch code or establish trust. It
+remains experimental until two independent downstream consumers exercise it.
+The older
 `gooir-capability::{CapabilityRegistry, DerivationRequest, Answer}`, the
-in-process provider SDK, and `org.gooi.plugin/v2` are compatibility surfaces,
-not universal execution protocols. Their presence does not authorize a second
-runtime inside GOOIR.
+top-level in-process provider helpers, and `org.gooi.plugin/v2` are
+compatibility surfaces, not universal execution protocols. Their presence does
+not authorize a second runtime inside GOOIR.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.
