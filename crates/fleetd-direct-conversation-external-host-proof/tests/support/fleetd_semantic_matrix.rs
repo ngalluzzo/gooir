@@ -229,7 +229,10 @@ pub(crate) fn dispatch() {
         None => run_coordinator(),
         Some(mode) if mode == std::ffi::OsStr::new("--log-pump") => run_log_pump(arguments),
         Some(mode) if mode == std::ffi::OsStr::new("--proxy") => run_proxy(arguments),
-        Some(mode) if mode == std::ffi::OsStr::new("--host") => run_host(arguments),
+        Some(mode) if mode == std::ffi::OsStr::new("--host") => run_host(arguments, false),
+        Some(mode) if mode == std::ffi::OsStr::new("--host-resume") => {
+            run_host(arguments, true);
+        }
         Some(_) => panic!("unknown semantic-matrix process mode"),
     }
 }
@@ -460,7 +463,10 @@ fn run_coordinator() {
         &reqwest_conflict_journal,
         &authority_bytes,
     );
-    assert_terminal_unable(&load_matrix_checkpoint(&reqwest_conflict_journal));
+    let reqwest_conflict_checkpoint = load_matrix_checkpoint(&reqwest_conflict_journal);
+    assert_terminal_unable(&reqwest_conflict_checkpoint);
+    let reqwest_conflict_terminal =
+        OfflineTerminalSnapshot::capture(&reqwest_conflict_journal, &reqwest_conflict_checkpoint);
     let ureq_conflict_journal = root.path().join("attempt-conflict-ureq");
     run_matrix_host_to_completion(
         &config_path,
@@ -469,7 +475,10 @@ fn run_coordinator() {
         &ureq_conflict_journal,
         &authority_bytes,
     );
-    assert_terminal_unable(&load_matrix_checkpoint(&ureq_conflict_journal));
+    let ureq_conflict_checkpoint = load_matrix_checkpoint(&ureq_conflict_journal);
+    assert_terminal_unable(&ureq_conflict_checkpoint);
+    let ureq_conflict_terminal =
+        OfflineTerminalSnapshot::capture(&ureq_conflict_journal, &ureq_conflict_checkpoint);
     assert_public_conversation(
         &public_client(),
         &backend_endpoint,
@@ -488,6 +497,7 @@ fn run_coordinator() {
     let altered_checkpoint = load_matrix_checkpoint(&altered_journal);
     assert_terminal_withheld(&altered_checkpoint);
     assert_altered_candidate(&altered_checkpoint, &reference);
+    let altered_terminal = OfflineTerminalSnapshot::capture(&altered_journal, &altered_checkpoint);
     assert_public_conversation(
         &public_client(),
         &backend_endpoint,
@@ -502,6 +512,35 @@ fn run_coordinator() {
         wait_for_matrix_canonical(&proxy_root.join("terminal.json"));
     assert_proxy_terminal(&proxy_terminal);
     let logs = daemon.stop();
+    let proxy_offline = OfflineNetworkTrap::bind(ready.address, "semantic-matrix proxy");
+    let backend_offline = OfflineNetworkTrap::bind(backend, "Fleetd backend");
+
+    run_matrix_host_resume_to_completion(
+        &config_path,
+        MatrixProvider::Reqwest,
+        HostPurpose::Conflict,
+        &reqwest_conflict_journal,
+        &authority_bytes,
+    );
+    reqwest_conflict_terminal.assert_unchanged(&reqwest_conflict_journal);
+    run_matrix_host_resume_to_completion(
+        &config_path,
+        MatrixProvider::Ureq,
+        HostPurpose::Conflict,
+        &ureq_conflict_journal,
+        &authority_bytes,
+    );
+    ureq_conflict_terminal.assert_unchanged(&ureq_conflict_journal);
+    run_matrix_host_resume_to_completion(
+        &config_path,
+        MatrixProvider::Reqwest,
+        HostPurpose::Altered,
+        &altered_journal,
+        &authority_bytes,
+    );
+    altered_terminal.assert_unchanged(&altered_journal);
+    proxy_offline.assert_unused();
+    backend_offline.assert_unused();
 
     let journal_paths = [
         &reqwest_exact_journal,
@@ -708,6 +747,120 @@ fn assert_proxy_terminal(terminal: &ProxyTerminal) {
     assert!(usize::from(terminal.empty_connections) <= MAX_EMPTY_CONNECTIONS);
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TerminalIdentity {
+    checkpoint_id: String,
+    attempt_id: String,
+    provider_receipts: Vec<String>,
+    provider_reference: Option<(u8, String)>,
+    candidate: Option<String>,
+    assessment_request: Option<String>,
+    attester_receipts: Vec<String>,
+    attester_reference: Option<(u8, String)>,
+    assessment: Option<String>,
+    resolution: (String, String),
+}
+
+impl TerminalIdentity {
+    fn capture(checkpoint: &AttemptCheckpoint) -> Self {
+        assert!(checkpoint.phase().is_terminal());
+        let resolution = match checkpoint
+            .resolution()
+            .unwrap_or_else(|| panic!("terminal checkpoint lacked a resolution"))
+        {
+            AttemptResolution::Admitted { admission_snapshot } => (
+                "admitted".to_owned(),
+                admission_snapshot.digest().to_owned(),
+            ),
+            AttemptResolution::Withheld { decision } => {
+                ("withheld".to_owned(), decision.digest().to_owned())
+            }
+            AttemptResolution::Unable { result } => {
+                ("unable".to_owned(), result.digest().to_owned())
+            }
+        };
+        Self {
+            checkpoint_id: checkpoint.checkpoint_id().to_owned(),
+            attempt_id: checkpoint.inputs().attempt_id().to_owned(),
+            provider_receipts: checkpoint
+                .provider_receipts()
+                .iter()
+                .map(|receipt| receipt.digest().to_owned())
+                .collect(),
+            provider_reference: checkpoint
+                .provider_decisive()
+                .map(|reference| (reference.index(), reference.receipt_digest().to_owned())),
+            candidate: checkpoint
+                .candidate()
+                .map(|document| document.digest().to_owned()),
+            assessment_request: checkpoint
+                .assessment_request()
+                .map(|document| document.digest().to_owned()),
+            attester_receipts: checkpoint
+                .attester_receipts()
+                .iter()
+                .map(|receipt| receipt.digest().to_owned())
+                .collect(),
+            attester_reference: checkpoint
+                .attester_decisive()
+                .map(|reference| (reference.index(), reference.receipt_digest().to_owned())),
+            assessment: checkpoint
+                .assessment()
+                .map(|document| document.digest().to_owned()),
+            resolution,
+        }
+    }
+}
+
+struct OfflineTerminalSnapshot {
+    journal_bytes: Vec<u8>,
+    checkpoint_bytes: Vec<u8>,
+    identity: TerminalIdentity,
+}
+
+impl OfflineTerminalSnapshot {
+    fn capture(journal: &Path, checkpoint: &AttemptCheckpoint) -> Self {
+        Self {
+            journal_bytes: read_tree(journal),
+            checkpoint_bytes: canonical_checkpoint(checkpoint),
+            identity: TerminalIdentity::capture(checkpoint),
+        }
+    }
+
+    fn assert_unchanged(&self, journal: &Path) {
+        assert_eq!(read_tree(journal), self.journal_bytes);
+        let checkpoint = load_matrix_checkpoint(journal);
+        assert_eq!(canonical_checkpoint(&checkpoint), self.checkpoint_bytes);
+        assert_eq!(TerminalIdentity::capture(&checkpoint), self.identity);
+    }
+}
+
+struct OfflineNetworkTrap {
+    listener: TcpListener,
+    surface: &'static str,
+}
+
+impl OfflineNetworkTrap {
+    fn bind(address: SocketAddr, surface: &'static str) -> Self {
+        let listener = TcpListener::bind(address)
+            .unwrap_or_else(|_| panic!("{surface} offline trap could not bind"));
+        listener
+            .set_nonblocking(true)
+            .unwrap_or_else(|_| panic!("{surface} offline trap could not become nonblocking"));
+        Self { listener, surface }
+    }
+
+    fn assert_unused(&self) {
+        match self.listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok((_stream, _peer)) => {
+                panic!("{} received an offline replay connection", self.surface)
+            }
+            Err(error) => panic!("{} offline trap failed: {:?}", self.surface, error.kind()),
+        }
+    }
+}
+
 fn run_matrix_host_to_completion(
     config: &Path,
     provider: MatrixProvider,
@@ -719,6 +872,28 @@ fn run_matrix_host_to_completion(
     write_matrix_pipe(&mut input, authority, "semantic-matrix host authority");
     drop(input);
     let status = wait_matrix_host(&mut child, Duration::from_secs(45), "semantic-matrix host");
+    assert!(status.success());
+}
+
+fn run_matrix_host_resume_to_completion(
+    config: &Path,
+    provider: MatrixProvider,
+    purpose: HostPurpose,
+    journal: &Path,
+    authority: &[u8],
+) {
+    let (mut child, mut input) = spawn_matrix_resume_host(config, provider, purpose, journal);
+    write_matrix_pipe(
+        &mut input,
+        authority,
+        "semantic-matrix resume-host authority",
+    );
+    drop(input);
+    let status = wait_matrix_host(
+        &mut child,
+        Duration::from_secs(45),
+        "semantic-matrix resume host",
+    );
     assert!(status.success());
 }
 
@@ -750,13 +925,32 @@ fn spawn_matrix_host(
     purpose: HostPurpose,
     journal: &Path,
 ) -> (ManagedMatrixHost, ChildStdin) {
+    spawn_matrix_host_mode("--host", config, provider, purpose, journal)
+}
+
+fn spawn_matrix_resume_host(
+    config: &Path,
+    provider: MatrixProvider,
+    purpose: HostPurpose,
+    journal: &Path,
+) -> (ManagedMatrixHost, ChildStdin) {
+    spawn_matrix_host_mode("--host-resume", config, provider, purpose, journal)
+}
+
+fn spawn_matrix_host_mode(
+    mode: &str,
+    config: &Path,
+    provider: MatrixProvider,
+    purpose: HostPurpose,
+    journal: &Path,
+) -> (ManagedMatrixHost, ChildStdin) {
     assert!(config.is_absolute());
     assert!(journal.is_absolute());
     let executable = env::current_exe()
         .unwrap_or_else(|_| panic!("semantic-matrix executable could not be located"));
     let raw_child = Command::new(executable)
         .env_clear()
-        .arg("--host")
+        .arg(mode)
         .arg(config)
         .arg(provider.argument())
         .arg(purpose.argument())
@@ -1120,7 +1314,7 @@ fn run_proxy(mut arguments: impl Iterator<Item = OsString>) {
     );
 }
 
-fn run_host(mut arguments: impl Iterator<Item = OsString>) {
+fn run_host(mut arguments: impl Iterator<Item = OsString>, resume_existing: bool) {
     let config_path = PathBuf::from(
         arguments
             .next()
@@ -1193,7 +1387,12 @@ fn run_host(mut arguments: impl Iterator<Item = OsString>) {
         planning_limits: plan_limits,
         process_limits: process_limits(),
     };
-    let checkpoint = terminal(start(&session, &request));
+    let progress = if resume_existing {
+        resume(&session, &request)
+    } else {
+        start(&session, &request)
+    };
+    let checkpoint = terminal(progress);
     match purpose {
         HostPurpose::Exact => assert_admitted_receipts(&checkpoint),
         HostPurpose::Conflict => assert_terminal_unable(&checkpoint),
