@@ -1,6 +1,6 @@
 # 0034 — A v1 derivation façade over the finite substrate
 
-Status: proposed
+Status: accepted
 
 ## Context
 

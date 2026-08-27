@@ -81,6 +81,29 @@ content substitution.
 Packages describe what is available. Selection belongs to planning. Launch
 authority belongs to a host.
 
+## Product façade
+
+`gooir-derive` is the 0.1 composition door over that finite substrate. A
+request names an exact target, admitted fact-authority references, and either
+an explicit complete selection or the conservative `UniqueOnly` policy. Route,
+offer, named-input, suite, and independent-attester choices are fixed before
+the first host effect.
+
+Every accepted request ends in one remedy-preserving answer:
+
+- `Produced`: the target and every materialized output are admitted authority
+  records, never bare provider claims;
+- `Blocked`: semantic routes exist but lack an implementation or available
+  independent attester;
+- `Unreachable`: no declared semantic route reaches the target;
+- `Refused`: the request, selection, ambiguity, or local policy forbids the
+  attempt; or
+- `Failed`: one exact selection was attempted but did not yield an admitted
+  target.
+
+This façade selects and validates neutral documents. It does not add a runtime
+or move launch, transport, retry, or recovery policy into the semantic graph.
+
 ## Execution boundary
 
 The substrate may emit and validate neutral documents such as:
@@ -124,10 +147,12 @@ concept, and GOOIR never imports their vocabulary.
 ## Compatibility and support status
 
 The identity, capability, package, planning, and authority protocols are the
-architectural center. `CapabilityRegistry`, `DerivationRequest`, `Answer`, the
-in-process provider SDK, and `org.gooi.plugin/v2` are useful local or
-transitional surfaces, not universal execution protocols. Their presence does
-not authorize a second runtime inside GOOIR.
+architectural center. `gooir-derive::{DerivationRequest, Answer}` is the 0.1
+host-facing product façade over them. The older
+`gooir-capability::{CapabilityRegistry, DerivationRequest, Answer}`, the
+in-process provider SDK, and `org.gooi.plugin/v2` are compatibility surfaces,
+not universal execution protocols. Their presence does not authorize a second
+runtime inside GOOIR.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.

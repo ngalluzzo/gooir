@@ -17,7 +17,7 @@ execution, durability, recovery, and policy.
 
 ## What is here
 
-The semantic kernel consists of five crates:
+The 0.1 semantic substrate and product façade consist of six crates:
 
 | Crate | Owns |
 | --- | --- |
@@ -25,6 +25,7 @@ The semantic kernel consists of five crates:
 | `gooir-capability` | facts, typed capability declarations, candidates, conformance, and admission records |
 | `gooir-package` | exact package resources, dependencies, offers, exports, and installed locks |
 | `gooir-planning` | provider-neutral plans and explicit implementation linking |
+| `gooir-derive` | five-outcome derivation façade and external-host admission membrane |
 | `gooir-doctor` | diagnostics over an installed capability graph |
 
 The repository also contains narrow, optional support:
@@ -37,17 +38,20 @@ The repository also contains narrow, optional support:
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
-Nothing domain-specific is installed by default. The CLI receives capability
-declarations and providers explicitly:
+Nothing domain-specific is installed by default. The CLI receives exact
+package directories explicitly, in dependency order:
 
 ```sh
-cargo run -q --bin gooir -- capabilities --pack /path/to/pack.json
-cargo run -q --bin gooir -- doctor --pack /path/to/pack.json
-cargo run -q --bin gooir -- needs --pack /path/to/pack.json
+cargo run -q --bin gooir -- capabilities --package /path/to/package
+cargo run -q --bin gooir -- doctor --package /path/to/package
+cargo run -q --bin gooir -- plan org.example/result@1.0.0 --package /path/to/package
 ```
 
-`--plugin /path/to/plugin.json` adds a transitional process provider. GOOIR
-never scans a directory for executable code.
+Planning displays the complete provider-neutral graph and exact offers. It
+does not choose or execute them. The temporary `derive --pack ... --plugin ...`
+command is explicitly a legacy compatibility bridge; it is not the 0.1 host
+boundary or a universal provider transport. GOOIR never scans for executable
+code.
 
 ## What moved out
 
@@ -63,8 +67,8 @@ boundaries:
 They depend on this repository through public crates. This repository has no
 dependency back to either one.
 
-The Buzz lifters, Fleetd UI/control experiments, interaction-activation probe,
-activity projection probe, and representation corpus were superseded research.
+Earlier lifters, UI/control experiments, interaction-activation and activity
+projection probes, and the representation corpus were superseded research.
 They remain recoverable from Git history and the owner-only retirement archive;
 they are no longer active package surface.
 
@@ -73,7 +77,8 @@ they are no longer active package surface.
 [Architecture](docs/ARCHITECTURE.md) states the complete trusted boundary.
 [Decision 0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) records why
 the substrate is finite. [Decision 0033](docs/DECISIONS/0033_SUBTRACT_AND_EXTRACT.md)
-records the repository split.
+records the repository split. [Decision 0034](docs/DECISIONS/0034_V1_DERIVATION_FACADE.md)
+defines the 0.1 product façade.
 
 The short version:
 
@@ -82,6 +87,8 @@ The short version:
 - packages offer implementations but never choose them;
 - linking is explicit and content-bound;
 - conformance and admission remain distinct;
+- a derivation ends as `Produced`, `Blocked`, `Unreachable`, `Refused`, or
+  `Failed`, without collapsing their remedies;
 - unknown and incompatible claims fail closed;
 - GOOIR emits neutral documents; an external host performs effects.
 
