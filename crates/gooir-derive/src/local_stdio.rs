@@ -24,8 +24,10 @@ use gooir_capability::authority::{ConformanceAssessment, ConformanceAuthority};
 use gooir_capability::protocol::{
     CapabilityCandidate, CapabilityInvocation, CapabilityResult, OfferId,
 };
+use gooir_capability::strict_json;
 use gooir_package::{PackageId, PackageRegistry, ResourceName};
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::DerivationHost;
@@ -152,8 +154,7 @@ impl DerivationHost for LocalStdioHost {
         let request = serde_json::to_vec(invocation)
             .map_err(|error| LocalStdioError::RequestJson(error.to_string()))?;
         let output = self.invoke_artifact(artifact.bytes(), &request)?;
-        serde_json::from_slice(&output)
-            .map_err(|error| LocalStdioError::ResponseJson(error.to_string()))
+        decode_response(&output)
     }
 
     fn assess(
@@ -186,8 +187,7 @@ impl DerivationHost for LocalStdioHost {
         let request = serde_json::to_vec(&request)
             .map_err(|error| LocalStdioError::RequestJson(error.to_string()))?;
         let output = self.invoke_artifact(artifact.bytes(), &request)?;
-        serde_json::from_slice(&output)
-            .map_err(|error| LocalStdioError::ResponseJson(error.to_string()))
+        decode_response(&output)
     }
 }
 
@@ -208,6 +208,11 @@ fn validate_attester_binding(
         });
     }
     Ok(())
+}
+
+fn decode_response<T: DeserializeOwned>(output: &[u8]) -> Result<T, LocalStdioError> {
+    strict_json::from_slice(output)
+        .map_err(|error| LocalStdioError::ResponseJson(error.to_string()))
 }
 
 fn run_artifact(
@@ -588,7 +593,7 @@ impl fmt::Display for LocalStdioError {
             Self::TimeoutOutsidePlatformRange => {
                 formatter.write_str("artifact timeout is outside the platform clock range")
             }
-            Self::TimedOut => formatter.write_str("artifact timed out and was killed and reaped"),
+            Self::TimedOut => formatter.write_str("artifact execution exceeded its deadline"),
             Self::StdoutLimitExceeded(limit) => {
                 write!(formatter, "artifact stdout reached bound {limit}")
             }
@@ -745,5 +750,31 @@ while True:
         .unwrap_err();
         assert!(matches!(error, LocalStdioError::TimedOut));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn provider_result_rejects_nested_duplicate_payload_keys() {
+        let error = decode_response::<CapabilityResult>(
+            br#"{"outcome":{"outputs":[{"fact":{"payload":{"same":1,"same":2}}}]}}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LocalStdioError::ResponseJson(detail)
+                if detail.contains("duplicate JSON object key `same`")
+        ));
+    }
+
+    #[test]
+    fn attester_assessment_rejects_nested_duplicate_extension_keys() {
+        let error = decode_response::<ConformanceAssessment>(
+            br#"{"checks":{"semantic":{"extensions":{"same":1,"same":2}}}}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LocalStdioError::ResponseJson(detail)
+                if detail.contains("duplicate JSON object key `same`")
+        ));
     }
 }

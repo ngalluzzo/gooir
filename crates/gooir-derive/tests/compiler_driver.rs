@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -487,6 +488,61 @@ fn withheld_source_is_a_refusal_and_does_not_mutate_the_driver_ledger() {
     ));
     assert!(driver.ledger().export().unwrap().facts.is_empty());
     assert!(driver.host().invocations.is_empty());
+}
+
+#[test]
+fn input_limit_stops_at_first_excess_without_effects_or_ledger_mutation() {
+    let fixture = Fixture::new(true);
+    let mut bounded = limits();
+    bounded.max_inputs = NonZeroUsize::new(1).unwrap();
+    let mut driver = CompilerDriver::new(
+        &fixture.registry,
+        fixture.policy.clone(),
+        [fixture.attester.clone()],
+        RecordingHost::producing(),
+        bounded,
+    )
+    .unwrap();
+    let before = serde_json::to_vec(&driver.ledger().export().unwrap()).unwrap();
+
+    let two = driver.compile(
+        value_kind("target"),
+        [fixture.source.clone(), fixture.source.clone()],
+    );
+
+    assert!(matches!(
+        two,
+        Answer::Refused(reason)
+            if matches!(*reason, Refusal::InvalidRequest { ref detail }
+                if detail.contains("exceeds configured input limit 1"))
+    ));
+    assert_eq!(
+        serde_json::to_vec(&driver.ledger().export().unwrap()).unwrap(),
+        before
+    );
+    assert!(driver.host().invocations.is_empty());
+    assert_eq!(driver.host().assessments, 0);
+
+    let pulls = Cell::new(0);
+    let continuing = driver.compile(
+        value_kind("target"),
+        std::iter::repeat(fixture.source.clone()).inspect(|_| {
+            pulls.set(pulls.get() + 1);
+        }),
+    );
+
+    assert!(matches!(
+        continuing,
+        Answer::Refused(reason)
+            if matches!(*reason, Refusal::InvalidRequest { .. })
+    ));
+    assert_eq!(
+        serde_json::to_vec(&driver.ledger().export().unwrap()).unwrap(),
+        before
+    );
+    assert!(driver.host().invocations.is_empty());
+    assert_eq!(driver.host().assessments, 0);
+    assert_eq!(pulls.get(), 2, "the driver must pull only max_inputs + 1");
 }
 
 #[test]

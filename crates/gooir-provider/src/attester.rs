@@ -14,6 +14,7 @@ use std::io::{Read, Write};
 pub use gooir_capability::assessment::{ASSESSMENT_REQUEST_PROTOCOL, AssessmentRequest};
 use gooir_capability::authority::{ConformanceAssessment, ConformanceCheck};
 use gooir_capability::protocol::{ConformanceSuiteId, EvidenceRef, ImplementationId};
+use gooir_capability::strict_json;
 use serde_json::Value;
 
 /// One exact neutral conformance implementation.
@@ -83,7 +84,7 @@ impl Attester {
     where
         F: FnOnce(&AssessmentRequest) -> Result<Assessment, AttesterError>,
     {
-        let request = serde_json::from_str(input)
+        let request = strict_json::from_str(input)
             .map_err(|error| AttesterError::RequestJson(error.to_string()))?;
         let assessment = self.assess(&request, handler)?;
         serde_json::to_string(&assessment)
@@ -380,6 +381,34 @@ mod tests {
             AttesterError::ImplementationMismatch { .. }
         ));
         assert!(!called.get());
+    }
+
+    #[test]
+    fn assessment_request_rejects_nested_duplicate_payload_keys() {
+        let fixture = fixture();
+        let encoded = serde_json::to_string(&fixture.request).unwrap();
+        let duplicate = encoded.replacen(
+            r#""payload":{"value":1}"#,
+            r#""payload":{"value":1,"value":2}"#,
+            1,
+        );
+        assert_ne!(
+            duplicate, encoded,
+            "fixture must contain the nested payload"
+        );
+
+        let error = fixture
+            .attester
+            .assess_json(&duplicate, |_| {
+                unreachable!("duplicate keys must fail before semantic assessment")
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            AttesterError::RequestJson(detail)
+                if detail.contains("duplicate JSON object key `value`")
+        ));
     }
 
     fn suite() -> ConformanceSuiteId {

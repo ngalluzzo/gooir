@@ -9,6 +9,7 @@ pub mod assessment;
 pub mod authority;
 mod manifest;
 pub mod protocol;
+pub mod strict_json;
 
 pub use manifest::{PACK_PROTOCOL, PackManifestError, read_pack, register_pack, write_pack};
 

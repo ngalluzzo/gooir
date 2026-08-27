@@ -7,6 +7,7 @@
 //! protocol and no execution transport.
 
 use std::fmt;
+use std::num::NonZeroUsize;
 
 use gooir_capability::ValueKindId;
 use gooir_capability::authority::{
@@ -34,6 +35,7 @@ pub struct CompilerDriver<H> {
     policy: AdmissionPolicy,
     attesters: AttesterInventory,
     host: H,
+    max_inputs: NonZeroUsize,
 }
 
 impl<H> CompilerDriver<H>
@@ -67,6 +69,7 @@ where
             policy,
             attesters,
             host,
+            max_inputs: limits.max_inputs,
         })
     }
 
@@ -81,9 +84,21 @@ where
         target: ValueKindId,
         observations: impl IntoIterator<Item = SourceObservation>,
     ) -> Answer {
+        let mut observations = observations.into_iter();
         let mut staged = self.ledger.clone();
         let mut inputs = Vec::new();
-        for observation in observations {
+        for index in 0.. {
+            let Some(observation) = observations.next() else {
+                break;
+            };
+            if index == self.max_inputs.get() {
+                return Answer::Refused(Box::new(Refusal::InvalidRequest {
+                    detail: format!(
+                        "source observation count exceeds configured input limit {}",
+                        self.max_inputs
+                    ),
+                }));
+            }
             let outcome = match staged.admit_observation(&self.policy, &observation) {
                 Ok(outcome) => outcome,
                 Err(error) => {
