@@ -27,6 +27,11 @@ route/offer/input/attester selection, execute it through their own effect
 boundary, and receive `Produced`, `Blocked`, `Unreachable`, `Refused`, or
 `Failed` without changing the kernel.
 
+An experimental provider-authoring surface now reduces neutral v1 providers to
+one typed function over named inputs and outputs while retaining exact binding,
+conservative extension handling, and protocol framing. It is not established
+until two independent downstream consumers exercise it.
+
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative
 dialects or a generic effect runtime. The legacy in-process CLI derivation path

@@ -33,7 +33,7 @@ The repository also contains narrow, optional support:
 | Crate | Status |
 | --- | --- |
 | `gooir-cli` | neutral graph inspection and a legacy local execution adapter |
-| `gooir-provider` | in-process provider-authoring SDK; not trusted kernel |
+| `gooir-provider` | experimental neutral v1 provider-authoring SDK plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
@@ -52,6 +52,36 @@ does not choose or execute them. The temporary `derive --pack ... --plugin ...`
 command is explicitly a legacy compatibility bridge; it is not the 0.1 host
 boundary or a universal provider transport. GOOIR never scans for executable
 code.
+
+## Writing a provider
+
+Package-backed providers use one typed closure over their capability's named
+ports. The SDK validates the exact invocation and implementation before the
+closure runs, derives fact identities and value kinds from the declaration,
+requires every output, and owns neutral JSON/stdin framing:
+
+```rust
+let provider = gooir_provider::neutral::Provider::new(
+    http_to_axum_spec(),
+    axum_implementation_id(),
+)?;
+
+let result = provider.invoke(&invocation, |context| {
+    let http: HttpService = context.input("http")?;
+    let handlers: HandlerBindings = context.input("handlers")?;
+    let profile: AxumProfile = context.input("profile")?;
+    let program = lower_to_axum(http, handlers, profile);
+
+    context.produced().output("program", program)?.finish()
+})?;
+```
+
+The same surface authors lifts, lowerings, analyses, bridges, and generators;
+those are capability meanings, not separate kernel mechanisms. Multiple
+inputs and outputs are first-class. `Context::input` refuses unhandled semantic
+extensions rather than dropping them, while `input_with_extensions` exposes
+the complete envelope to providers that understand them. This surface remains
+experimental until two independent downstream consumers exercise it.
 
 ## What moved out
 
