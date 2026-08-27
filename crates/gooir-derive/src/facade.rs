@@ -9,21 +9,27 @@ use gooir_capability::authority::{
 };
 use gooir_capability::protocol::{
     AdmittedFactRef, CapabilityFailure, CapabilityInvocation, ConformanceSuiteId, LinkedInput,
+    OfferId,
 };
-use gooir_capability::{CapabilityId, Fact, PortName, ValueKindId, canonical_digest};
+use gooir_capability::{
+    CapabilityId, CapabilitySpec, Fact, PortName, ValueKindId, canonical_digest,
+};
 use gooir_package::PackageRegistry;
 use gooir_planning::{
-    AvailableOffer, BlockedRouteAnalysis, InvocationLink, PlanLimits, PlanningError,
-    PlanningScopeDigest, RouteSelection, RouteValueSource, SelectedRoute, SelectedRouteStep,
-    SemanticPlan, SemanticPlanner,
+    AvailableOffer, BlockedRouteAnalysis, BlockedRouteInput, InvocationLink, PlanId, PlanLimits,
+    PlanningError, PlanningScopeDigest, RouteOutputRef, RouteValueSource, SelectedRoute,
+    SelectedRouteStep, SemanticPlan, SemanticPlanner,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    AdmittedOutput, DerivationHost, LinkedInvocationError, LinkedInvocationOutcome,
-    WithheldDerivation, run_linked_invocation,
+    AdmittedOutput, AttemptDocuments, DerivationHost, LinkedInvocationError,
+    LinkedInvocationOutcome, WithheldDerivation, run_linked_invocation,
 };
+
+/// Exact in-memory shape of façade blockage analysis.
+pub const DERIVATION_BLOCKAGE_PROTOCOL: &str = "org.gooi.derive.blockage/v1";
 
 /// Bounds for one product-facing derivation request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,9 +40,9 @@ pub struct DerivationLimits {
 }
 
 /// One exact host-available conformance inventory.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AttesterInventory {
-    pub authorities: Vec<ConformanceAuthority>,
+    authorities: Vec<ConformanceAuthority>,
 }
 
 impl AttesterInventory {
@@ -70,6 +76,12 @@ impl AttesterInventory {
         Ok(Self {
             authorities: exact.into_values().collect(),
         })
+    }
+
+    /// Exact canonical authorities available to the host.
+    #[must_use]
+    pub fn authorities(&self) -> &[ConformanceAuthority] {
+        &self.authorities
     }
 }
 
@@ -128,6 +140,55 @@ pub struct ExplicitSelection {
     pub extensions: BTreeMap<String, Value>,
 }
 
+/// Canonical identity of one complete route/input/offer/suite/attester choice.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct CompleteSelectionId(String);
+
+impl CompleteSelectionId {
+    fn derive(selection: &ExplicitSelection) -> Result<Self, String> {
+        canonical_digest(selection).and_then(Self::parse)
+    }
+
+    fn parse(value: String) -> Result<Self, String> {
+        let Some(hex) = value.strip_prefix("sha256:") else {
+            return Err("complete selection identity is not SHA-256".to_owned());
+        };
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err("complete selection identity is not canonical SHA-256".to_owned());
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for CompleteSelectionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for CompleteSelectionId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::parse(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// One exact complete alternative retained by an ambiguity refusal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SelectionAlternative {
+    pub selection_id: CompleteSelectionId,
+    pub selection: Box<ExplicitSelection>,
+}
+
 /// One admitted product answer. Every fact remains inside its authority chain.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProducedAnswer {
@@ -140,15 +201,39 @@ pub struct ProducedAnswer {
 pub struct AttesterNeed {
     pub capability: CapabilityId,
     pub suite: ConformanceSuiteId,
+    pub offers: Vec<OfferId>,
+}
+
+/// One capability node in the authoritative implementation/attestation
+/// blockage graph.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DerivationBlockedRouteNode {
+    pub capability: CapabilityId,
+    pub missing_offer: bool,
+    pub missing_attesters: Vec<AttesterNeed>,
+    pub blocked_inputs: Vec<BlockedRouteInput>,
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
+}
+
+/// Bounded AND/OR graph explaining why no complete derivation can execute.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DerivationBlockageAnalysis {
+    pub protocol: String,
+    pub plan_id: PlanId,
+    pub target_value_kind: ValueKindId,
+    pub target_alternatives: Vec<RouteOutputRef>,
+    pub nodes: Vec<DerivationBlockedRouteNode>,
+    pub missing_needs: Vec<CapabilitySpec>,
+    #[serde(default, flatten)]
+    pub extensions: BTreeMap<String, Value>,
 }
 
 /// Existing semantic routes whose available implementations cannot yet run.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BlockedAnswer {
     pub plan: SemanticPlan,
-    pub selected_route: Option<SelectedRoute>,
-    pub implementation: Option<BlockedRouteAnalysis>,
-    pub missing_attesters: Vec<AttesterNeed>,
+    pub blockage: DerivationBlockageAnalysis,
 }
 
 /// No declared semantic route reaches this target.
@@ -172,7 +257,7 @@ pub enum Refusal {
     },
     AmbiguousSelection {
         detail: String,
-        alternatives: Vec<String>,
+        alternatives: Vec<SelectionAlternative>,
     },
     AdmissionPolicy {
         decision: Option<Box<AdmissionDecision>>,
@@ -201,6 +286,7 @@ pub struct FailedAnswer {
     pub capability: Option<CapabilityId>,
     pub stage: FailureStage,
     pub detail: String,
+    pub attempt: Option<AttemptDocuments>,
     pub provider_failure: Option<CapabilityFailure>,
     pub conformance: Option<WithheldDerivation>,
     pub admitted: Vec<AuthorityRecord>,
@@ -261,7 +347,6 @@ impl DerivationFacade {
     ) -> Answer
     where
         H: DerivationHost,
-        H::Error: fmt::Display,
     {
         match self.prepare(ledger, policy, attesters, request) {
             Preparation::Answer(answer) => answer,
@@ -401,32 +486,25 @@ impl DerivationFacade {
                 Ok(offers) => offers,
                 Err(refusal) => return refused(refusal),
             };
-        let route = match self.planner.select_route_with_available_offers(
-            &plan,
-            &policy_eligible_offers,
-            RouteSelection::UniqueOnly,
-        ) {
-            Ok(route) => route,
+        let routes = match self
+            .planner
+            .route_alternatives_with_available_offers(&plan, &policy_eligible_offers)
+        {
+            Ok(routes) => routes,
             Err(PlanningError::AllRoutesBlocked(_)) => {
-                match self.planner.select_route_with_available_offers(
-                    &plan,
-                    &available_offers,
-                    RouteSelection::UniqueOnly,
-                ) {
+                match self
+                    .planner
+                    .route_alternatives_with_available_offers(&plan, &available_offers)
+                {
                     Err(PlanningError::AllRoutesBlocked(implementation)) => {
-                        let missing_attesters =
-                            blocked_attester_needs(&plan, &implementation, &available_offers);
+                        let blockage =
+                            derivation_blockage(&plan, *implementation, &available_offers);
                         return Preparation::Answer(Answer::Blocked(Box::new(BlockedAnswer {
                             plan,
-                            selected_route: None,
-                            implementation: Some(*implementation),
-                            missing_attesters,
+                            blockage,
                         })));
                     }
-                    Ok(_)
-                    | Err(
-                        PlanningError::AmbiguousCapabilityRoute | PlanningError::AmbiguousOffer(_),
-                    ) => {
+                    Ok(_) => {
                         return refused(Refusal::AdmissionPolicy {
                             decision: None,
                             detail: "available complete selections are ineligible under the admission policy"
@@ -440,40 +518,31 @@ impl DerivationFacade {
                     }
                 }
             }
-            Err(PlanningError::AmbiguousCapabilityRoute | PlanningError::AmbiguousOffer(_)) => {
-                return refused(Refusal::AmbiguousSelection {
-                    detail:
-                        "more than one complete policy-eligible route or implementation offer is available"
-                            .to_owned(),
-                    alternatives: plan_alternatives(&plan),
-                });
-            }
             Err(error) => {
                 return refused(Refusal::InvalidSelection {
                     detail: error.to_string(),
                 });
             }
         };
-
-        let bindings = match unique_bindings(&route, &inputs) {
-            Ok(bindings) => bindings,
-            Err(refusal) => return refused(refusal),
-        };
-        let target_input = match unique_target_input(&route, &inputs) {
-            Ok(target) => target,
-            Err(refusal) => return refused(refusal),
-        };
-        let selected_attesters = match select_unique_attesters(&plan, &route, policy, attesters) {
-            Ok(selected) => selected,
-            Err(refusal) => return refused(refusal),
-        };
+        let mut alternatives =
+            match complete_selection_alternatives(&plan, &routes, &inputs, policy, attesters) {
+                Ok(alternatives) => alternatives,
+                Err(refusal) => return refused(refusal),
+            };
+        if alternatives.len() != 1 {
+            return refused(Refusal::AmbiguousSelection {
+                detail: "more than one complete policy-eligible selection is available".to_owned(),
+                alternatives,
+            });
+        }
+        let selection = *alternatives.remove(0).selection;
         Preparation::Ready(Box::new(PreparedDerivation {
             plan,
-            route,
+            route: selection.route,
             inputs,
-            bindings,
-            target_input,
-            attesters: selected_attesters,
+            bindings: selection.initial_bindings,
+            target_input: selection.target_input,
+            attesters: selection.attesters,
         }))
     }
 
@@ -490,10 +559,11 @@ impl DerivationFacade {
                 detail: error.to_string(),
             });
         }
-        if explicit
-            .initial_bindings
-            .iter()
-            .any(|binding| !binding.extensions.is_empty())
+        if route_has_extensions(&explicit.route)
+            || explicit
+                .initial_bindings
+                .iter()
+                .any(|binding| !binding.extensions.is_empty())
             || explicit
                 .attesters
                 .iter()
@@ -541,7 +611,6 @@ impl DerivationFacade {
     ) -> Answer
     where
         H: DerivationHost,
-        H::Error: fmt::Display,
     {
         let mut produced = BTreeMap::<(CapabilityId, PortName), AdmittedOutput>::new();
         let mut admitted = Vec::new();
@@ -582,9 +651,7 @@ impl DerivationFacade {
                 prepared.route.steps.last().map(|step| &step.capability),
                 FailureStage::Admission,
                 "selected target was not admitted".to_owned(),
-                None,
-                None,
-                admitted,
+                FailureEvidence::only_admitted(admitted),
             );
         };
         let resolved = match ledger.resolve(&target) {
@@ -595,9 +662,7 @@ impl DerivationFacade {
                     prepared.route.steps.last().map(|step| &step.capability),
                     FailureStage::Admission,
                     error.to_string(),
-                    None,
-                    None,
-                    admitted,
+                    FailureEvidence::only_admitted(admitted),
                 );
             }
         };
@@ -617,7 +682,6 @@ impl DerivationFacade {
     ) -> Result<Vec<AdmittedOutput>, Answer>
     where
         H: DerivationHost,
-        H::Error: fmt::Display,
     {
         let attester = context
             .prepared
@@ -630,9 +694,7 @@ impl DerivationFacade {
                     Some(&step.capability),
                     FailureStage::Linking,
                     "selected attester is absent".to_owned(),
-                    None,
-                    None,
-                    context.admitted.to_vec(),
+                    FailureEvidence::only_admitted(context.admitted.to_vec()),
                 )
             })?;
         let invocation = self
@@ -648,9 +710,7 @@ impl DerivationFacade {
                     Some(&step.capability),
                     stage,
                     detail,
-                    None,
-                    None,
-                    context.admitted.to_vec(),
+                    FailureEvidence::only_admitted(context.admitted.to_vec()),
                 )
             })?;
         match run_linked_invocation(ledger, policy, &invocation, &attester.authority, host) {
@@ -661,37 +721,52 @@ impl DerivationFacade {
                     detail: "a passing candidate was withheld by the admission policy".to_owned(),
                 })))
             }
-            Ok(LinkedInvocationOutcome::ProviderUnable(provider_failure)) => Err(failed(
-                &context.prepared.route,
-                Some(&step.capability),
-                FailureStage::ProviderUnable,
-                "provider returned a typed inability".to_owned(),
-                Some(*provider_failure),
-                None,
-                context.admitted.to_vec(),
-            )),
+            Ok(LinkedInvocationOutcome::ProviderUnable(provider_failure)) => {
+                let provider_failure = *provider_failure;
+                Err(failed(
+                    &context.prepared.route,
+                    Some(&step.capability),
+                    FailureStage::ProviderUnable,
+                    "provider returned a typed inability".to_owned(),
+                    FailureEvidence {
+                        attempt: Some(provider_failure.documents),
+                        provider_failure: Some(provider_failure.failure),
+                        conformance: None,
+                        admitted: context.admitted.to_vec(),
+                    },
+                ))
+            }
             Ok(
                 LinkedInvocationOutcome::ConformanceFailed(withheld)
                 | LinkedInvocationOutcome::ConformanceIndeterminate(withheld),
-            ) => Err(failed(
-                &context.prepared.route,
-                Some(&step.capability),
-                FailureStage::Conformance,
-                "independent conformance did not pass".to_owned(),
-                None,
-                Some(*withheld),
-                context.admitted.to_vec(),
-            )),
+            ) => {
+                let withheld = *withheld;
+                Err(failed(
+                    &context.prepared.route,
+                    Some(&step.capability),
+                    FailureStage::Conformance,
+                    "independent conformance did not pass".to_owned(),
+                    FailureEvidence {
+                        attempt: Some(withheld.documents.clone()),
+                        provider_failure: None,
+                        conformance: Some(withheld),
+                        admitted: context.admitted.to_vec(),
+                    },
+                ))
+            }
             Err(error) => {
-                let (stage, detail) = linked_error(&error);
+                let (stage, detail, attempt) = linked_error(&error, &invocation);
                 Err(failed(
                     &context.prepared.route,
                     Some(&step.capability),
                     stage,
                     detail,
-                    None,
-                    None,
-                    context.admitted.to_vec(),
+                    FailureEvidence {
+                        attempt: Some(attempt),
+                        provider_failure: None,
+                        conformance: None,
+                        admitted: context.admitted.to_vec(),
+                    },
                 ))
             }
         }
@@ -852,11 +927,76 @@ fn planned_capability<'plan>(
         .map(|index| &plan.capabilities[index])
 }
 
-fn unique_bindings(
+fn route_has_extensions(route: &SelectedRoute) -> bool {
+    !route.extensions.is_empty()
+        || source_has_extensions(&route.target)
+        || route.steps.iter().any(|step| {
+            !step.extensions.is_empty()
+                || step.inputs.iter().any(|input| {
+                    !input.extensions.is_empty() || source_has_extensions(&input.source)
+                })
+        })
+}
+
+fn source_has_extensions(source: &RouteValueSource) -> bool {
+    match source {
+        RouteValueSource::Initial { extensions, .. }
+        | RouteValueSource::CapabilityOutput { extensions, .. } => !extensions.is_empty(),
+    }
+}
+
+#[derive(Clone)]
+struct BindingChoice {
+    bindings: Vec<InitialBinding>,
+    target_input: Option<AdmittedFactRef>,
+}
+
+fn complete_selection_alternatives(
+    plan: &SemanticPlan,
+    routes: &[SelectedRoute],
+    inputs: &[ResolvedInput],
+    policy: &AdmissionPolicy,
+    inventory: &AttesterInventory,
+) -> Result<Vec<SelectionAlternative>, Refusal> {
+    let mut alternatives = Vec::new();
+    for route in routes {
+        let bindings = binding_alternatives(route, inputs)?;
+        let attesters = attester_alternatives(plan, route, policy, inventory)?;
+        for binding in &bindings {
+            for selected_attesters in &attesters {
+                let selection = ExplicitSelection {
+                    route: route.clone(),
+                    initial_bindings: binding.bindings.clone(),
+                    target_input: binding.target_input.clone(),
+                    attesters: selected_attesters.clone(),
+                    extensions: BTreeMap::new(),
+                };
+                let selection_id = CompleteSelectionId::derive(&selection).map_err(|detail| {
+                    Refusal::InvalidSelection {
+                        detail: format!("complete selection identity failed: {detail}"),
+                    }
+                })?;
+                alternatives.push(SelectionAlternative {
+                    selection_id,
+                    selection: Box::new(selection),
+                });
+                if alternatives.len() == 2 {
+                    return Ok(alternatives);
+                }
+            }
+        }
+    }
+    Ok(alternatives)
+}
+
+fn binding_alternatives(
     route: &SelectedRoute,
     inputs: &[ResolvedInput],
-) -> Result<Vec<InitialBinding>, Refusal> {
-    let mut bindings = Vec::new();
+) -> Result<Vec<BindingChoice>, Refusal> {
+    let mut choices = vec![BindingChoice {
+        bindings: Vec::new(),
+        target_input: None,
+    }];
     for step in &route.steps {
         for dependency in &step.inputs {
             let RouteValueSource::Initial { value_kind, .. } = &dependency.source else {
@@ -866,75 +1006,57 @@ fn unique_bindings(
                 .iter()
                 .filter(|input| &input.fact.value_kind == value_kind)
                 .collect::<Vec<_>>();
-            let [input] = matching.as_slice() else {
-                return if matching.is_empty() {
-                    Err(Refusal::InvalidSelection {
-                        detail: format!("no admitted input supplies {value_kind}"),
-                    })
-                } else {
-                    Err(Refusal::AmbiguousSelection {
-                        detail: format!("more than one admitted input supplies {value_kind}"),
-                        alternatives: matching
-                            .iter()
-                            .map(|input| {
-                                format!(
-                                    "{}+{}",
-                                    input.reference.fact_id, input.reference.authority_record_id
-                                )
-                            })
-                            .collect(),
-                    })
-                };
-            };
-            bindings.push(InitialBinding {
-                capability: step.capability.clone(),
-                input_port: dependency.input_port.clone(),
-                admitted: input.reference.clone(),
-                extensions: BTreeMap::new(),
-            });
+            if matching.is_empty() {
+                return Err(Refusal::InvalidSelection {
+                    detail: format!("no admitted input supplies {value_kind}"),
+                });
+            }
+            let mut next = Vec::new();
+            for choice in &choices {
+                for input in &matching {
+                    let mut candidate = choice.clone();
+                    candidate.bindings.push(InitialBinding {
+                        capability: step.capability.clone(),
+                        input_port: dependency.input_port.clone(),
+                        admitted: input.reference.clone(),
+                        extensions: BTreeMap::new(),
+                    });
+                    push_capped(&mut next, candidate);
+                }
+            }
+            choices = next;
         }
     }
-    Ok(bindings)
-}
-
-fn unique_target_input(
-    route: &SelectedRoute,
-    inputs: &[ResolvedInput],
-) -> Result<Option<AdmittedFactRef>, Refusal> {
-    let RouteValueSource::Initial { value_kind, .. } = &route.target else {
-        return Ok(None);
-    };
-    let matching = inputs
-        .iter()
-        .filter(|input| &input.fact.value_kind == value_kind)
-        .collect::<Vec<_>>();
-    match matching.as_slice() {
-        [input] => Ok(Some(input.reference.clone())),
-        [] => Err(Refusal::InvalidSelection {
-            detail: format!("no admitted input supplies target {value_kind}"),
-        }),
-        _ => Err(Refusal::AmbiguousSelection {
-            detail: format!("more than one admitted input supplies target {value_kind}"),
-            alternatives: matching
-                .iter()
-                .map(|input| {
-                    format!(
-                        "{}+{}",
-                        input.reference.fact_id, input.reference.authority_record_id
-                    )
-                })
-                .collect(),
-        }),
+    if let RouteValueSource::Initial { value_kind, .. } = &route.target {
+        let matching = inputs
+            .iter()
+            .filter(|input| &input.fact.value_kind == value_kind)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            return Err(Refusal::InvalidSelection {
+                detail: format!("no admitted input supplies target {value_kind}"),
+            });
+        }
+        let mut next = Vec::new();
+        for choice in &choices {
+            for input in &matching {
+                let mut candidate = choice.clone();
+                candidate.target_input = Some(input.reference.clone());
+                push_capped(&mut next, candidate);
+            }
+        }
+        choices = next;
     }
+    Ok(choices)
 }
 
-fn select_unique_attesters(
+fn attester_alternatives(
     plan: &SemanticPlan,
     route: &SelectedRoute,
     policy: &AdmissionPolicy,
     inventory: &AttesterInventory,
-) -> Result<Vec<SelectedAttester>, Refusal> {
-    let mut selected = Vec::with_capacity(route.steps.len());
+) -> Result<Vec<Vec<SelectedAttester>>, Refusal> {
+    let mut choices = vec![Vec::with_capacity(route.steps.len())];
     for step in &route.steps {
         let planned = planned_capability(plan, &step.capability).ok_or_else(|| {
             Refusal::InvalidSelection {
@@ -949,36 +1071,36 @@ fn select_unique_attesters(
             .into_iter()
             .filter(|authority| policy.accepted_conformance.contains(*authority))
             .collect::<Vec<_>>();
-        match accepted.as_slice() {
-            [authority] => selected.push(SelectedAttester {
-                capability: step.capability.clone(),
-                authority: (*authority).clone(),
-                extensions: BTreeMap::new(),
-            }),
-            [] => {
-                return Err(Refusal::AdmissionPolicy {
-                    decision: None,
-                    detail: format!(
-                        "admission policy accepts no available independent attester for {}",
-                        step.capability,
-                    ),
+        if accepted.is_empty() {
+            return Err(Refusal::AdmissionPolicy {
+                decision: None,
+                detail: format!(
+                    "admission policy accepts no available independent attester for {}",
+                    step.capability,
+                ),
+            });
+        }
+        let mut next = Vec::new();
+        for choice in &choices {
+            for authority in &accepted {
+                let mut candidate = choice.clone();
+                candidate.push(SelectedAttester {
+                    capability: step.capability.clone(),
+                    authority: (*authority).clone(),
+                    extensions: BTreeMap::new(),
                 });
-            }
-            _ => {
-                return Err(Refusal::AmbiguousSelection {
-                    detail: format!(
-                        "more than one accepted attester is available for {}",
-                        step.capability
-                    ),
-                    alternatives: accepted
-                        .iter()
-                        .filter_map(|authority| canonical_digest(*authority).ok())
-                        .collect(),
-                });
+                push_capped(&mut next, candidate);
             }
         }
+        choices = next;
     }
-    Ok(selected)
+    Ok(choices)
+}
+
+fn push_capped<T>(items: &mut Vec<T>, item: T) {
+    if items.len() < 2 {
+        items.push(item);
+    }
 }
 
 fn eligible_offers(
@@ -1013,34 +1135,59 @@ fn eligible_offers(
     Ok((available, policy_eligible))
 }
 
-fn blocked_attester_needs(
+fn derivation_blockage(
     plan: &SemanticPlan,
-    blockage: &BlockedRouteAnalysis,
+    blockage: BlockedRouteAnalysis,
     available_offers: &BTreeSet<AvailableOffer>,
-) -> Vec<AttesterNeed> {
-    blockage
+) -> DerivationBlockageAnalysis {
+    let nodes = blockage
         .nodes
-        .iter()
-        .filter_map(|node| {
-            let planned = planned_capability(plan, &node.capability)?;
-            if planned.offers.is_empty()
-                || planned.offers.iter().any(|offer| {
-                    available_offers.contains(&AvailableOffer {
-                        capability: node.capability.clone(),
-                        offer: offer.offer_id.clone(),
-                    })
+        .into_iter()
+        .map(|node| {
+            let missing_attesters = planned_capability(plan, &node.capability)
+                .filter(|planned| {
+                    !planned.offers.is_empty()
+                        && !planned.offers.iter().any(|offer| {
+                            available_offers.contains(&AvailableOffer {
+                                capability: node.capability.clone(),
+                                offer: offer.offer_id.clone(),
+                            })
+                        })
                 })
-            {
-                return None;
+                .and_then(|planned| {
+                    ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
+                        .ok()
+                        .map(|suite| {
+                            vec![AttesterNeed {
+                                capability: node.capability.clone(),
+                                suite,
+                                offers: planned
+                                    .offers
+                                    .iter()
+                                    .map(|offer| offer.offer_id.clone())
+                                    .collect(),
+                            }]
+                        })
+                })
+                .unwrap_or_default();
+            DerivationBlockedRouteNode {
+                capability: node.capability,
+                missing_offer: node.missing_offer,
+                missing_attesters,
+                blocked_inputs: node.blocked_inputs,
+                extensions: node.extensions,
             }
-            ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
-                .ok()
-                .map(|suite| AttesterNeed {
-                    capability: node.capability.clone(),
-                    suite,
-                })
         })
-        .collect()
+        .collect();
+    DerivationBlockageAnalysis {
+        protocol: DERIVATION_BLOCKAGE_PROTOCOL.to_owned(),
+        plan_id: blockage.plan_id,
+        target_value_kind: blockage.target_value_kind,
+        target_alternatives: blockage.target_alternatives,
+        nodes,
+        missing_needs: blockage.missing_needs,
+        extensions: blockage.extensions,
+    }
 }
 
 fn independent_attesters<'inventory>(
@@ -1184,23 +1331,6 @@ fn validate_explicit_attesters(
     Ok(())
 }
 
-fn plan_alternatives(plan: &SemanticPlan) -> Vec<String> {
-    plan.capabilities
-        .iter()
-        .flat_map(|planned| {
-            if planned.offers.is_empty() {
-                vec![planned.specification.id.to_string()]
-            } else {
-                planned
-                    .offers
-                    .iter()
-                    .map(|offer| format!("{}+{}", planned.specification.id, offer.offer_id))
-                    .collect()
-            }
-        })
-        .collect()
-}
-
 fn reference_for(authority: &AuthorityRecord) -> AdmittedFactRef {
     AdmittedFactRef {
         fact_id: authority.fact.id.clone(),
@@ -1209,43 +1339,104 @@ fn reference_for(authority: &AuthorityRecord) -> AdmittedFactRef {
     }
 }
 
+struct FailureEvidence {
+    attempt: Option<AttemptDocuments>,
+    provider_failure: Option<CapabilityFailure>,
+    conformance: Option<WithheldDerivation>,
+    admitted: Vec<AuthorityRecord>,
+}
+
+impl FailureEvidence {
+    fn only_admitted(admitted: Vec<AuthorityRecord>) -> Self {
+        Self {
+            attempt: None,
+            provider_failure: None,
+            conformance: None,
+            admitted,
+        }
+    }
+}
+
 fn failed(
     route: &SelectedRoute,
     capability: Option<&CapabilityId>,
     stage: FailureStage,
     detail: String,
-    provider_failure: Option<CapabilityFailure>,
-    conformance: Option<WithheldDerivation>,
-    admitted: Vec<AuthorityRecord>,
+    evidence: FailureEvidence,
 ) -> Answer {
     Answer::Failed(Box::new(FailedAnswer {
         route: route.clone(),
         capability: capability.cloned(),
         stage,
         detail,
-        provider_failure,
-        conformance,
-        admitted,
+        attempt: evidence.attempt,
+        provider_failure: evidence.provider_failure,
+        conformance: evidence.conformance,
+        admitted: evidence.admitted,
     }))
 }
 
-fn linked_error<E: fmt::Display>(error: &LinkedInvocationError<E>) -> (FailureStage, String) {
-    let stage = match error {
-        LinkedInvocationError::HostInvocation(_) => FailureStage::ProviderHost,
-        LinkedInvocationError::InvalidHostResult(_) => FailureStage::ProviderResult,
-        LinkedInvocationError::HostAssessment(_) => FailureStage::AttesterHost,
-        LinkedInvocationError::InvalidHostAssessment(_)
-        | LinkedInvocationError::SubstitutedAttester { .. }
-        | LinkedInvocationError::InvalidAttester(_) => FailureStage::Assessment,
-        LinkedInvocationError::Admission(_)
-        | LinkedInvocationError::AdmissionReturnedSourceLink
-        | LinkedInvocationError::AdmittedOutputUnresolvable { .. }
-        | LinkedInvocationError::UnexpectedAdmissionDecision(_) => FailureStage::Admission,
+fn linked_error<E>(
+    error: &LinkedInvocationError<E>,
+    invocation: &CapabilityInvocation,
+) -> (FailureStage, String, AttemptDocuments) {
+    let initial = || AttemptDocuments {
+        invocation: invocation.clone(),
+        result: None,
+        candidate: None,
+        assessment: None,
+    };
+    match error {
+        LinkedInvocationError::HostInvocation(_) => (
+            FailureStage::ProviderHost,
+            "external provider host failed".to_owned(),
+            initial(),
+        ),
+        LinkedInvocationError::InvalidHostResult { documents, error } => (
+            FailureStage::ProviderResult,
+            error.to_string(),
+            (**documents).clone(),
+        ),
+        LinkedInvocationError::HostAssessment { documents, .. } => (
+            FailureStage::AttesterHost,
+            "external attester host failed".to_owned(),
+            (**documents).clone(),
+        ),
+        LinkedInvocationError::InvalidHostAssessment { documents, error } => (
+            FailureStage::Assessment,
+            error.to_string(),
+            (**documents).clone(),
+        ),
+        LinkedInvocationError::SubstitutedAttester { documents, .. } => (
+            FailureStage::Assessment,
+            "assessment substituted the selected attester".to_owned(),
+            (**documents).clone(),
+        ),
+        LinkedInvocationError::InvalidAttester(error) => {
+            (FailureStage::Assessment, error.to_string(), initial())
+        }
+        LinkedInvocationError::Admission { documents, error }
+        | LinkedInvocationError::AdmittedOutputUnresolvable {
+            documents, error, ..
+        } => (
+            FailureStage::Admission,
+            error.to_string(),
+            (**documents).clone(),
+        ),
+        LinkedInvocationError::AdmissionReturnedSourceLink { documents }
+        | LinkedInvocationError::UnexpectedAdmissionDecision { documents, .. } => (
+            FailureStage::Admission,
+            "admission returned an inconsistent outcome".to_owned(),
+            (**documents).clone(),
+        ),
         LinkedInvocationError::InvalidInvocation(_)
         | LinkedInvocationError::InvalidPolicy(_)
         | LinkedInvocationError::UnresolvedInput { .. }
         | LinkedInvocationError::SubstitutedInput { .. }
-        | LinkedInvocationError::InvalidInputAuthority { .. } => FailureStage::Linking,
-    };
-    (stage, error.to_string())
+        | LinkedInvocationError::InvalidInputAuthority { .. } => (
+            FailureStage::Linking,
+            "linked invocation preflight failed".to_owned(),
+            initial(),
+        ),
+    }
 }

@@ -727,6 +727,31 @@ impl SemanticPlanner {
         available_offers: &BTreeSet<AvailableOffer>,
         selection: RouteSelection,
     ) -> Result<SelectedRoute, PlanningError> {
+        let routes = self.route_alternatives_with_available_offers(plan, available_offers)?;
+        match selection {
+            RouteSelection::UniqueOnly => match routes.as_slice() {
+                [route] => Ok(route.clone()),
+                [first, second] => Err(route_ambiguity(first, second)),
+                _ => unreachable!("route alternatives are capped at two"),
+            },
+        }
+    }
+
+    /// Returns up to two exact available route/offer alternatives.
+    ///
+    /// Two alternatives are sufficient to prove that `UniqueOnly` is
+    /// ambiguous without enumerating an exponential graph. Each returned route
+    /// remains content-bound to the complete original plan.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an invalid or substituted plan, a subset entry absent from the
+    /// plan, unsupported extensions, or complete external blockage.
+    pub fn route_alternatives_with_available_offers(
+        &self,
+        plan: &SemanticPlan,
+        available_offers: &BTreeSet<AvailableOffer>,
+    ) -> Result<Vec<SelectedRoute>, PlanningError> {
         self.validate_exact_plan(plan)?;
         if !plan.extensions.is_empty() {
             return Err(PlanningError::UnsupportedPlanExtensions);
@@ -755,11 +780,7 @@ impl SemanticPlanner {
                 });
             }
         }
-        match selection {
-            RouteSelection::UniqueOnly => {
-                select_unique_route_with_available_offers(plan, available_offers)
-            }
-        }
+        available_route_alternatives(plan, available_offers)
     }
 
     fn validate_exact_plan(&self, plan: &SemanticPlan) -> Result<(), PlanningError> {
@@ -1351,13 +1372,25 @@ fn select_unique_route_with_available_offers(
     plan: &SemanticPlan,
     available_offers: &BTreeSet<AvailableOffer>,
 ) -> Result<SelectedRoute, PlanningError> {
+    let routes = available_route_alternatives(plan, available_offers)?;
+    match routes.as_slice() {
+        [route] => Ok(route.clone()),
+        [first, second] => Err(route_ambiguity(first, second)),
+        _ => unreachable!("route alternatives are capped at two"),
+    }
+}
+
+fn available_route_alternatives(
+    plan: &SemanticPlan,
+    available_offers: &BTreeSet<AvailableOffer>,
+) -> Result<Vec<SelectedRoute>, PlanningError> {
     let (available, executable) = offer_reachable(plan, available_offers);
     if !available.contains(&plan.target_value_kind) {
         return Err(PlanningError::AllRoutesBlocked(Box::new(
             blocked_route_analysis(plan, &available),
         )));
     }
-    let mut routes = Vec::new();
+    let mut drafts = Vec::new();
     for derivation in derive_value(
         plan,
         &plan.target_value_kind,
@@ -1366,20 +1399,17 @@ fn select_unique_route_with_available_offers(
         &executable,
     ) {
         push_distinct_capped(
-            &mut routes,
+            &mut drafts,
             DraftRoute {
                 target: derivation.source,
                 steps: derivation.steps,
             },
         );
     }
-    let Some(route) = routes.pop() else {
+    if drafts.is_empty() {
         return Err(PlanningError::AllRoutesBlocked(Box::new(
             blocked_route_analysis(plan, &available),
         )));
-    };
-    if !routes.is_empty() {
-        return Err(PlanningError::AmbiguousCapabilityRoute);
     }
 
     let planned = plan
@@ -1387,62 +1417,92 @@ fn select_unique_route_with_available_offers(
         .iter()
         .map(|capability| (capability.specification.id.clone(), capability))
         .collect::<BTreeMap<_, _>>();
-    let order = canonical_draft_step_order(&route.steps)?;
-    let mut steps = Vec::with_capacity(order.len());
-    for capability in order {
-        let draft = route
-            .steps
-            .get(&capability)
-            .ok_or_else(|| PlanningError::CapabilityNotPlanned(capability.clone()))?;
-        let planned_capability = planned
-            .get(&capability)
-            .ok_or_else(|| PlanningError::CapabilityNotPlanned(capability.clone()))?;
-        let offers = planned_capability
-            .offers
-            .iter()
-            .filter(|offer| {
+    let mut alternatives = Vec::new();
+    for route in drafts {
+        let order = canonical_draft_step_order(&route.steps)?;
+        let mut step_alternatives = vec![Vec::with_capacity(order.len())];
+        for capability in order {
+            let draft = route
+                .steps
+                .get(&capability)
+                .ok_or_else(|| PlanningError::CapabilityNotPlanned(capability.clone()))?;
+            let planned_capability = planned
+                .get(&capability)
+                .ok_or_else(|| PlanningError::CapabilityNotPlanned(capability.clone()))?;
+            let offers = planned_capability.offers.iter().filter(|offer| {
                 available_offers.contains(&AvailableOffer {
                     capability: capability.clone(),
                     offer: offer.offer_id.clone(),
                 })
-            })
-            .collect::<Vec<_>>();
-        let [offer] = offers.as_slice() else {
-            return if offers.is_empty() {
-                Err(PlanningError::AllRoutesBlocked(Box::new(
-                    blocked_route_analysis(plan, &available),
-                )))
-            } else {
-                Err(PlanningError::AmbiguousOffer(capability))
-            };
-        };
-        steps.push(SelectedRouteStep {
-            capability: capability.clone(),
-            offer: offer.offer_id.clone(),
-            inputs: draft
-                .inputs
-                .iter()
-                .map(|input| RouteInputDependency {
-                    input_port: input.input_port.clone(),
-                    source: selected_source(&input.source),
+            });
+            let mut next = Vec::new();
+            for offer in offers {
+                let step = SelectedRouteStep {
+                    capability: capability.clone(),
+                    offer: offer.offer_id.clone(),
+                    inputs: draft
+                        .inputs
+                        .iter()
+                        .map(|input| RouteInputDependency {
+                            input_port: input.input_port.clone(),
+                            source: selected_source(&input.source),
+                            extensions: BTreeMap::new(),
+                        })
+                        .collect(),
                     extensions: BTreeMap::new(),
-                })
-                .collect(),
-            extensions: BTreeMap::new(),
-        });
+                };
+                for partial in &step_alternatives {
+                    let mut steps = partial.clone();
+                    steps.push(step.clone());
+                    push_distinct_capped(&mut next, steps);
+                }
+            }
+            step_alternatives = next;
+        }
+        for steps in step_alternatives {
+            let mut selected = SelectedRoute {
+                route_id: placeholder_route_id(),
+                protocol: SELECTED_ROUTE_PROTOCOL.to_owned(),
+                plan_id: plan.plan_id.clone(),
+                target: selected_source(&route.target),
+                steps,
+                extensions: BTreeMap::new(),
+            };
+            selected.validate_structure(plan)?;
+            selected.route_id = RouteId::parse(route_digest(&selected)?)?;
+            push_distinct_capped(&mut alternatives, selected);
+            if alternatives.len() == 2 {
+                return Ok(alternatives);
+            }
+        }
     }
+    if alternatives.is_empty() {
+        Err(PlanningError::AllRoutesBlocked(Box::new(
+            blocked_route_analysis(plan, &available),
+        )))
+    } else {
+        Ok(alternatives)
+    }
+}
 
-    let mut selected = SelectedRoute {
-        route_id: placeholder_route_id(),
-        protocol: SELECTED_ROUTE_PROTOCOL.to_owned(),
-        plan_id: plan.plan_id.clone(),
-        target: selected_source(&route.target),
-        steps,
-        extensions: BTreeMap::new(),
-    };
-    selected.validate_structure(plan)?;
-    selected.route_id = RouteId::parse(route_digest(&selected)?)?;
-    Ok(selected)
+fn route_ambiguity(first: &SelectedRoute, second: &SelectedRoute) -> PlanningError {
+    let same_semantic_route = first.target == second.target
+        && first.steps.len() == second.steps.len()
+        && first.steps.iter().zip(&second.steps).all(|(left, right)| {
+            left.capability == right.capability && left.inputs == right.inputs
+        });
+    if same_semantic_route
+        && let Some(step) = first
+            .steps
+            .iter()
+            .zip(&second.steps)
+            .find(|(left, right)| left.offer != right.offer)
+            .map(|(left, _)| left.capability.clone())
+    {
+        PlanningError::AmbiguousOffer(step)
+    } else {
+        PlanningError::AmbiguousCapabilityRoute
+    }
 }
 
 fn derive_value(
