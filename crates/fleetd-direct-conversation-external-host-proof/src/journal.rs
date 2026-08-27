@@ -31,12 +31,12 @@ use crate::target::TargetBinding;
 
 /// Exact proof-local checkpoint protocol.
 pub const CHECKPOINT_PROTOCOL: &str =
-    "org.gooi.proof.fleetd-direct-conversation-external-host-attempt/v1";
+    "org.gooi.proof.fleetd-direct-conversation-external-host-attempt/v2";
 
 /// Fixed proof capacity for each apply or reobserve receipt prefix.
 pub const RECEIPT_CAPACITY: usize = 2;
 
-const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) const MAX_EXACT_JSON_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OPAQUE_ID_BYTES: usize = 4 * 1024;
 const MAX_SAFE_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
@@ -463,7 +463,7 @@ pub enum RetainedReceipt {
         receipt: ExactJson,
     },
     Redacted {
-        original_receipt_digest: String,
+        marker_digest: String,
         redaction_rule: String,
     },
 }
@@ -479,18 +479,20 @@ impl RetainedReceipt {
         Ok(Self::Exact { receipt })
     }
 
-    /// Construct a non-decisive marker for deterministically redacted evidence.
+    /// Construct a child-independent, non-decisive marker for redacted evidence.
+    ///
+    /// Its identity is derived only from the public redaction rule. A driver
+    /// can therefore derive and validate the complete redacted checkpoint
+    /// successor before launching an external process.
     ///
     /// # Errors
     ///
-    /// Refuses a malformed original digest or redaction-rule coordinate.
-    pub fn redacted(
-        original_receipt_digest: impl Into<String>,
-        redaction_rule: impl Into<String>,
-    ) -> Result<Self, JournalError> {
+    /// Refuses a malformed redaction-rule coordinate.
+    pub fn redacted(redaction_rule: impl Into<String>) -> Result<Self, JournalError> {
+        let redaction_rule = redaction_rule.into();
         let receipt = Self::Redacted {
-            original_receipt_digest: original_receipt_digest.into(),
-            redaction_rule: redaction_rule.into(),
+            marker_digest: redacted_marker_digest(&redaction_rule)?,
+            redaction_rule,
         };
         receipt.validate()?;
         Ok(receipt)
@@ -501,10 +503,7 @@ impl RetainedReceipt {
     pub fn digest(&self) -> &str {
         match self {
             Self::Exact { receipt } => receipt.digest(),
-            Self::Redacted {
-                original_receipt_digest,
-                ..
-            } => original_receipt_digest,
+            Self::Redacted { marker_digest, .. } => marker_digest,
         }
     }
 
@@ -518,14 +517,30 @@ impl RetainedReceipt {
         match self {
             Self::Exact { receipt } => receipt.validate(),
             Self::Redacted {
-                original_receipt_digest,
+                marker_digest,
                 redaction_rule,
             } => {
-                validate_sha256("original receipt digest", original_receipt_digest)?;
-                validate_opaque("redaction rule", redaction_rule)
+                validate_sha256("redacted marker digest", marker_digest)?;
+                validate_opaque("redaction rule", redaction_rule)?;
+                if marker_digest != &redacted_marker_digest(redaction_rule)? {
+                    return Err(invalid("redacted marker identity changed"));
+                }
+                Ok(())
             }
         }
     }
+}
+
+fn redacted_marker_digest(redaction_rule: &str) -> Result<String, JournalError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        protocol: &'static str,
+        redaction_rule: &'a str,
+    }
+    Ok(sha256_identity(&canonical_bytes(&Body {
+        protocol: "org.gooi.proof/redacted-receipt-marker@0.1.0",
+        redaction_rule,
+    })?))
 }
 
 /// Exact index and digest of a decisive receipt already retained in a prefix.
@@ -685,13 +700,18 @@ pub struct AttemptCheckpoint {
 }
 
 impl AttemptCheckpoint {
-    fn prepared(inputs: AttemptInputs) -> Result<Self, JournalError> {
+    pub(crate) fn prepared(inputs: AttemptInputs) -> Result<Self, JournalError> {
         Self::from_parts(
             inputs,
             AttemptPhase::Prepared,
             AttemptEvidence::default(),
             None,
         )
+    }
+
+    pub(crate) fn canonical_bytes(&self) -> Result<Vec<u8>, JournalError> {
+        self.validate()?;
+        canonical_bytes(self)
     }
 
     /// Exact checkpoint content identity used for journal CAS.
@@ -1382,14 +1402,19 @@ impl AttemptJournal {
         Ok(checkpoint)
     }
 
-    fn persist_unlocked(
+    fn persist_exact_unlocked(
         &self,
         checkpoint: &AttemptCheckpoint,
+        bytes: &[u8],
         publication: Publication,
     ) -> Result<(), JournalError> {
         validate_authority_directory(&self.directory, &self.directory_path)?;
         checkpoint.validate()?;
-        let bytes = canonical_bytes(checkpoint)?;
+        if bytes != canonical_bytes(checkpoint)? {
+            return Err(invalid(
+                "prevalidated checkpoint bytes differ from exact canonical state",
+            ));
+        }
         if bytes.len() > MAX_CHECKPOINT_BYTES {
             return Err(invalid("checkpoint exceeds the proof bound"));
         }
@@ -1410,7 +1435,7 @@ impl AttemptJournal {
         )?;
         temporary
             .file
-            .write_all(&bytes)
+            .write_all(bytes)
             .map_err(|error| io_error("write checkpoint sibling", &self.checkpoint_path, error))?;
         temporary
             .file
@@ -1497,6 +1522,18 @@ impl AttemptSession<'_> {
     /// Refuses existing state or invalid inputs.
     pub fn create(&self, inputs: AttemptInputs) -> Result<AttemptCheckpoint, JournalError> {
         let checkpoint = AttemptCheckpoint::prepared(inputs)?;
+        let bytes = checkpoint.canonical_bytes()?;
+        self.create_exact(&checkpoint, &bytes)
+    }
+
+    pub(crate) fn create_exact(
+        &self,
+        checkpoint: &AttemptCheckpoint,
+        bytes: &[u8],
+    ) -> Result<AttemptCheckpoint, JournalError> {
+        if checkpoint.phase != AttemptPhase::Prepared {
+            return Err(invalid("initial checkpoint is not prepared"));
+        }
         match self.journal.load_unlocked() {
             Err(JournalError::Missing(_)) => {}
             Ok(_) => {
@@ -1507,9 +1544,9 @@ impl AttemptSession<'_> {
             Err(error) => return Err(error),
         }
         self.journal
-            .persist_unlocked(&checkpoint, Publication::Create)?;
-        self.journal.verify_unlocked(&checkpoint)?;
-        Ok(checkpoint)
+            .persist_exact_unlocked(checkpoint, bytes, Publication::Create)?;
+        self.journal.verify_unlocked(checkpoint)?;
+        Ok(checkpoint.clone())
     }
 
     /// Load exact canonical state while retaining continuous ownership.
@@ -1531,6 +1568,16 @@ impl AttemptSession<'_> {
         expected_checkpoint_id: &str,
         next: &AttemptCheckpoint,
     ) -> Result<(), JournalError> {
+        let bytes = next.canonical_bytes()?;
+        self.replace_exact(expected_checkpoint_id, next, &bytes)
+    }
+
+    pub(crate) fn replace_exact(
+        &self,
+        expected_checkpoint_id: &str,
+        next: &AttemptCheckpoint,
+        bytes: &[u8],
+    ) -> Result<(), JournalError> {
         let current = self.journal.load_unlocked()?;
         if current.checkpoint_id != expected_checkpoint_id {
             return Err(JournalError::StaleCheckpoint {
@@ -1544,7 +1591,8 @@ impl AttemptSession<'_> {
         next.validate()?;
         validate_transition(current.phase, next.phase)?;
         validate_evidence_transition(current.phase, next.phase, &current.evidence, &next.evidence)?;
-        self.journal.persist_unlocked(next, Publication::Replace)?;
+        self.journal
+            .persist_exact_unlocked(next, bytes, Publication::Replace)?;
         self.journal.verify_unlocked(next)
     }
 }
@@ -2024,11 +2072,8 @@ mod tests {
             .arm_provider()
             .expect("arm")
             .append_provider_receipt(
-                RetainedReceipt::redacted(
-                    digest('3'),
-                    "org.gooi.proof/remove-authority-pipe-bytes@0.1.0",
-                )
-                .expect("redacted"),
+                RetainedReceipt::redacted("org.gooi.proof/remove-authority-pipe-bytes@0.1.0")
+                    .expect("redacted"),
             )
             .expect("append");
         assert!(armed.provider_receipts()[0].is_redacted());
