@@ -39,6 +39,10 @@ pub(crate) mod semantic_matrix;
 #[allow(dead_code)]
 pub(crate) mod attester;
 
+#[path = "support/fleetd_host.rs"]
+#[allow(dead_code)]
+pub(crate) mod host;
+
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
