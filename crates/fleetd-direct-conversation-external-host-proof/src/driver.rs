@@ -111,6 +111,107 @@ pub enum DriverProgress {
     },
 }
 
+/// One exact attempt whose complete live authority and durable checkpoint have
+/// been validated without launching a provider or attester.
+///
+/// The fields are deliberately private and the type deliberately implements
+/// neither `Debug` nor `Clone`: the value retains credential-bearing authority,
+/// exact artifact/runtime materializations, the target execution fence, and
+/// continuous journal ownership until it is consumed by [`Self::drive`].
+#[must_use = "a validated attempt must be armed by its outer host before it is driven"]
+pub struct ValidatedAttempt<'session, 'journal, 'authority>
+where
+    'journal: 'session,
+{
+    session: &'session AttemptSession<'journal>,
+    context: Context<'authority>,
+    checkpoint: AttemptCheckpoint,
+}
+
+impl ValidatedAttempt<'_, '_, '_> {
+    /// Exact durable checkpoint identity validated into this one-shot value.
+    #[must_use]
+    pub fn checkpoint_id(&self) -> &str {
+        self.checkpoint.checkpoint_id()
+    }
+
+    /// Closed durable phase validated into this one-shot value.
+    #[must_use]
+    pub const fn phase(&self) -> crate::journal::AttemptPhase {
+        self.checkpoint.phase()
+    }
+
+    /// Reload the exact checkpoint and drive it until terminal or safely parked.
+    ///
+    /// This consumes the validation authority. A changed checkpoint is refused
+    /// before the existing recovery loop can inspect an armed prefix or launch
+    /// either child.
+    ///
+    /// # Errors
+    ///
+    /// Refuses stale, changed, malformed, noncanonical, or incompatible state,
+    /// as well as every failure already reported by [`start`] and [`resume`].
+    pub fn drive(self) -> Result<DriverProgress, DriverError> {
+        let Self {
+            session,
+            context,
+            checkpoint,
+        } = self;
+        let checkpoint = reload_exact_checkpoint(session, &checkpoint)?;
+        context.validate_checkpoint(&checkpoint)?;
+        drive_loop(session, &context, checkpoint)
+    }
+}
+
+/// Prepare and durably bind a new exact attempt without launching a child.
+///
+/// The returned value retains all live execution authority so an outer durable
+/// host can arm its own fence before consuming [`ValidatedAttempt::drive`].
+///
+/// # Errors
+///
+/// Refuses changed packages, planning, invocation authority, target/runtime
+/// locks, existing journal state, or semantic correlation.
+pub fn prepare<'session, 'journal, 'authority>(
+    session: &'session AttemptSession<'journal>,
+    request: &DriverRequest<'authority>,
+) -> Result<ValidatedAttempt<'session, 'journal, 'authority>, DriverError>
+where
+    'journal: 'session,
+{
+    let context = Context::reconstruct(request)?;
+    let checkpoint = publish_prepared(session, &context.inputs, &context.durable_guard)?;
+    context.validate_checkpoint(&checkpoint)?;
+    Ok(ValidatedAttempt {
+        session,
+        context,
+        checkpoint,
+    })
+}
+
+/// Reconstruct all live authority and validate one existing exact attempt
+/// without advancing it or launching a child.
+///
+/// # Errors
+///
+/// Refuses missing, changed, malformed, noncanonical, or incompatible state.
+pub fn validate_existing<'session, 'journal, 'authority>(
+    session: &'session AttemptSession<'journal>,
+    request: &DriverRequest<'authority>,
+) -> Result<ValidatedAttempt<'session, 'journal, 'authority>, DriverError>
+where
+    'journal: 'session,
+{
+    let context = Context::reconstruct(request)?;
+    let checkpoint = session.load()?;
+    context.validate_checkpoint(&checkpoint)?;
+    Ok(ValidatedAttempt {
+        session,
+        context,
+        checkpoint,
+    })
+}
+
 /// Start a new exact attempt and drive it until terminal or safely parked.
 ///
 /// # Errors
@@ -121,13 +222,7 @@ pub fn start(
     session: &AttemptSession<'_>,
     request: &DriverRequest<'_>,
 ) -> Result<DriverProgress, DriverError> {
-    let context = Context::reconstruct(request)?;
-    let prepared = AttemptCheckpoint::prepared(context.inputs.clone())?;
-    let bytes = prepared.canonical_bytes()?;
-    context.durable_guard.reject_canonical_bytes(&bytes)?;
-    let checkpoint = session.create_exact(&prepared, &bytes)?;
-    context.validate_checkpoint(&checkpoint)?;
-    drive(session, &context, checkpoint)
+    prepare(session, request)?.drive()
 }
 
 /// Resume one exact attempt and drive it until terminal or safely parked.
@@ -139,10 +234,34 @@ pub fn resume(
     session: &AttemptSession<'_>,
     request: &DriverRequest<'_>,
 ) -> Result<DriverProgress, DriverError> {
-    let context = Context::reconstruct(request)?;
-    let checkpoint = session.load()?;
-    context.validate_checkpoint(&checkpoint)?;
-    drive(session, &context, checkpoint)
+    validate_existing(session, request)?.drive()
+}
+
+fn publish_prepared(
+    session: &AttemptSession<'_>,
+    inputs: &AttemptInputs,
+    durable_guard: &DurableAuthorityGuard,
+) -> Result<AttemptCheckpoint, DriverError> {
+    let prepared = AttemptCheckpoint::prepared(inputs.clone())?;
+    let bytes = prepared.canonical_bytes()?;
+    durable_guard.reject_canonical_bytes(&bytes)?;
+    session
+        .create_exact(&prepared, &bytes)
+        .map_err(DriverError::Journal)
+}
+
+fn reload_exact_checkpoint(
+    session: &AttemptSession<'_>,
+    expected: &AttemptCheckpoint,
+) -> Result<AttemptCheckpoint, DriverError> {
+    let actual = session.load()?;
+    if actual != *expected {
+        return Err(DriverError::Journal(JournalError::StaleCheckpoint {
+            expected: expected.checkpoint_id().to_owned(),
+            actual: actual.checkpoint_id().to_owned(),
+        }));
+    }
+    Ok(actual)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -278,6 +397,7 @@ struct Context<'authority> {
     provider_artifact: &'authority QualifiedNativeArtifact,
     attester_artifact: &'authority QualifiedNativeArtifact,
     runtime: &'authority QualifiedNativeRuntime,
+    target: &'authority TargetExecutionGuard,
     authority: &'authority AuthorityDocument,
     process_limits: AttemptProcessLimits,
     plan: SemanticPlan,
@@ -289,7 +409,7 @@ struct Context<'authority> {
 
 impl<'authority> Context<'authority> {
     #[allow(clippy::too_many_lines)]
-    fn reconstruct(request: &'authority DriverRequest<'authority>) -> Result<Self, DriverError> {
+    fn reconstruct(request: &DriverRequest<'authority>) -> Result<Self, DriverError> {
         // This is deliberately first: both start and resume reject
         // caller-controlled durable secrets before package/runtime work and,
         // for start, before the journal can be created.
@@ -448,6 +568,7 @@ impl<'authority> Context<'authority> {
             provider_artifact: request.provider_artifact,
             attester_artifact: request.attester_artifact,
             runtime: request.runtime,
+            target: request.target,
             authority: request.authority,
             process_limits: request.process_limits,
             plan,
@@ -459,6 +580,7 @@ impl<'authority> Context<'authority> {
     }
 
     fn validate_checkpoint(&self, checkpoint: &AttemptCheckpoint) -> Result<(), DriverError> {
+        self.target.binding().validate()?;
         self.durable_guard
             .reject_canonical_bytes(&checkpoint.canonical_bytes()?)?;
         checkpoint.validate()?;
@@ -529,7 +651,7 @@ impl<'authority> Context<'authority> {
     clippy::too_many_lines,
     reason = "the exhaustive journal recovery-action match is intentionally kept together"
 )]
-fn drive(
+fn drive_loop(
     session: &AttemptSession<'_>,
     context: &Context<'_>,
     mut checkpoint: AttemptCheckpoint,
@@ -2187,6 +2309,92 @@ mod tests {
             admission_policy: ExactJson::new(json!({"safe": "admission"})).unwrap(),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn prepared_publication_seam_stops_before_every_launch_authority() {
+        let temporary = tempfile::tempdir().unwrap();
+        let journal =
+            crate::journal::AttemptJournal::new(temporary.path().join("attempt")).unwrap();
+        let session = journal.begin_session().unwrap();
+        let inputs = test_attempt_inputs(&temporary);
+        let guard = DurableAuthorityGuard::from_authority(&authority()).unwrap();
+
+        // `publish_prepared` is the only state-changing helper used by
+        // `prepare` after reconstruction. Its type has no artifact, runtime,
+        // target authority, or launch function to consume.
+        let prepared = publish_prepared(&session, &inputs, &guard).unwrap();
+
+        assert_eq!(prepared.phase(), crate::journal::AttemptPhase::Prepared);
+        assert!(prepared.provider_receipts().is_empty());
+        assert!(prepared.attester_receipts().is_empty());
+        assert!(prepared.provider_decisive().is_none());
+        assert!(prepared.attester_decisive().is_none());
+        assert!(prepared.resolution().is_none());
+        assert_eq!(prepared.recovery_action(), RecoveryAction::ArmProvider);
+        assert_eq!(session.load().unwrap(), prepared);
+    }
+
+    #[test]
+    fn existing_checkpoint_load_is_exact_and_non_advancing() {
+        let temporary = tempfile::tempdir().unwrap();
+        let journal =
+            crate::journal::AttemptJournal::new(temporary.path().join("attempt")).unwrap();
+        let session = journal.begin_session().unwrap();
+        let inputs = test_attempt_inputs(&temporary);
+        let guard = DurableAuthorityGuard::from_authority(&authority()).unwrap();
+        let prepared = publish_prepared(&session, &inputs, &guard).unwrap();
+        let path = journal.directory_path().join("checkpoint.json");
+        let before = std::fs::read(&path).unwrap();
+
+        let loaded = session.load().unwrap();
+        let after = std::fs::read(path).unwrap();
+
+        assert_eq!(loaded, prepared);
+        assert_eq!(loaded.phase(), crate::journal::AttemptPhase::Prepared);
+        assert_eq!(loaded.recovery_action(), RecoveryAction::ArmProvider);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn drive_reload_rejects_a_checkpoint_changed_after_validation() {
+        let temporary = tempfile::tempdir().unwrap();
+        let journal =
+            crate::journal::AttemptJournal::new(temporary.path().join("attempt")).unwrap();
+        let session = journal.begin_session().unwrap();
+        let inputs = test_attempt_inputs(&temporary);
+        let guard = DurableAuthorityGuard::from_authority(&authority()).unwrap();
+        let prepared = publish_prepared(&session, &inputs, &guard).unwrap();
+        let armed = prepared.arm_provider().unwrap();
+        session.replace(prepared.checkpoint_id(), &armed).unwrap();
+
+        assert!(matches!(
+            reload_exact_checkpoint(&session, &prepared),
+            Err(DriverError::Journal(JournalError::StaleCheckpoint {
+                expected,
+                actual,
+            })) if expected == prepared.checkpoint_id() && actual == armed.checkpoint_id()
+        ));
+        assert_eq!(
+            session.load().unwrap().recovery_action(),
+            RecoveryAction::InspectProviderPrefix { may_launch: true }
+        );
+    }
+
+    #[test]
+    fn exact_reload_preserves_the_validated_recovery_action() {
+        let temporary = tempfile::tempdir().unwrap();
+        let journal =
+            crate::journal::AttemptJournal::new(temporary.path().join("attempt")).unwrap();
+        let session = journal.begin_session().unwrap();
+        let inputs = test_attempt_inputs(&temporary);
+        let guard = DurableAuthorityGuard::from_authority(&authority()).unwrap();
+        let prepared = publish_prepared(&session, &inputs, &guard).unwrap();
+
+        let loaded = reload_exact_checkpoint(&session, &prepared).unwrap();
+
+        assert_eq!(loaded, prepared);
+        assert_eq!(loaded.recovery_action(), RecoveryAction::ArmProvider);
     }
 
     fn maximal_exact_json() -> ExactJson {
