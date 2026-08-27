@@ -759,6 +759,7 @@ dependencies = [
  "gooir-planning",
  "libc",
  "object",
+ "reqwest",
  "rustix",
  "serde",
  "serde_json",
