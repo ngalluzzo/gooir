@@ -619,19 +619,6 @@ impl DerivationFacade {
         H: DerivationHost,
         H::Error: fmt::Display,
     {
-        let invocation = self
-            .link_step(context.prepared, step, context.produced)
-            .map_err(|(stage, detail)| {
-                failed(
-                    &context.prepared.route,
-                    Some(&step.capability),
-                    stage,
-                    detail,
-                    None,
-                    None,
-                    context.admitted.to_vec(),
-                )
-            })?;
         let attester = context
             .prepared
             .attesters
@@ -643,6 +630,24 @@ impl DerivationFacade {
                     Some(&step.capability),
                     FailureStage::Linking,
                     "selected attester is absent".to_owned(),
+                    None,
+                    None,
+                    context.admitted.to_vec(),
+                )
+            })?;
+        let invocation = self
+            .link_step(
+                context.prepared,
+                step,
+                context.produced,
+                &attester.authority.suite,
+            )
+            .map_err(|(stage, detail)| {
+                failed(
+                    &context.prepared.route,
+                    Some(&step.capability),
+                    stage,
+                    detail,
                     None,
                     None,
                     context.admitted.to_vec(),
@@ -697,8 +702,9 @@ impl DerivationFacade {
         prepared: &PreparedDerivation,
         step: &SelectedRouteStep,
         produced: &BTreeMap<(CapabilityId, PortName), AdmittedOutput>,
+        suite: &ConformanceSuiteId,
     ) -> Result<CapabilityInvocation, (FailureStage, String)> {
-        let planned = planned_capability(&prepared.plan, &step.capability).ok_or_else(|| {
+        planned_capability(&prepared.plan, &step.capability).ok_or_else(|| {
             (
                 FailureStage::Linking,
                 "selected capability left the exact plan".to_owned(),
@@ -749,8 +755,6 @@ impl DerivationFacade {
             .map_err(|error| (FailureStage::Linking, error.to_string()))?;
             linked_inputs.push(input);
         }
-        let suite = ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
-            .map_err(|error| (FailureStage::Linking, error.to_string()))?;
         self.planner
             .link_invocation(
                 &prepared.plan,
@@ -759,7 +763,7 @@ impl DerivationFacade {
                     offer: &step.offer,
                     selection_extensions: BTreeMap::new(),
                     inputs: linked_inputs,
-                    conformance_suite: suite,
+                    conformance_suite: suite.clone(),
                     invocation_extensions: BTreeMap::new(),
                 },
             )
@@ -1163,13 +1167,16 @@ fn validate_explicit_attesters(
             .iter()
             .find(|step| step.capability == selected.capability)
             .ok_or_else(|| "selected attester has no route step".to_owned())?;
-        let suite = ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
-            .map_err(|error| error.to_string())?;
-        if !independent_attesters(inventory, &suite, planned, &step.offer)
-            .contains(&&selected.authority)
+        let offer = planned
+            .offers
+            .iter()
+            .find(|offer| offer.offer_id == step.offer)
+            .ok_or_else(|| "selected route offer left the plan".to_owned())?;
+        if selected.authority.attester.implementation == offer.implementation
+            || selected.authority.attester.artifact_digest == offer.artifact_digest
         {
             return Err(format!(
-                "selected attester for {} is incompatible or not independent",
+                "selected attester for {} is not independent of the provider",
                 selected.capability
             ));
         }

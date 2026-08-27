@@ -404,7 +404,7 @@ mod tests {
         LoadLimits, PackageId, PackageManifest, PackageRegistry, PackageResource, ResourceDigest,
         ResourceName, ValueKindDeclaration, load_local_package, write_manifest,
     };
-    use gooir_planning::PlanLimits;
+    use gooir_planning::{PlanLimits, RouteSelection, SemanticPlanner};
     use serde_json::json;
 
     use super::*;
@@ -1178,5 +1178,79 @@ mod tests {
         assert!(failed.provider_failure.is_some());
         assert_eq!(fixture.host.invocations, 1);
         assert_eq!(fixture.host.assessments, 0);
+    }
+
+    #[test]
+    fn explicit_selection_can_fix_a_nondefault_exact_suite() {
+        let fixture = fixture(true);
+        let registry = package_registry(
+            fixture.invocation.specification.clone(),
+            fixture.invocation.selection.offer.implementation.clone(),
+            true,
+        );
+        let planner = SemanticPlanner::from_registry(&registry, limits().planning).unwrap();
+        let plan = planner
+            .plan(
+                [fixture.invocation.inputs[0].fact.value_kind.clone()],
+                fixture.output.value_kind.clone(),
+            )
+            .unwrap();
+        let route = planner
+            .select_route(&plan, RouteSelection::UniqueOnly)
+            .unwrap();
+        let override_authority = ConformanceAuthority::new(
+            ConformanceSuiteId::new("test.conformance", "explicit", VERSION),
+            ConformanceAttester::new(
+                ImplementationId::new("test.attester", "explicit", VERSION),
+                artifact('d'),
+                BTreeMap::new(),
+            )
+            .unwrap(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let policy = AdmissionPolicy::new(
+            fixture.policy.decision_authority.clone(),
+            vec![override_authority.clone()],
+            fixture.policy.accepted_observations.clone(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let binding = InitialBinding {
+            capability: route.steps[0].capability.clone(),
+            input_port: route.steps[0].inputs[0].input_port.clone(),
+            admitted: fixture.invocation.inputs[0].admitted.clone(),
+            extensions: BTreeMap::new(),
+        };
+        let request = DerivationRequest {
+            target: fixture.output.value_kind.clone(),
+            inputs: vec![fixture.invocation.inputs[0].admitted.clone()],
+            selection: DerivationSelection::Explicit {
+                selection: Box::new(ExplicitSelection {
+                    route: route.clone(),
+                    initial_bindings: vec![binding],
+                    target_input: None,
+                    attesters: vec![SelectedAttester {
+                        capability: route.steps[0].capability.clone(),
+                        authority: override_authority.clone(),
+                        extensions: BTreeMap::new(),
+                    }],
+                    extensions: BTreeMap::new(),
+                }),
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        };
+        let facade = DerivationFacade::new(&registry, limits()).unwrap();
+        let attesters =
+            AttesterInventory::new([override_authority], limits().max_attesters).unwrap();
+        let mut ledger = fixture.ledger;
+        let mut host = TestHost::new(fixture.output);
+
+        let answer = facade.answer(&mut ledger, &policy, &attesters, &mut host, &request);
+
+        assert!(matches!(answer, Answer::Produced(_)));
+        assert_eq!(host.invocations, 1);
+        assert_eq!(host.assessments, 1);
     }
 }
