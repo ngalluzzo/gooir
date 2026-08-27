@@ -24,9 +24,20 @@
 
 #![cfg(target_os = "macos")]
 
+#[path = "support/fleetd_http.rs"]
+pub(crate) mod http;
+
 #[path = "support/fleetd_crash.rs"]
 #[allow(dead_code)]
 pub(crate) mod crash;
+
+#[path = "support/fleetd_semantic_matrix.rs"]
+#[allow(dead_code)]
+pub(crate) mod semantic_matrix;
+
+#[path = "support/fleetd_attester.rs"]
+#[allow(dead_code)]
+pub(crate) mod attester;
 
 use std::collections::BTreeMap;
 use std::env;
