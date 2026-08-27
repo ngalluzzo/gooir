@@ -581,6 +581,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-derive"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gooir-doctor"
 version = "0.1.0"
 dependencies = [

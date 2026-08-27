@@ -3,6 +3,7 @@ members = [
     "crates/gooir-capability",
     "crates/gooir-cli",
     "crates/gooir-doctor",
+    "crates/gooir-derive",
     "crates/gooir-identity",
     "crates/gooir-package",
     "crates/gooir-planning",
@@ -22,6 +23,7 @@ license = "Apache-2.0"
 gooir-capability = { path = "crates/gooir-capability" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-doctor = { path = "crates/gooir-doctor" }
+gooir-derive = { path = "crates/gooir-derive" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-package = { path = "crates/gooir-package" }
 gooir-planning = { path = "crates/gooir-planning" }

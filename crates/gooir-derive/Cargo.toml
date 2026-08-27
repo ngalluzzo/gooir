@@ -1,0 +1,19 @@
+[package]
+name = "gooir-derive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gooir-capability.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
