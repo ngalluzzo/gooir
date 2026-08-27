@@ -590,6 +590,7 @@ dependencies = [
  "gooir-capability",
  "gooir-package",
  "gooir-planning",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

@@ -17,7 +17,6 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use gooir_capability::assessment::AssessmentRequest;
@@ -26,6 +25,7 @@ use gooir_capability::protocol::{
     CapabilityCandidate, CapabilityInvocation, CapabilityResult, OfferId,
 };
 use gooir_package::{PackageId, PackageRegistry, ResourceName};
+use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 use serde::{Deserialize, Serialize};
 
 use crate::DerivationHost;
@@ -243,75 +243,187 @@ fn run_artifact(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(LocalStdioError::Spawn)?;
-    let mut stdin = child.stdin.take().ok_or(LocalStdioError::MissingPipe)?;
-    let mut stdout = child.stdout.take().ok_or(LocalStdioError::MissingPipe)?;
-    let mut stderr = child.stderr.take().ok_or(LocalStdioError::MissingPipe)?;
-    let input = request.to_vec();
-    let stdin_handle = thread::spawn(move || -> Result<(), std::io::Error> {
-        stdin.write_all(&input)?;
-        stdin.flush()
-    });
-    let stdout_limit = limits.max_stdout_bytes.get();
-    let stdout_handle = thread::spawn(move || read_bounded(&mut stdout, stdout_limit));
-    let stderr_limit = limits.max_stderr_bytes.get();
-    let stderr_handle = thread::spawn(move || read_bounded(&mut stderr, stderr_limit));
+    let stdin = child.stdin.take().ok_or(LocalStdioError::MissingPipe)?;
+    let stdout_pipe = child.stdout.take().ok_or(LocalStdioError::MissingPipe)?;
+    let stderr_pipe = child.stderr.take().ok_or(LocalStdioError::MissingPipe)?;
+    if let Err(error) = configure_nonblocking(&stdin)
+        .and_then(|()| configure_nonblocking(&stdout_pipe))
+        .and_then(|()| configure_nonblocking(&stderr_pipe))
+    {
+        let _ = kill_and_reap(&mut child);
+        return Err(error);
+    }
 
+    let collected = collect_artifact_io(
+        &mut child,
+        stdin,
+        stdout_pipe,
+        stderr_pipe,
+        request,
+        limits,
+        timeout,
+    )?;
+    if !collected.status.success() {
+        return Err(LocalStdioError::ArtifactExit {
+            status: collected.status,
+            stderr: first_line(&String::from_utf8_lossy(&collected.stderr)).to_owned(),
+        });
+    }
+    if collected.stdout.is_empty() {
+        return Err(LocalStdioError::EmptyResponse);
+    }
+    Ok(collected.stdout)
+}
+
+fn collect_artifact_io(
+    child: &mut std::process::Child,
+    stdin: std::process::ChildStdin,
+    mut stdout_pipe: std::process::ChildStdout,
+    mut stderr_pipe: std::process::ChildStderr,
+    request: &[u8],
+    limits: LocalStdioLimits,
+    timeout: Duration,
+) -> Result<CollectedOutput, LocalStdioError> {
     let deadline = Instant::now()
         .checked_add(timeout)
         .expect("timeout range was checked before artifact launch");
-    let (status, timed_out) = loop {
-        if let Some(status) = child.try_wait().map_err(LocalStdioError::Wait)? {
-            break (status, false);
-        }
+    let mut stdin = Some(stdin);
+    let mut stdin_offset = 0;
+    let mut stdout = BoundedOutput::new(limits.max_stdout_bytes.get());
+    let mut stderr = BoundedOutput::new(limits.max_stderr_bytes.get());
+    let mut status = None;
+    let mut failure = None;
+
+    loop {
         let now = Instant::now();
         if now >= deadline {
-            // Kill is immediately followed by wait: a timeout never abandons
-            // an unreaped child.
-            let kill = child.kill();
-            let reaped = child.wait().map_err(LocalStdioError::Wait)?;
-            if let Err(error) = kill
-                && reaped.success()
-            {
-                return Err(LocalStdioError::Kill(error));
-            }
-            break (reaped, true);
+            failure = Some(LocalStdioError::TimedOut);
+            break;
         }
-        thread::sleep((deadline - now).min(Duration::from_millis(5)));
-    };
 
-    let stdin_result = stdin_handle
-        .join()
-        .map_err(|_| LocalStdioError::IoThreadPanicked)?;
-    let stdout = stdout_handle
-        .join()
-        .map_err(|_| LocalStdioError::IoThreadPanicked)??;
-    let stderr = stderr_handle
-        .join()
-        .map_err(|_| LocalStdioError::IoThreadPanicked)??;
-    if timed_out {
-        return Err(LocalStdioError::TimedOut);
+        let mut progressed = false;
+        if let Some(pipe) = stdin.as_mut() {
+            if stdin_offset < request.len() {
+                match write_available(pipe, request, &mut stdin_offset) {
+                    Ok(wrote) => progressed |= wrote,
+                    Err(error) => {
+                        failure = Some(LocalStdioError::WriteStdin(error));
+                        break;
+                    }
+                }
+            }
+            if stdin_offset == request.len() {
+                stdin.take();
+                progressed = true;
+            }
+        }
+        match stdout.read_available(&mut stdout_pipe) {
+            Ok(read) => progressed |= read,
+            Err(error) => {
+                failure = Some(LocalStdioError::ReadOutput(error));
+                break;
+            }
+        }
+        match stderr.read_available(&mut stderr_pipe) {
+            Ok(read) => progressed |= read,
+            Err(error) => {
+                failure = Some(LocalStdioError::ReadOutput(error));
+                break;
+            }
+        }
+        if stdout.limit_reached() {
+            failure = Some(LocalStdioError::StdoutLimitExceeded(
+                limits.max_stdout_bytes.get(),
+            ));
+            break;
+        }
+        if stderr.limit_reached() {
+            failure = Some(LocalStdioError::StderrLimitExceeded(
+                limits.max_stderr_bytes.get(),
+            ));
+            break;
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(reaped)) => {
+                    status = Some(reaped);
+                    progressed = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    failure = Some(LocalStdioError::Wait(error));
+                    break;
+                }
+            }
+        }
+        if status.is_some() && stdin.is_none() && stdout.eof && stderr.eof {
+            break;
+        }
+        if !progressed {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            std::thread::sleep(remaining.min(Duration::from_millis(1)));
+        }
     }
-    stdin_result.map_err(LocalStdioError::WriteStdin)?;
-    if stdout.limit_reached {
-        return Err(LocalStdioError::StdoutLimitExceeded(
-            limits.max_stdout_bytes.get(),
-        ));
+
+    drop(stdin);
+    if let Some(error) = failure {
+        if status.is_none() {
+            kill_and_reap(child)?;
+        }
+        return Err(error);
     }
-    if stderr.limit_reached {
-        return Err(LocalStdioError::StderrLimitExceeded(
-            limits.max_stderr_bytes.get(),
-        ));
+    let status = status.expect("successful collection requires a reaped child");
+    Ok(CollectedOutput {
+        status,
+        stdout: stdout.bytes,
+        stderr: stderr.bytes,
+    })
+}
+
+struct CollectedOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn configure_nonblocking<Fd: rustix::fd::AsFd>(fd: &Fd) -> Result<(), LocalStdioError> {
+    let flags =
+        fcntl_getfl(fd).map_err(|error| LocalStdioError::ConfigurePipe(error.to_string()))?;
+    fcntl_setfl(fd, flags | OFlags::NONBLOCK)
+        .map_err(|error| LocalStdioError::ConfigurePipe(error.to_string()))
+}
+
+fn write_available(
+    writer: &mut impl Write,
+    input: &[u8],
+    offset: &mut usize,
+) -> Result<bool, std::io::Error> {
+    match writer.write(&input[*offset..]) {
+        Ok(0) => Err(std::io::ErrorKind::WriteZero.into()),
+        Ok(written) => {
+            *offset += written;
+            Ok(true)
+        }
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
     }
-    if !status.success() {
-        return Err(LocalStdioError::ArtifactExit {
-            status,
-            stderr: first_line(&String::from_utf8_lossy(&stderr.bytes)).to_owned(),
-        });
+}
+
+fn kill_and_reap(child: &mut std::process::Child) -> Result<ExitStatus, LocalStdioError> {
+    if let Err(kill_error) = child.kill() {
+        return match child.try_wait().map_err(LocalStdioError::Wait)? {
+            Some(reaped) => Ok(reaped),
+            None => Err(LocalStdioError::Kill(kill_error)),
+        };
     }
-    if stdout.bytes.is_empty() {
-        return Err(LocalStdioError::EmptyResponse);
-    }
-    Ok(stdout.bytes)
+    child.wait().map_err(LocalStdioError::Wait)
 }
 
 fn materialize_artifact(path: &Path, artifact: &[u8]) -> Result<(), LocalStdioError> {
@@ -327,24 +439,55 @@ fn materialize_artifact(path: &Path, artifact: &[u8]) -> Result<(), LocalStdioEr
         .map_err(LocalStdioError::PrepareArtifact)
 }
 
-struct BoundedRead {
+struct BoundedOutput {
     bytes: Vec<u8>,
-    limit_reached: bool,
+    limit: usize,
+    eof: bool,
 }
 
-fn read_bounded(reader: &mut impl Read, limit: usize) -> Result<BoundedRead, LocalStdioError> {
-    let take = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
-    let mut bytes = Vec::new();
-    reader
-        .take(take)
-        .read_to_end(&mut bytes)
-        .map_err(LocalStdioError::ReadOutput)?;
-    let limit_reached = bytes.len() > limit;
-    bytes.truncate(limit);
-    Ok(BoundedRead {
-        bytes,
-        limit_reached,
-    })
+impl BoundedOutput {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+            eof: false,
+        }
+    }
+
+    fn read_available(&mut self, reader: &mut impl Read) -> Result<bool, std::io::Error> {
+        if self.eof {
+            return Ok(false);
+        }
+        let mut buffer = [0_u8; 8_192];
+        let remaining = self
+            .limit
+            .saturating_add(1)
+            .saturating_sub(self.bytes.len());
+        let read_len = remaining.min(buffer.len());
+        match reader.read(&mut buffer[..read_len]) {
+            Ok(0) => {
+                self.eof = true;
+                Ok(true)
+            }
+            Ok(read) => {
+                self.bytes.extend_from_slice(&buffer[..read]);
+                Ok(true)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn limit_reached(&self) -> bool {
+        self.bytes.len() > self.limit
+    }
 }
 
 fn first_line(text: &str) -> &str {
@@ -380,11 +523,11 @@ pub enum LocalStdioError {
     PrepareArtifact(std::io::Error),
     Spawn(std::io::Error),
     MissingPipe,
+    ConfigurePipe(String),
     Wait(std::io::Error),
     Kill(std::io::Error),
     WriteStdin(std::io::Error),
     ReadOutput(std::io::Error),
-    IoThreadPanicked,
     TimeoutOutsidePlatformRange,
     TimedOut,
     StdoutLimitExceeded(usize),
@@ -435,11 +578,13 @@ impl fmt::Display for LocalStdioError {
             Self::PrepareArtifact(error) => write!(formatter, "artifact staging failed: {error}"),
             Self::Spawn(error) => write!(formatter, "artifact launch failed: {error}"),
             Self::MissingPipe => formatter.write_str("artifact stdio pipe is unavailable"),
+            Self::ConfigurePipe(detail) => {
+                write!(formatter, "artifact stdio configuration failed: {detail}")
+            }
             Self::Wait(error) => write!(formatter, "artifact wait failed: {error}"),
             Self::Kill(error) => write!(formatter, "artifact termination failed: {error}"),
             Self::WriteStdin(error) => write!(formatter, "artifact stdin failed: {error}"),
             Self::ReadOutput(error) => write!(formatter, "artifact output failed: {error}"),
-            Self::IoThreadPanicked => formatter.write_str("artifact I/O worker panicked"),
             Self::TimeoutOutsidePlatformRange => {
                 formatter.write_str("artifact timeout is outside the platform clock range")
             }
@@ -515,7 +660,10 @@ mod tests {
             limits(32, 4, 32, 1_000),
         )
         .unwrap_err();
-        assert!(matches!(stdout, LocalStdioError::StdoutLimitExceeded(4)));
+        assert!(
+            matches!(stdout, LocalStdioError::StdoutLimitExceeded(4)),
+            "unexpected stdout failure: {stdout:?}"
+        );
 
         let stderr = run_artifact(
             b"#!/bin/sh\nprintf '12345' >&2\nprintf ok\n",
@@ -533,6 +681,66 @@ mod tests {
             b"#!/bin/sh\nwhile :; do :; done\n",
             b"",
             limits(32, 32, 32, 25),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, LocalStdioError::TimedOut),
+            "unexpected timeout failure: {error:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn deadline_bounds_collection_when_a_descendant_retains_output_descriptors() {
+        let started = Instant::now();
+        let error = run_artifact(
+            br"#!/usr/bin/python3
+import os, time
+
+if os.fork() == 0:
+    os.close(0)
+    directory = os.getcwd()
+    deadline = time.monotonic() + 5
+    while os.path.isdir(directory) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    os._exit(0)
+
+while True:
+    pass
+",
+            b"",
+            limits(32, 32, 32, 25),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, LocalStdioError::TimedOut),
+            "unexpected output-retention failure: {error:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn deadline_bounds_stdin_when_a_descendant_keeps_it_open_without_reading() {
+        let input = vec![b'x'; 2 * 1024 * 1024];
+        let started = Instant::now();
+        let error = run_artifact(
+            br"#!/usr/bin/python3
+import os, time
+
+if os.fork() == 0:
+    os.close(1)
+    os.close(2)
+    directory = os.getcwd()
+    deadline = time.monotonic() + 5
+    while os.path.isdir(directory) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    os._exit(0)
+
+while True:
+    pass
+",
+            &input,
+            limits(input.len(), 32, 32, 25),
         )
         .unwrap_err();
         assert!(matches!(error, LocalStdioError::TimedOut));

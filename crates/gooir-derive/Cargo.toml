@@ -10,6 +10,7 @@ gooir-package.workspace = true
 gooir-planning.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+rustix.workspace = true
 tempfile.workspace = true
 
 [dev-dependencies]
