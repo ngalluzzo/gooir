@@ -75,10 +75,13 @@ cargo run -q --bin gooir -- derive model_types \
   --plugin examples/plugins/typescript-types/plugin.json
 ```
 
-A provider is any program that reads one JSON document and writes another, so
-it need not be Rust, or compiled, or built here. The host names each manifest
+A provider's semantic ABI is one JSON document in and one JSON document out, so
+it need not be Rust, or compiled, or built here. Effectful proof hosts may also
+deliver bounded live authority over a separate inherited channel; that
+authority never enters the semantic document. The host names each manifest
 explicitly and measures the implementation itself — see
-[0019](docs/DECISIONS/0019_PLUGIN_LIFECYCLE.md).
+[0019](docs/DECISIONS/0019_PLUGIN_LIFECYCLE.md) and
+[0032](docs/DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md).
 
 ## How the crates are organised
 
@@ -98,7 +101,7 @@ direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Twenty-nine decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Thirty-two decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
@@ -112,6 +115,7 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md) — a screen is a state-scoped derived observation, not the semantic waist
 - [0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md) — agent activity recurs as a selected ordered projection
 - [0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) — dialects contain value kinds; execution hosts remain external
+- [0032](docs/DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md) — exact stateful replay against Fleetd before any generic effect interface
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).
@@ -270,6 +274,31 @@ analyzer line have been retired under decision 0031.
 gap with exact scope and provenance. The [Slice 1 record](docs/SLICE_1_DEMO.md)
 documents that retired proof; it is not an active command surface.
 
+## Stateful Fleetd proof
+
+The first stateful ecosystem capability is Fleetd-native: two independently
+packaged HTTP clients open or resolve one exact direct conversation while an
+independent attester re-observes Fleetd's public state. The proof-local host
+binds exact packages, selected offer, native runtime, target deployment,
+credential revision, limits, replay laws, conformance, and admission without
+adding Fleetd meaning to the generic substrate or changing Fleetd source.
+
+Real product tests cover both client orders, concurrent `201`/`200`
+convergence, target restart, exact immutable-mode `409`, altered-output
+withholding, commit-before-response host loss, loaded-arm substitution,
+attester recovery/capacity, and offline replay of all three terminal outcomes.
+A separate Fleetd H/Fleetd T proof carries one opaque invocation through public
+reserve, arm, block/requeue, and completion APIs. H treats the request and
+result as opaque. Target authority is confined to the credential-owning runner
+and its separately piped provider/attester children; it enters neither H nor a
+child environment.
+
+The H/T proof is intentionally bounded: runner discontinuities are controlled
+process exits, only the admitted path is nested through H, and it does not
+claim H-daemon restart or a single nested H-kill/T-commit fault. The target
+unknown-outcome, `Unable`, and `Withheld` laws are established by the separate
+stateful product proofs.
+
 ## Development
 
 ```bash
@@ -277,6 +306,16 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
+The normal workspace command compiles and registers, but does not execute, the
+effectful optimized proofs. The five real Fleetd tests (`fleetd_real`,
+`fleetd_crash`, `fleetd_semantic_matrix`, `fleetd_attester`, and `fleetd_host`)
+require clean externally built release binaries and the environment documented
+in `crates/fleetd-direct-conversation-external-host-proof/tests/fleetd_real.rs`;
+run each with `--release --ignored --exact`. The native supervisor/runtime and
+32 MiB aggregate-bound proofs are also explicit optimized ignored tests. The
+current native qualification proof is limited to the current aarch64 macOS
+host.
 
 Verification harnesses that need a live PostgreSQL:
 

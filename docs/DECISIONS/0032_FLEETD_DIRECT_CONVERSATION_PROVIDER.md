@@ -1,6 +1,6 @@
 # 0032 — A stateful Fleetd provider before a generic effect interface
 
-Status: accepted proof boundary
+Status: accepted and implemented proof boundary
 
 ## Context
 
@@ -73,9 +73,11 @@ one exact Fleetd deployment. It is not a base URL, credential, tenant selector,
 or process handle. It has no meaning without a host-qualified proof-local deployment
 lock that binds it to the exact Fleetd binary and revision, OpenAPI digest,
 controlled data-directory identity, target lock-file digest, and endpoint
-mapping. Provider and attester deployment policy resolve that same lock
-independently. The two agent IDs must already have been observed in that exact
-target; the provider never infers human, worker, author, or reviewer roles.
+mapping. The proof host resolves and validates that lock independently of both
+children, then supplies target-correlated live authority separately to the
+selected provider and attester. The two agent IDs must already have been
+observed in that exact target; the provider never infers human, worker, author,
+or reviewer roles.
 
 `dev.fleetd.conversation/direct_conversation_ref@0.1.0` contains:
 
@@ -150,12 +152,14 @@ interchangeability is not inferred only from the no-op path.
 The attester is a third exact artifact, packaged only as a retained resource.
 It is not a planner offer.
 
-Given the exact invocation, result, and candidate, it uses independently
-supplied read authority to call `GET /v1/conversations`. It locates the proposed
-conversation ID and verifies:
+Given the exact invocation, result, and candidate, it uses separately supplied
+live operator authority to call `GET /v1/conversations`. The proof host has
+already validated the target deployment, mapping, and credential revision; the
+attester itself correlates only the authority target with the invocation and
+does not resolve or validate the deployment lock, mapping, or credential
+revision. It locates the proposed conversation ID and verifies:
 
-- the target coordinate resolves to the verifier's exact host-qualified deployment
-  lock;
+- the authority target coordinate equals the exact invocation target;
 - the conversation is direct and active;
 - the returned members are exactly the canonical input pair;
 - both delivery modes match;
@@ -194,6 +198,12 @@ It clears the child environment, launches no shell, materializes only exact
 package-owned artifact bytes, uses an absolute measured executable, bounds
 standard input/output/error and wall time, and kills and reaps the child
 process group on enforcement.
+
+The current native qualification is limited to aarch64 macOS. It relies on the
+qualified root/SIP dyld cache, stable boot identity, and a closed no-late-dlopen
+profile. It does not establish Apple signer identity or resist privileged root,
+task-port, or in-memory modification, and it does not attest child pages after
+launch.
 
 Each provider client receives only its exact invocation on standard input; the
 attester receives only its exact assessment request there. Endpoint and bearer
@@ -304,13 +314,11 @@ GET reobservation before admission, which is the trust boundary; the process
 host does not learn Fleetd response semantics merely to pre-validate a
 candidate.
 
-### Fleetd is the state owner now and the execution host next
+### Fleetd is both the state owner and an opaque execution host
 
-This proof calls Fleetd as the authoritative mutable product. It does not yet
-claim that Fleetd is dispatching GOOIR work.
-
-The following integration uses a distinct Fleetd deployment as the execution
-host. It does not make the stateful target coordinate its own work:
+The stateful proof calls Fleetd as the authoritative mutable product. A
+separate implemented integration uses another Fleetd deployment as the opaque
+execution host without making the target coordinate its own work:
 
 ```text
 Host Fleetd H
@@ -323,16 +331,31 @@ Host Fleetd H
   -> independent conformance and admission
 ```
 
-H and T must use distinct processes, URLs, credentials, and SQLite stores. The
-target operator credential may enter only the external runner and selected
-client; it never enters H, an opaque message, the attempt journal, or a Fleetd
-plugin. The conversation must appear only in T.
+H and T use distinct processes, URLs, operator credentials, and SQLite stores.
+The external runner alone receives T's live authority and supplies it over
+separate bounded pipes to the selected provider and independent attester. It
+never enters H, the opaque message/result, the attempt journal, a Fleetd
+plugin, or a child environment. The conversation appears only in T.
 
-That integration begins with the already qualified deterministic data-model
-provider rather than coupling the host proof to this Fleetd-native capability.
-H continues to own messages, leases, worker ownership, ambiguity, restart
-recovery, and operator visibility. It learns no GOOIR value kinds, direct-pair
-semantics, provider-specific payloads, target credentials, or admission rules.
+The implemented minimum carries this Fleetd-native direct-conversation
+invocation, not the deterministic data-model provider described as the first
+host target in Decision 0031. The runner prepares an exact no-effect GOOIR
+checkpoint, observes H's durable arm, and exits. Public block/requeue creates a
+fresh H invocation which validates and drives the same attempt; a further
+fresh runner replays the terminal attempt with T offline before completing H.
+The H completion proxy withholds a committed `201` response and exact replay
+returns `200`. H continues to own messages, leases, fencing, ambiguity,
+recovery, and operator visibility while learning no GOOIR value kinds,
+direct-pair semantics, provider payloads, target credentials, or admission
+rules.
+
+This H/T claim is deliberately narrow. The runner discontinuities are
+controlled process exits rather than injected kills; neither Fleetd daemon is
+restarted in this fixture; only the admitted terminal is carried through H;
+and T's request receives `201` normally rather than reproducing the nested
+commit-before-response `201`→`200` window. The separate stateful product proofs
+establish Target restart, that unknown-outcome recovery, typed `Unable`,
+withheld admission, and offline replay of all three terminals.
 
 The two directions are deliberately complementary: ecosystem providers may
 operate Fleetd's public product capabilities, and Fleetd may durably coordinate
@@ -414,12 +437,20 @@ The proof passes only when:
 16. credentials and base URLs are absent from semantic documents, receipts,
     journals, logs, and test diagnostics;
 17. `gooir-core` remains absent and Fleetd source remains unchanged; and
-18. formatting, Clippy, workspace tests, real provider tests, and independent
-    exact-content review all pass.
+18. formatting, Clippy, workspace tests, explicit optimized real-provider
+    proofs, and independent exact-content review all pass.
 
-The later host integration additionally passes only when H and T are distinct,
-the conversation appears only in T, and T's operator credential is absent from
-H's store, messages, logs, plugins, and worker environment.
+The real Fleetd, native supervisor/runtime, and aggregate-bound proofs are
+optimized ignored tests, not part of the normal workspace test execution.
+Normal tests compile and register them. Product qualification requires the
+documented clean external release binaries and explicit `--release --ignored
+--exact` runs. The Fleetd proofs are currently macOS-only, and the native
+runtime proof is current-host aarch64 macOS.
+
+The host integration additionally passes only when H and T are distinct, the
+conversation appears only in T, and T's operator credential is absent from H's
+store, messages, result, logs, plugins, and worker environment. Its narrower
+empirical limits are stated above.
 
 ## Consequences
 

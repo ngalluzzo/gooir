@@ -119,6 +119,33 @@ teaching the semantic substrate about pages, JavaScript, Fleetd, or HTTP.
 
 See [decision 0013](DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
 
+## Exact external-host composition
+
+Execution remains outside the generic semantic substrate. The stateful Fleetd
+proof composes one exact installed package set, caller-selected offer, measured
+native provider and attester artifacts, qualified runtime, host-validated
+target deployment, process limits, replay laws, and contextual admission
+policy. Fleetd-specific values and HTTP behavior live in separately versioned
+contract/provider/attester packages and one proof-local host crate; none enter
+`gooir-capability`, `gooir-package`, or `gooir-planning`.
+
+The proof host alone resolves deployment locks and owns credentials. Provider
+and attester semantic requests travel over standard input, while bounded live
+operator authority travels over a separate inherited pipe and is excluded from
+semantic documents, receipts, journals, and diagnostics. The provider's result
+is only a candidate. A distinct attester artifact independently performs a
+bounded Fleetd GET, and admission still applies local policy.
+
+Fleetd is also the first durable consumer. A distinct Host Fleetd H retains an
+opaque request, lease/fence state, block/requeue history, and opaque result. An
+external runner prepares and validates the exact GOOIR attempt before H arms
+it, then drives a distinct Target Fleetd T and completes H through public APIs.
+H learns no value kind, provider payload, target credential, or admission law.
+The current proof covers controlled runner discontinuities, admitted terminal
+replay, and lost H-completion response; H-daemon restart, H-carried
+`Unable`/`Withheld`, and one nested H-kill/T-commit injection remain outside its
+claim. See [decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md).
+
 ## Multiple semantic waists
 
 GOOIR does not flatten every software domain into one universal semantic

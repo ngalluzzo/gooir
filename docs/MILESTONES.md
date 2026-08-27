@@ -35,12 +35,28 @@ independently assessed candidate, and recovers real process exits across every
 durable admitted-path phase. Armed phases conservatively park because that
 credential-free protocol cannot prove an unknown execution is safe to repeat.
 
-The next checkpoint is [Decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md):
-two selectable client implementations composed with one exact Fleetd target.
-It proves stateful effect recovery against a real product API before a distinct
-Fleetd deployment supplies opaque durable coordination for the external GOOIR
-runner. The vocabulary remains Fleetd-native; no generic conversation or
-effect interface is introduced.
+Step 6's exact deterministic-provider-through-Fleetd combination remains open.
+The implemented checkpoints establish its two complementary boundaries instead:
+the deterministic capability runs in a restart-safe proof-local external host,
+and Fleetd H durably coordinates a stateful Fleetd-native invocation without
+learning its semantics. Neither result is presented as the missing combined
+deterministic H proof.
+
+[Decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md) is
+complete through commit `9c85598`: two selectable client implementations
+compose with one exact Fleetd target; a proof-local host recovers committed
+effects, retained provider/attester evidence, hostile lock substitution, and
+every terminal outcome; and a distinct Fleetd H durably coordinates one opaque
+invocation against Fleetd T through the public API. The vocabulary remains
+Fleetd-native; no generic conversation or effect interface is introduced.
+
+The five real Fleetd proofs are `fleetd_real`, `fleetd_crash`,
+`fleetd_semantic_matrix`, `fleetd_attester`, and `fleetd_host`. They are
+explicit optimized ignored tests requiring clean external release inputs; the
+normal workspace suite compiles and registers them but does not execute them.
+The H/T proof establishes controlled runner discontinuities and the admitted
+path, not H-daemon restart, nested H-kill/T-commit injection, or H-carried
+`Unable`/`Withheld` terminals.
 
 The older milestones remain as evidence from the exploration. They are not the
 dependency order for the recovery branch.

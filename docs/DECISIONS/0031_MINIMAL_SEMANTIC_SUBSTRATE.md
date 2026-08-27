@@ -193,10 +193,12 @@ Execution hosts own:
 - persistence and restart recovery; and
 - bounded operational evidence.
 
-GOOIR neither launches a process nor stores host credentials. A host returns a
-neutral result and typed opaque evidence references. GOOIR binds those to the
-linked invocation as an untrusted candidate. Independent conformance and local
-admission remain separate steps.
+The generic GOOIR semantic substrate neither launches a process nor stores host
+credentials. A host returns a neutral result and typed opaque evidence
+references. GOOIR binds those to the linked invocation as an untrusted
+candidate. Independent conformance and local admission remain separate steps.
+Proof-local host crates may live in this workspace without becoming substrate
+APIs or semantic vocabulary.
 
 ### One admission path
 
@@ -287,6 +289,13 @@ not introduce task, workflow, or conversation semantics. It passes only when:
 6. independent conformance admits the result; and
 7. a second implementation can be selected without changing the host adapter.
 
+Implementation status: commit `aec35ea` proves deterministic data-model
+execution, independent conformance, and recovery in a proof-local external
+host, but not Fleetd H as that host. Commit `ea18462` separately proves opaque
+Fleetd H/Fleetd T coordination through the public stateful direct-conversation
+capability. That complementary proof does not claim that the deterministic
+data-model provider itself was dispatched through Fleetd.
+
 After that proof, Fleetd's existing author-review experiment may first be
 lifted into Fleetd-native operational value kinds. Shared workflow meaning is
 introduced only after recurrence across independent authorities earns it. Its
@@ -305,8 +314,9 @@ owning durable coordination.
   facts of one kind in distinct roles.
 - implementation alternatives remain visible until explicit linking.
 - `gooir-provider` becomes an implementation-authoring SDK, not trusted core.
-- process lifecycle leaves the GOOIR workspace; `gooir-plugin-process` becomes
-  host-side code or a historical test quarry.
+- process lifecycle leaves the generic substrate; proof-local host code may
+  remain in the workspace, while `gooir-plugin-process` becomes host-side code
+  or a historical test quarry.
 - the generic CLI stops installing the data-model distribution implicitly.
 - domain and recurrence packages remain valuable ecosystem material but are
   not release dependencies of the substrate.
