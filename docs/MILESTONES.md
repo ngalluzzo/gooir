@@ -11,7 +11,9 @@
 - Explicit implementation linking and substitution-resistant invocation
   identity.
 - Independent conformance separated from contextual host admission.
-- Neutral graph diagnostics and explicitly loaded pack manifests.
+- One bounded 0.1 derivation façade with exact complete selection and five
+  remedy-preserving terminal answers.
+- Neutral graph diagnostics and explicitly loaded package manifests.
 - A bounded WASI command runtime usable by external hosts.
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
@@ -19,11 +21,17 @@
 
 ## Current boundary
 
-GOOIR is complete enough for ecosystems to publish contracts and for hosts to
-link, execute, attest, and admit them without changing the kernel. The next
-meaningful work should be driven by a second real consumer encountering a
-specific missing protocol property, not by adding speculative dialects or a
-generic effect runtime.
+GOOIR 0.1 presents one product door over the finite substrate. Ecosystems can
+publish exact packages; hosts can ask one derivation question, fix a complete
+route/offer/input/attester selection, execute it through their own effect
+boundary, and receive `Produced`, `Blocked`, `Unreachable`, `Refused`, or
+`Failed` without changing the kernel.
+
+The next meaningful semantic work should be driven by another real consumer
+encountering a specific missing protocol property, not by adding speculative
+dialects or a generic effect runtime. The legacy in-process CLI derivation path
+remains only as an isolated migration bridge and is not part of the 0.1 host
+contract.
 
 The repository split in GOOIR-0033 is itself an acceptance gate: GOOIR must
 continue to compile and test while both extracted ecosystems compile and test

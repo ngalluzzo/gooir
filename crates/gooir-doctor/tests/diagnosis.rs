@@ -1,166 +1,321 @@
-//! The diagnostic is generic: these graphs contain no real fact meanings.
+//! The diagnostic is generic: these graphs contain no domain meanings.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::num::NonZeroUsize;
+
+use gooir_capability::protocol::{ConformanceSuiteId, ImplementationId};
 use gooir_capability::{
-    CapabilityId, CapabilityProvider, CapabilityRegistry, CapabilitySpec, FactCoverage,
-    FactInstance, FactType, InputPort, OutputPort, PortName, ProducedFact, ProviderDescriptor,
-    ProviderId,
+    CapabilityId, CapabilitySpec, DialectId, InputPort, OutputPort, PortName, ValueKindId,
 };
 use gooir_doctor::diagnose;
+use gooir_package::{
+    ConformanceSuiteDeclaration, DialectDeclaration, ImplementationOfferDeclaration, LoadLimits,
+    PackageId, PackageManifest, PackageRegistry, PackageResource, ResourceDigest, ResourceName,
+    ValueKindDeclaration, load_local_package, write_manifest,
+};
+use gooir_planning::PlanLimits;
 
-fn fact(name: &str) -> FactType {
-    FactType::new("test.fact", name, "1.0.0")
+const VERSION: &str = "1.0.0";
+const EMPTY_SHA256: &str =
+    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+fn value_kind(name: &str) -> ValueKindId {
+    ValueKindId::new("test.fact", name, VERSION)
 }
-fn cap(name: &str) -> CapabilityId {
-    CapabilityId::new("test.capability", name, "1.0.0")
+
+fn capability(name: &str) -> CapabilityId {
+    CapabilityId::new("test.capability", name, VERSION)
 }
+
 fn port(name: &str) -> PortName {
     PortName::parse(name).unwrap()
 }
 
-struct Noop(CapabilityId, FactType);
-
-impl CapabilityProvider for Noop {
-    fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor {
-            id: ProviderId::new("test.provider", &self.0.name, "1.0.0"),
-            capability: self.0.clone(),
-            implementation_digest: format!("sha256:{}", "0".repeat(64)),
-        }
-    }
-    fn invoke(&self, _: &CapabilitySpec, _: &[FactInstance]) -> Result<Vec<ProducedFact>, String> {
-        Ok(vec![ProducedFact {
-            fact_type: self.1.clone(),
-            coverage: FactCoverage::Complete,
-            payload: serde_json::Value::Null,
-        }])
+fn specification(id: CapabilityId, from: &str, to: &str) -> CapabilitySpec {
+    CapabilitySpec {
+        id,
+        input_ports: vec![InputPort::complete(port("source"), value_kind(from))],
+        output_ports: vec![OutputPort::new(port("result"), value_kind(to))],
+        default_conformance_suite: suite().to_string(),
+        extensions: BTreeMap::new(),
     }
 }
 
-fn spec(id: CapabilityId, from: &str, to: &str) -> CapabilitySpec {
-    CapabilitySpec {
-        id,
-        input_ports: vec![InputPort::complete(port("source"), fact(from))],
-        output_ports: vec![OutputPort::new(port("result"), fact(to))],
-        default_conformance_suite: "test/suite@1.0.0".to_owned(),
-        extensions: Default::default(),
+fn suite() -> ConformanceSuiteId {
+    ConformanceSuiteId::parse("test.suite/default@1.0.0").unwrap()
+}
+
+fn limits() -> PlanLimits {
+    let bound = NonZeroUsize::new(128).unwrap();
+    PlanLimits {
+        max_capabilities: bound,
+        max_value_kinds: bound,
+        max_ports_per_capability: bound,
+        max_total_ports: bound,
+        max_offers_per_capability: bound,
+        max_total_offers: bound,
     }
+}
+
+fn install_graph(
+    mut specifications: Vec<CapabilitySpec>,
+    offered: impl IntoIterator<Item = CapabilityId>,
+) -> PackageRegistry {
+    specifications.sort_by(|left, right| left.id.cmp(&right.id));
+
+    let dialect = DialectId::new("test.fact", VERSION);
+    let value_kinds = specifications
+        .iter()
+        .flat_map(|specification| {
+            specification
+                .input_ports
+                .iter()
+                .map(|input| input.value_kind.clone())
+                .chain(
+                    specification
+                        .output_ports
+                        .iter()
+                        .map(|output| output.value_kind.clone()),
+                )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(|id| ValueKindDeclaration {
+            id,
+            schema: None,
+            extensions: BTreeMap::new(),
+        })
+        .collect();
+
+    let artifact_name = ResourceName::parse("provider").unwrap();
+    let mut implementation_offers = offered
+        .into_iter()
+        .map(|capability| ImplementationOfferDeclaration {
+            implementation: ImplementationId::new("test.implementation", &capability.name, VERSION),
+            capability,
+            artifact: artifact_name.clone(),
+            extensions: BTreeMap::new(),
+        })
+        .collect::<Vec<_>>();
+    implementation_offers.sort_by(|left, right| {
+        (&left.capability, &left.implementation, &left.artifact).cmp(&(
+            &right.capability,
+            &right.implementation,
+            &right.artifact,
+        ))
+    });
+
+    let resources = (!implementation_offers.is_empty())
+        .then(|| PackageResource {
+            name: artifact_name,
+            path: "bin/provider".to_owned(),
+            media_type: "application/octet-stream".to_owned(),
+            size: 0,
+            digest: ResourceDigest::parse(EMPTY_SHA256).unwrap(),
+            extensions: BTreeMap::new(),
+        })
+        .into_iter()
+        .collect();
+    let manifest = PackageManifest::new(
+        PackageId::parse("test.package@1.0.0").unwrap(),
+        Vec::new(),
+        resources,
+        vec![DialectDeclaration {
+            id: dialect,
+            value_kinds,
+            extensions: BTreeMap::new(),
+        }],
+        vec![ConformanceSuiteDeclaration {
+            id: suite(),
+            extensions: BTreeMap::new(),
+        }],
+        specifications,
+        implementation_offers,
+        BTreeMap::new(),
+    )
+    .unwrap();
+
+    let directory = tempfile::tempdir().unwrap();
+    if !manifest.resources.is_empty() {
+        fs::create_dir_all(directory.path().join("bin")).unwrap();
+        fs::write(directory.path().join("bin/provider"), []).unwrap();
+    }
+    fs::write(
+        directory.path().join("gooir-package.json"),
+        write_manifest(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let mut registry = PackageRegistry::default();
+    let package = load_local_package(directory.path(), &registry, LoadLimits::default()).unwrap();
+    registry.install(package).unwrap();
+    registry
 }
 
 #[test]
-fn a_fully_provided_chain_reports_nothing_blocking() {
-    let mut r = CapabilityRegistry::default();
-    r.register_spec(spec(cap("a_to_b"), "a", "b")).unwrap();
-    r.register_provider(Noop(cap("a_to_b"), fact("b"))).unwrap();
+fn a_fully_offered_chain_reports_nothing_blocking() {
+    let graph = install_graph(
+        vec![specification(capability("a_to_b"), "a", "b")],
+        [capability("a_to_b")],
+    );
 
-    let report = diagnose(&r);
+    let report = diagnose(&graph, limits()).unwrap();
     assert_eq!(report.capabilities, 1);
-    assert_eq!(report.providers, 1);
+    assert_eq!(report.offers, 1);
+    assert_eq!(report.conformance_suites, 1);
     assert_eq!(report.blocking(), 0);
     assert_eq!(report.open_needs(), 0);
     assert_eq!(report.roots.len(), 1, "`a` must be supplied");
-    assert_eq!(report.roots[0].fact, fact("a"));
+    assert_eq!(report.roots[0].value_kind, value_kind("a"));
     assert_eq!(report.terminals.len(), 1, "`b` is the answer");
-    assert!(report.terminals[0].fully_provided);
+    assert!(report.terminals[0].offered_route_exists);
 }
 
 #[test]
-fn repeated_kind_route_is_reported_as_provider_coverage_not_obtainability() {
-    let mut r = CapabilityRegistry::default();
+fn repeated_kind_ports_do_not_duplicate_root_requirements() {
     let repeated = CapabilitySpec {
-        id: cap("compare_to_b"),
+        id: capability("compare_to_b"),
         input_ports: vec![
-            InputPort::complete(port("left"), fact("a")),
-            InputPort::complete(port("right"), fact("a")),
+            InputPort::complete(port("left"), value_kind("a")),
+            InputPort::complete(port("right"), value_kind("a")),
         ],
-        output_ports: vec![OutputPort::new(port("result"), fact("b"))],
-        default_conformance_suite: "test/suite@1.0.0".to_owned(),
-        extensions: Default::default(),
+        output_ports: vec![OutputPort::new(port("result"), value_kind("b"))],
+        default_conformance_suite: suite().to_string(),
+        extensions: BTreeMap::new(),
     };
-    r.register_spec(repeated).unwrap();
-    r.register_provider(Noop(cap("compare_to_b"), fact("b")))
-        .unwrap();
+    let graph = install_graph(vec![repeated], [capability("compare_to_b")]);
 
-    let report = diagnose(&r);
-    assert!(report.terminals[0].fully_provided);
-    let rendered = report.to_string();
-    assert!(
-        rendered.contains("terminal provider coverage"),
-        "{rendered}"
+    let report = diagnose(&graph, limits()).unwrap();
+    assert_eq!(
+        report.roots[0].required_by,
+        vec![capability("compare_to_b")]
     );
-    assert!(rendered.contains("provided"), "{rendered}");
-    assert!(!rendered.contains("you can obtain"), "{rendered}");
+    assert!(report.terminals[0].offered_route_exists);
 }
 
 #[test]
-fn a_provider_less_capability_is_an_open_need_not_a_failure() {
-    let mut r = CapabilityRegistry::default();
-    r.register_spec(spec(cap("a_to_b"), "a", "b")).unwrap();
-    r.register_provider(Noop(cap("a_to_b"), fact("b"))).unwrap();
-    r.register_spec(spec(cap("b_to_c"), "b", "c")).unwrap();
+fn a_capability_without_an_offer_is_an_open_need() {
+    let graph = install_graph(
+        vec![
+            specification(capability("a_to_b"), "a", "b"),
+            specification(capability("b_to_c"), "b", "c"),
+        ],
+        [capability("a_to_b")],
+    );
 
-    let report = diagnose(&r);
+    let report = diagnose(&graph, limits()).unwrap();
     assert_eq!(report.open_needs(), 1);
+    assert_eq!(
+        report.unimplemented[0].package.to_string(),
+        "test.package@1.0.0"
+    );
+    assert_eq!(report.unimplemented[0].capability, capability("b_to_c"));
     let terminal = report
         .terminals
         .iter()
-        .find(|t| t.fact == fact("c"))
-        .expect("c is a terminal");
-    assert!(!terminal.fully_provided);
-    assert_eq!(terminal.blocked_by, vec![cap("b_to_c")]);
+        .find(|terminal| terminal.value_kind == value_kind("c"))
+        .unwrap();
+    assert!(!terminal.offered_route_exists);
+    assert_eq!(terminal.unoffered_alternatives, vec![capability("b_to_c")]);
+    assert_eq!(report.blocking(), 0, "a declared need is not unreachable");
+}
+
+#[test]
+fn an_unoffered_alternative_does_not_block_an_offered_route() {
+    let graph = install_graph(
+        vec![
+            specification(capability("a_to_m"), "a", "m"),
+            specification(capability("k_to_m"), "k", "m"),
+        ],
+        [capability("a_to_m")],
+    );
+
+    let report = diagnose(&graph, limits()).unwrap();
+    let terminal = report
+        .terminals
+        .iter()
+        .find(|terminal| terminal.value_kind == value_kind("m"))
+        .unwrap();
+    assert!(terminal.offered_route_exists);
+    assert_eq!(terminal.unoffered_alternatives, vec![capability("k_to_m")]);
+}
+
+#[test]
+fn an_unseeded_cycle_is_unreachable() {
+    let graph = install_graph(
+        vec![CapabilitySpec {
+            id: capability("cycle"),
+            input_ports: vec![InputPort::complete(port("source"), value_kind("z"))],
+            output_ports: vec![OutputPort::new(port("result"), value_kind("z"))],
+            default_conformance_suite: suite().to_string(),
+            extensions: BTreeMap::new(),
+        }],
+        [capability("cycle")],
+    );
+
+    let report = diagnose(&graph, limits()).unwrap();
+    assert_eq!(report.unreachable.len(), 1);
+    assert_eq!(report.unreachable[0].value_kind, value_kind("z"));
+    assert_eq!(report.blocking(), 1);
+}
+
+#[test]
+fn multiple_producers_are_visible_without_implicit_selection() {
+    let graph = install_graph(
+        vec![
+            specification(capability("a_to_m"), "a", "m"),
+            specification(capability("k_to_m"), "k", "m"),
+        ],
+        [capability("a_to_m"), capability("k_to_m")],
+    );
+
+    let report = diagnose(&graph, limits()).unwrap();
+    assert_eq!(report.multiple_producers.len(), 1);
+    assert_eq!(report.multiple_producers[0].value_kind, value_kind("m"));
     assert_eq!(
-        report.blocking(),
-        0,
-        "a terminal blocked only by a declared need is accounted for"
+        report.multiple_producers[0].produced_by,
+        vec![capability("a_to_m"), capability("k_to_m")]
     );
-}
-
-#[test]
-fn a_fact_with_no_route_is_blocking() {
-    let mut r = CapabilityRegistry::default();
-    r.register_spec(spec(cap("a_to_b"), "a", "b")).unwrap();
-    r.register_provider(Noop(cap("a_to_b"), fact("b"))).unwrap();
-    // requires `x`, which nothing supplies and nothing produces... but a
-    // requirement makes `x` a root, so instead orphan the *output* by
-    // requiring a fact only this capability produces.
-    r.register_spec(CapabilitySpec {
-        id: cap("cycle"),
-        input_ports: vec![InputPort::complete(port("source"), fact("z"))],
-        output_ports: vec![OutputPort::new(port("result"), fact("z"))],
-        default_conformance_suite: "test/suite@1.0.0".to_owned(),
-        extensions: Default::default(),
-    })
-    .unwrap();
-
-    let report = diagnose(&r);
     assert!(
-        report.unreachable.iter().any(|u| u.fact == fact("z")),
-        "a fact that only produces itself cannot be reached: {:?}",
-        report.unreachable
+        report
+            .to_string()
+            .contains("multiple producers (1) — selection remains explicit")
     );
-    assert!(report.blocking() >= 1);
 }
 
 #[test]
-fn two_capabilities_producing_one_fact_are_reported_as_multiple_routes() {
-    let mut r = CapabilityRegistry::default();
-    r.register_spec(spec(cap("a_to_m"), "a", "m")).unwrap();
-    r.register_provider(Noop(cap("a_to_m"), fact("m"))).unwrap();
-    r.register_spec(spec(cap("k_to_m"), "k", "m")).unwrap();
-    r.register_provider(Noop(cap("k_to_m"), fact("m"))).unwrap();
+fn rendering_is_deterministic_and_names_installed_availability() {
+    let graph = install_graph(
+        vec![
+            specification(capability("a_to_b"), "a", "b"),
+            specification(capability("b_to_c"), "b", "c"),
+        ],
+        [capability("a_to_b")],
+    );
 
-    let report = diagnose(&r);
-    assert_eq!(report.ambiguous.len(), 1);
-    assert_eq!(report.ambiguous[0].fact, fact("m"));
-    assert_eq!(report.ambiguous[0].produced_by.len(), 2);
-}
-
-#[test]
-fn every_registered_provider_is_unadmitted_until_conformance_runs() {
-    let mut r = CapabilityRegistry::default();
-    r.register_spec(spec(cap("a_to_b"), "a", "b")).unwrap();
-    r.register_provider(Noop(cap("a_to_b"), fact("b"))).unwrap();
-
-    let report = diagnose(&r);
-    assert_eq!(report.unadmitted.len(), 1);
-    assert_eq!(report.unadmitted[0].conformance_suite, "test/suite@1.0.0");
+    let rendered = diagnose(&graph, limits()).unwrap().to_string();
+    assert_eq!(
+        rendered,
+        concat!(
+            "installed capability graph\n",
+            "  2 capabilities, 1 implementation offers, 3 value kinds\n",
+            "  1 referenced conformance suites\n",
+            "\n",
+            "you must supply (1)\n",
+            "  test.fact/a@1.0.0\n",
+            "    needed by 1\n",
+            "\n",
+            "terminal offer availability (1)\n",
+            "  needs offer test.fact/c@1.0.0\n",
+            "\n",
+            "open needs — assignable implementation work (1)\n",
+            "  test.capability/b_to_c@1.0.0\n",
+            "    package  test.package@1.0.0\n",
+            "    produces test.fact/c@1.0.0\n",
+            "    suite    test.suite/default@1.0.0\n",
+            "\n",
+            "summary  0 unreachable, 1 open need(s)",
+        )
+    );
 }

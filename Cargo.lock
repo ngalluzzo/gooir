@@ -575,7 +575,21 @@ version = "0.1.0"
 dependencies = [
  "gooir-capability",
  "gooir-doctor",
+ "gooir-package",
+ "gooir-planning",
  "gooir-plugin-process",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "gooir-derive"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-package",
+ "gooir-planning",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -585,7 +599,9 @@ name = "gooir-doctor"
 version = "0.1.0"
 dependencies = [
  "gooir-capability",
- "serde_json",
+ "gooir-package",
+ "gooir-planning",
+ "tempfile",
 ]
 
 [[package]]
