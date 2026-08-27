@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// The wire contract version. Exact, like every other identity here.
-pub const PROTOCOL: &str = "org.gooi.plugin/v1";
+pub const PROTOCOL: &str = "org.gooi.plugin/v2";
 
 /// How long a plugin may take before it is killed.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);

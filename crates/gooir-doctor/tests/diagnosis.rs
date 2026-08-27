@@ -2,7 +2,8 @@
 
 use gooir_capability::{
     CapabilityId, CapabilityProvider, CapabilityRegistry, CapabilitySpec, FactCoverage,
-    FactInstance, FactType, ProducedFact, ProviderDescriptor, ProviderId, Requirement,
+    FactInstance, FactType, InputPort, OutputPort, PortName, ProducedFact, ProviderDescriptor,
+    ProviderId,
 };
 use gooir_doctor::diagnose;
 
@@ -11,6 +12,9 @@ fn fact(name: &str) -> FactType {
 }
 fn cap(name: &str) -> CapabilityId {
     CapabilityId::new("test.capability", name, "1.0.0")
+}
+fn port(name: &str) -> PortName {
+    PortName::parse(name).unwrap()
 }
 
 struct Noop(CapabilityId, FactType);
@@ -35,9 +39,10 @@ impl CapabilityProvider for Noop {
 fn spec(id: CapabilityId, from: &str, to: &str) -> CapabilitySpec {
     CapabilitySpec {
         id,
-        requires: vec![Requirement::complete(fact(from))],
-        produces: vec![fact(to)],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        input_ports: vec![InputPort::complete(port("source"), fact(from))],
+        output_ports: vec![OutputPort::new(port("result"), fact(to))],
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
+        extensions: Default::default(),
     }
 }
 
@@ -55,7 +60,35 @@ fn a_fully_provided_chain_reports_nothing_blocking() {
     assert_eq!(report.roots.len(), 1, "`a` must be supplied");
     assert_eq!(report.roots[0].fact, fact("a"));
     assert_eq!(report.terminals.len(), 1, "`b` is the answer");
-    assert!(report.terminals[0].obtainable);
+    assert!(report.terminals[0].fully_provided);
+}
+
+#[test]
+fn repeated_kind_route_is_reported_as_provider_coverage_not_obtainability() {
+    let mut r = CapabilityRegistry::default();
+    let repeated = CapabilitySpec {
+        id: cap("compare_to_b"),
+        input_ports: vec![
+            InputPort::complete(port("left"), fact("a")),
+            InputPort::complete(port("right"), fact("a")),
+        ],
+        output_ports: vec![OutputPort::new(port("result"), fact("b"))],
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
+        extensions: Default::default(),
+    };
+    r.register_spec(repeated).unwrap();
+    r.register_provider(Noop(cap("compare_to_b"), fact("b")))
+        .unwrap();
+
+    let report = diagnose(&r);
+    assert!(report.terminals[0].fully_provided);
+    let rendered = report.to_string();
+    assert!(
+        rendered.contains("terminal provider coverage"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("provided"), "{rendered}");
+    assert!(!rendered.contains("you can obtain"), "{rendered}");
 }
 
 #[test]
@@ -72,7 +105,7 @@ fn a_provider_less_capability_is_an_open_need_not_a_failure() {
         .iter()
         .find(|t| t.fact == fact("c"))
         .expect("c is a terminal");
-    assert!(!terminal.obtainable);
+    assert!(!terminal.fully_provided);
     assert_eq!(terminal.blocked_by, vec![cap("b_to_c")]);
     assert_eq!(
         report.blocking(),
@@ -91,9 +124,10 @@ fn a_fact_with_no_route_is_blocking() {
     // requiring a fact only this capability produces.
     r.register_spec(CapabilitySpec {
         id: cap("cycle"),
-        requires: vec![Requirement::complete(fact("z"))],
-        produces: vec![fact("z")],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        input_ports: vec![InputPort::complete(port("source"), fact("z"))],
+        output_ports: vec![OutputPort::new(port("result"), fact("z"))],
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
+        extensions: Default::default(),
     })
     .unwrap();
 
@@ -128,5 +162,5 @@ fn every_registered_provider_is_unadmitted_until_conformance_runs() {
 
     let report = diagnose(&r);
     assert_eq!(report.unadmitted.len(), 1);
-    assert_eq!(report.unadmitted[0].conformance_suite, "test.suite@1.0.0");
+    assert_eq!(report.unadmitted[0].conformance_suite, "test/suite@1.0.0");
 }

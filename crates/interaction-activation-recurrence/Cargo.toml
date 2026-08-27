@@ -1,0 +1,16 @@
+[package]
+name = "interaction-activation-recurrence"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+lift-defeasible = { path = "../lift-defeasible" }
+semantics-interaction-activation-v0 = { path = "../semantics-interaction-activation-v0" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

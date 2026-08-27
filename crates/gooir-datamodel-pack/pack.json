@@ -1,57 +1,35 @@
 {
-  "protocol": "org.gooi.pack/v1",
+  "protocol": "org.gooi.pack/v2",
   "capabilities": [
     {
-      "id": "org.gooi.capability/author_data_model@0.1.0",
-      "requires": [
-        {
-          "fact": "org.gooi.source.authored/entity_spec@0.1.0",
-          "acceptance": "complete_only"
-        }
+      "id": "org.gooi.capability/lower_openapi_crud_surface@0.2.0",
+      "input_ports": [
+        { "name": "model", "value_kind": "org.gooi.semantics.data_model/model@1.0.0", "acceptance": "complete_only" }
       ],
-      "produces": [
-        "org.gooi.semantics.data_model/model@1.0.0"
+      "output_ports": [
+        { "name": "surface", "value_kind": "org.gooi.artifact.openapi/crud_surface@0.1.0" }
       ],
-      "default_conformance_suite": "org.gooi.conformance.authored_data_model@0.1.0"
+      "default_conformance_suite": "org.gooi.conformance/openapi_crud_surface@0.1.0"
     },
     {
-      "id": "org.gooi.capability/lower_openapi_crud_surface@0.1.0",
-      "requires": [
-        {
-          "fact": "org.gooi.semantics.data_model/model@1.0.0",
-          "acceptance": "complete_only"
-        }
+      "id": "org.gooi.capability/lower_postgres_ddl@0.2.0",
+      "input_ports": [
+        { "name": "model", "value_kind": "org.gooi.semantics.data_model/model@1.0.0", "acceptance": "complete_only" }
       ],
-      "produces": [
-        "org.gooi.artifact.openapi/crud_surface@0.1.0"
+      "output_ports": [
+        { "name": "ddl", "value_kind": "org.gooi.artifact.sql/postgres_ddl@0.1.0" }
       ],
-      "default_conformance_suite": "org.gooi.conformance.openapi_crud_surface@0.1.0"
+      "default_conformance_suite": "org.gooi.conformance/postgres_ddl@0.1.0"
     },
     {
-      "id": "org.gooi.capability/lower_postgres_ddl@0.1.0",
-      "requires": [
-        {
-          "fact": "org.gooi.semantics.data_model/model@1.0.0",
-          "acceptance": "complete_only"
-        }
+      "id": "org.gooi.capability/lower_typescript_types@0.2.0",
+      "input_ports": [
+        { "name": "model", "value_kind": "org.gooi.semantics.data_model/model@1.0.0", "acceptance": "complete_only" }
       ],
-      "produces": [
-        "org.gooi.artifact.sql/postgres_ddl@0.1.0"
+      "output_ports": [
+        { "name": "types", "value_kind": "org.gooi.artifact.typescript/model_types@0.1.0" }
       ],
-      "default_conformance_suite": "org.gooi.conformance.postgres_ddl@0.1.0"
-    },
-    {
-      "id": "org.gooi.capability/lower_typescript_types@0.1.0",
-      "requires": [
-        {
-          "fact": "org.gooi.semantics.data_model/model@1.0.0",
-          "acceptance": "complete_only"
-        }
-      ],
-      "produces": [
-        "org.gooi.artifact.typescript/model_types@0.1.0"
-      ],
-      "default_conformance_suite": "org.gooi.conformance.typescript_model_types@0.1.0"
+      "default_conformance_suite": "org.gooi.conformance/typescript_model_types@0.1.0"
     }
   ]
 }

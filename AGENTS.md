@@ -3,7 +3,7 @@
 Read `README.md`, `docs/ARCHITECTURE.md`, and `docs/MILESTONES.md` before making non-trivial changes.
 
 - Follow `CONTRIBUTING.md`: one issue per branch, no direct pushes to `main`, every PR references its issue and originating Buzz channel, and an agent other than the author must approve before merge.
-- Keep `gooir-core` semantically agnostic. Domain concepts belong in separately versioned contract or dialect crates.
+- Keep `gooir-identity` and `gooir-capability` semantically agnostic. Domain concepts belong in separately versioned contract or dialect crates.
 - Analyzers depend on semantic contracts, never concrete source dialects.
 - Unknown, unverified, ambiguous, or incompatible claims must degrade conservatively; never infer safety from missing semantics.
 - Preserve unknown operations and extension data through serialization.

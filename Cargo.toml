@@ -2,42 +2,51 @@
 members = [
     "crates/buzz-protocol-lifter",
     "crates/app-runtime",
+    "crates/activity-projection-recurrence",
     "crates/buzz-cli-lifter",
     "crates/buzz-relay-lifter",
-    "crates/buzz-surface-check",
     "crates/buzz-surface-profile",
-    "crates/buzz-surface-projection",
     "crates/data-model-convergence",
     "crates/entity-spec",
+    "crates/fleetd-direct-conversation-attester",
+    "crates/fleetd-direct-conversation-command-abi",
+    "crates/fleetd-direct-conversation-contract",
+    "crates/fleetd-direct-conversation-external-host-proof",
+    "crates/fleetd-direct-conversation-reqwest-provider",
+    "crates/fleetd-direct-conversation-ureq-provider",
     "crates/fleetd-control-lifter",
     "crates/fleetd-control-projection",
     "crates/fleetd-capability-pack",
     "crates/fleetd-interaction-plan",
     "crates/fleetd-surface-lowering",
-    "crates/gooir-analysis",
     "crates/gooir-capability",
+    "crates/gooir-author-data-model-contract",
     "crates/gooir-cli",
-    "crates/gooir-core",
+    "crates/gooir-datamodel-conformance",
+    "crates/gooir-datamodel-external-host-proof",
+    "crates/gooir-fleetd-direct-conversation-package-proof",
+    "crates/gooir-datamodel-package-proof",
     "crates/gooir-datamodel-pack",
     "crates/gooir-doctor",
     "crates/gooir-identity",
     "crates/gooir-plugin-process",
+    "crates/gooir-package",
+    "crates/gooir-planning",
     "crates/gooir-provider",
+    "crates/gooir-wasip1-command-runtime",
+    "crates/interaction-activation-recurrence",
+    "crates/semantics-activity-projection-v0",
     "crates/lift-defeasible",
     "crates/openapi-lifter",
     "crates/openapi-lowering",
-    "crates/payments-dialect",
     "crates/postgres-catalog-lifter",
     "crates/prisma-schema-lifter",
     "crates/prisma-schema-lowering",
-    "crates/retry-safety-analysis",
     "crates/semantics-data-model-v1",
     "crates/sql-ddl-lowering",
-    "crates/semantics-effects-v1",
     "crates/semantics-fleetd-control-v0",
+    "crates/semantics-interaction-activation-v0",
     "crates/semantics-software-surface-v1",
-    "crates/surface-completeness-analysis",
-    "crates/workflow-dialect",
 ]
 resolver = "3"
 
@@ -50,42 +59,52 @@ repository = "http://localhost:3000/git/fbc8af98610e54d4385470c142ebed37a49b2fac
 [workspace.dependencies]
 buzz-protocol-lifter = { path = "crates/buzz-protocol-lifter" }
 app-runtime = { path = "crates/app-runtime" }
+activity-projection-recurrence = { path = "crates/activity-projection-recurrence" }
 buzz-cli-lifter = { path = "crates/buzz-cli-lifter" }
 buzz-relay-lifter = { path = "crates/buzz-relay-lifter" }
-buzz-surface-check = { path = "crates/buzz-surface-check" }
 buzz-surface-profile = { path = "crates/buzz-surface-profile" }
-buzz-surface-projection = { path = "crates/buzz-surface-projection" }
 data-model-convergence = { path = "crates/data-model-convergence" }
 entity-spec = { path = "crates/entity-spec" }
+fleetd-direct-conversation-attester = { path = "crates/fleetd-direct-conversation-attester" }
+fleetd-direct-conversation-command-abi = { path = "crates/fleetd-direct-conversation-command-abi" }
+fleetd-direct-conversation-contract = { path = "crates/fleetd-direct-conversation-contract" }
+fleetd-direct-conversation-external-host-proof = { path = "crates/fleetd-direct-conversation-external-host-proof" }
+fleetd-direct-conversation-reqwest-provider = { path = "crates/fleetd-direct-conversation-reqwest-provider" }
+fleetd-direct-conversation-ureq-provider = { path = "crates/fleetd-direct-conversation-ureq-provider" }
 fleetd-control-lifter = { path = "crates/fleetd-control-lifter" }
 fleetd-control-projection = { path = "crates/fleetd-control-projection" }
 fleetd-capability-pack = { path = "crates/fleetd-capability-pack" }
 fleetd-interaction-plan = { path = "crates/fleetd-interaction-plan" }
 fleetd-surface-lowering = { path = "crates/fleetd-surface-lowering" }
-gooir-analysis = { path = "crates/gooir-analysis" }
 gooir-capability = { path = "crates/gooir-capability" }
+gooir-author-data-model-contract = { path = "crates/gooir-author-data-model-contract" }
 gooir-cli = { path = "crates/gooir-cli" }
-gooir-core = { path = "crates/gooir-core" }
+gooir-datamodel-conformance = { path = "crates/gooir-datamodel-conformance" }
+gooir-datamodel-external-host-proof = { path = "crates/gooir-datamodel-external-host-proof" }
+gooir-fleetd-direct-conversation-package-proof = { path = "crates/gooir-fleetd-direct-conversation-package-proof" }
+gooir-datamodel-package-proof = { path = "crates/gooir-datamodel-package-proof" }
 gooir-datamodel-pack = { path = "crates/gooir-datamodel-pack" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
+gooir-package = { path = "crates/gooir-package" }
+gooir-planning = { path = "crates/gooir-planning" }
 gooir-provider = { path = "crates/gooir-provider" }
+gooir-wasip1-command-runtime = { path = "crates/gooir-wasip1-command-runtime" }
+interaction-activation-recurrence = { path = "crates/interaction-activation-recurrence" }
+semantics-activity-projection-v0 = { path = "crates/semantics-activity-projection-v0" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 heck = "0.5"
 openapi-lifter = { path = "crates/openapi-lifter" }
 openapi-lowering = { path = "crates/openapi-lowering" }
-payments-dialect = { path = "crates/payments-dialect" }
 postgres-catalog-lifter = { path = "crates/postgres-catalog-lifter" }
 prisma-schema-lifter = { path = "crates/prisma-schema-lifter" }
 prisma-schema-lowering = { path = "crates/prisma-schema-lowering" }
-retry-safety-analysis = { path = "crates/retry-safety-analysis" }
 semantics-data-model-v1 = { path = "crates/semantics-data-model-v1" }
 sql-ddl-lowering = { path = "crates/sql-ddl-lowering" }
-semantics-effects-v1 = { path = "crates/semantics-effects-v1" }
 semantics-fleetd-control-v0 = { path = "crates/semantics-fleetd-control-v0" }
+semantics-interaction-activation-v0 = { path = "crates/semantics-interaction-activation-v0" }
 semantics-software-surface-v1 = { path = "crates/semantics-software-surface-v1" }
-surface-completeness-analysis = { path = "crates/surface-completeness-analysis" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_json_canonicalizer = "0.3.2"
@@ -93,5 +112,16 @@ sha2 = "0.10"
 syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
 toml = "1"
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
+wasmtime = { version = "=48.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "=48.0.1", default-features = false, features = ["p1"] }
+wasmparser = "=0.254.0"
+wat = "1"
+nix = { version = "=0.31.3", features = ["fs"] }
+object = { version = "=0.39.1", default-features = false, features = ["macho", "read_core", "std"] }
+libc = "=0.2.189"
 proc-macro2 = { version = "1", features = ["span-locations"] }
-workflow-dialect = { path = "crates/workflow-dialect" }
+attohttpc = { version = "=0.30.1", default-features = false }
+reqwest = { version = "=0.12.28", default-features = false, features = ["blocking"] }
+ureq = { version = "=3.1.4", default-features = false, features = ["json"] }
+url = "=2.5.8"

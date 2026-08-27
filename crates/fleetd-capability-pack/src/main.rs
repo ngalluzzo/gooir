@@ -24,11 +24,11 @@ struct CapabilityDogfoodReport {
     capabilities: Vec<CapabilitySpec>,
     providers: Vec<ProviderDescriptor>,
     web_plan: DerivationPlan,
-    web_plan_executable: bool,
+    web_plan_fully_provided: bool,
     terminal_plan: DerivationPlan,
-    terminal_plan_executable: bool,
+    terminal_plan_fully_provided: bool,
     runnable_web_plan: DerivationPlan,
-    runnable_web_plan_executable: bool,
+    runnable_web_plan_fully_provided: bool,
     capability_needs: Vec<CapabilityNeed>,
     runnable_web_request: CapabilityRequest,
     web_target: fleetd_surface_lowering::WebSurface,
@@ -102,20 +102,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("runnable web plan unexpectedly has no capability need")?;
     let runnable_web_request =
         CapabilityRequest::bind(runnable_web_need, vec![web_execution.target.clone()])?;
-    let web_plan_executable = web_plan.is_executable();
-    let terminal_plan_executable = terminal_plan.is_executable();
-    let runnable_web_plan_executable = runnable_web_plan.is_executable();
+    let web_plan_fully_provided = web_plan.has_provider_for_every_step();
+    let terminal_plan_fully_provided = terminal_plan.has_provider_for_every_step();
+    let runnable_web_plan_fully_provided = runnable_web_plan.has_provider_for_every_step();
     let report = CapabilityDogfoodReport {
         authority,
         revision,
         capabilities: registry.specs().cloned().collect(),
         providers: registry.provider_descriptors(),
         web_plan,
-        web_plan_executable,
+        web_plan_fully_provided,
         terminal_plan,
-        terminal_plan_executable,
+        terminal_plan_fully_provided,
         runnable_web_plan,
-        runnable_web_plan_executable,
+        runnable_web_plan_fully_provided,
         capability_needs,
         runnable_web_request,
         web_target: web,

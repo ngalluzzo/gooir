@@ -1,6 +1,6 @@
 """Writing a GOOIR capability provider in Python.
 
-A provider reads one `org.gooi.plugin/v1` request and writes one response.
+A provider reads one `org.gooi.plugin/v2` request and writes one response.
 Everything around the transformation — checking the protocol, finding the input
 by fact type, unwrapping its envelope, deciding coverage, framing the reply — is
 the same every time.
@@ -25,7 +25,7 @@ Record what you could not carry and the coverage follows.
 import json
 import sys
 
-PROTOCOL = "org.gooi.plugin/v1"
+PROTOCOL = "org.gooi.plugin/v2"
 
 #: The defeat kinds the kernel understands. Each implies a different action for
 #: whoever reads the result, so they are not interchangeable.

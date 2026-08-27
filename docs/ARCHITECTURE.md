@@ -1,5 +1,16 @@
 # Architecture
 
+## Recovery note
+
+[Decision 0031](DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) supersedes the
+parallel operation/claim architecture described below. The active recovery
+keeps one facts-and-capabilities graph, restores the distinction between a
+governed dialect and its named value kinds, and gives process lifecycle,
+credentials, leases, sessions, retries, and persistence to external execution
+hosts. The removed architecture remains in historical decisions as exploration
+evidence. References to operations and claims below describe that exploration,
+not an active second semantic substrate.
+
 ## Boundary
 
 GOOIR separates generic compiler machinery from application meaning.
@@ -31,8 +42,32 @@ Target packs and distributions
 A capability is a separately versioned typed promise: exact required fact
 types, exact produced fact types, coverage acceptance, and a named conformance
 suite. Capabilities form directed hyperedges because one derivation may require
-several independent semantic facts. The generic registry may plan and execute
-those edges without learning what any fact means.
+several independent semantic facts. The finite planner may relate those edges
+without learning what any fact means; it never executes them.
+
+`gooir-planning` copies one complete installed capability-and-offer inventory
+from `gooir-package`, applies caller-chosen finite bounds, and emits a
+content-identified AND/OR graph slice from caller-held input value kinds to one
+target kind. Every reachable target-relevant capability and every installed
+offer for it remains visible. A capability with no offer remains as an
+explicit need. Planning chooses neither a route nor an implementation.
+
+Linking is a separate explicit operation. The caller names one capability and
+one exact offer from the plan and supplies exact named facts plus the authority-
+record references it has already resolved under contextual admission. The
+structural linker does not resolve those records; it forms the existing
+content-identified capability invocation. A serialized plan is untrusted
+structure: linking revalidates its bounds and requires its exact capability
+specification and selected offer to match the planner's immutable installed
+inventory. The complete planning inventory has its own digest, so two plans derived from
+different installed scopes cannot silently share an identity even when their
+visible target slices happen to match. Planning state, graph traversal, host
+deployment compatibility, execution, conformance, and admission do not become
+ecosystem capabilities merely because the plan can be serialized.
+
+The default conformance suite is part of the exact versioned capability
+promise. Correcting or replacing that obligation publishes a new capability
+version; it never silently redefines the old coordinate.
 
 Capabilities are not protocols. An in-process call, ACP session, HTTP service,
 external compiler, or durable Fleetd worker may provide the same capability.
@@ -80,9 +115,36 @@ Git revision and content-addressed served assets; the verifier independently
 checks out that revision and injects its own black-box behavioral test. The
 served `/operator/contract.json` must equal the exact web target IR, so source
 meaning, generated UI, and runtime verification share one center without
-teaching `gooir-core` about pages, JavaScript, Fleetd, or HTTP.
+teaching the semantic substrate about pages, JavaScript, Fleetd, or HTTP.
 
 See [decision 0013](DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.md).
+
+## Exact external-host composition
+
+Execution remains outside the generic semantic substrate. The stateful Fleetd
+proof composes one exact installed package set, caller-selected offer, measured
+native provider and attester artifacts, qualified runtime, host-validated
+target deployment, process limits, replay laws, and contextual admission
+policy. Fleetd-specific values and HTTP behavior live in separately versioned
+contract/provider/attester packages and one proof-local host crate; none enter
+`gooir-capability`, `gooir-package`, or `gooir-planning`.
+
+The proof host alone resolves deployment locks and owns credentials. Provider
+and attester semantic requests travel over standard input, while bounded live
+operator authority travels over a separate inherited pipe and is excluded from
+semantic documents, receipts, journals, and diagnostics. The provider's result
+is only a candidate. A distinct attester artifact independently performs a
+bounded Fleetd GET, and admission still applies local policy.
+
+Fleetd is also the first durable consumer. A distinct Host Fleetd H retains an
+opaque request, lease/fence state, block/requeue history, and opaque result. An
+external runner prepares and validates the exact GOOIR attempt before H arms
+it, then drives a distinct Target Fleetd T and completes H through public APIs.
+H learns no value kind, provider payload, target credential, or admission law.
+The current proof covers controlled runner discontinuities, admitted terminal
+replay, and lost H-completion response; H-daemon restart, H-carried
+`Unable`/`Withheld`, and one nested H-kill/T-commit injection remain outside its
+claim. See [decision 0032](DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md).
 
 ## Multiple semantic waists
 
@@ -115,6 +177,66 @@ expected during progressive lifting and lowering.
 
 Unknown means maximally interfering, never safe. A generic pass must not reorder, duplicate, eliminate, or otherwise reinterpret an operation unless installed contracts establish the required semantics.
 
+### Interaction enters as an optional projection
+
+The first ecosystem recurrence probe uses source-specific AST projections over
+the independent React DOM and Vue runtime-dom lineages to earn only an
+activation-to-registered-handler contract. It does not introduce a universal
+component tree. React and Vue programs may continue through their native
+compiler/runtime routes without producing an Interaction fact; Ink participates
+as non-voting React-lineage evidence with a terminal host configuration.
+shadcn/ui participates through its exact registry and project materialization
+APIs, while Mantine participates through exact package exports, types, CSS, and
+provider setup.
+
+A portable realization requires the interaction fact together with native
+handler/effect implementation, host policy, and an evidence-bearing component
+or input realization. The requested target may be native source, a runnable
+artifact, or an observed behavior fact. No framework is the universal endpoint.
+See [decision 0027](DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
+
+### Representation is not a universal semantic container
+
+Production React, Vue, and Ink application sources do not share a source-
+attested `Screen` or `Document` identity. Route bindings, application/provider
+wrappers, host documents, render contributions, portals/outlets, guarded
+alternatives, terminal layouts, and stdout are distinct native facts owned by
+different authorities.
+
+A screen-like result may be requested, but it is a state-scoped derived
+observation over exact routing, configuration, permissions, layout, host, and
+runtime output. Generic analyzers must not consume React/Vue/Ink syntax as its
+meaning. Ecosystem-specific providers establish native facts and explicit
+semantic adapters project only independently earned contracts. See
+[decision 0028](DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
+
+### Activity is a selected projection, not a representation tree
+
+Exact upstream selectors from two distinct current Svelte product repositories,
+plus Gemini CLI's exact React `useHistory` state machine, produce concrete
+verified values of a smaller semantic object: an exact source scope emits an
+ordered selection of activity locators with explicit source extent. The Gemini
+trace uses projection-local keys because its numeric UI ids are neither durable
+recording ids nor chronology; exact AppContainer, UI context, normal App/layout,
+MainContent, and display sources retain its downstream aliased-Ink lineage
+without claiming terminal visibility. React DOM and Rust/Ratatui products
+continue to corroborate the candidate through
+different graphs and thread-local containers. The backing model is not the
+common waist.
+
+`ActivityProjection` deliberately carries no portable payload, actor enum,
+pending request, composer, stream reducer, or render tree. Those meanings are
+separate facts that can join the same opaque source references. A native target
+provider composes whichever facts its requested output requires; React, Vue,
+Svelte, Ink, Ratatui, shadcn/ui, Mantine, and other ecosystem authorities remain
+at native lift, materialization, build, renderer, or observation hops.
+
+React and the other ecosystems can participate without semantic projection at
+all. There is no universal lowering endpoint: the requested target might be the
+projection itself, native source, a runnable artifact, or observed web/terminal
+behavior. See
+[decision 0029](DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).
+
 ## Lifting
 
 Lifters should prefer authoritative representations such as Prisma DMMF, PostgreSQL catalogs, OpenAPI/Smithy models, Cedar schemas/ASTs, Terraform plan JSON, and `cargo metadata`. A native source dialect preserves target-specific information losslessly. Bridges into shared contracts are explicit and may be partial.
@@ -138,15 +260,24 @@ Provenance explains where a lifted fact came from. A separate coverage witness e
 
 Contract identity and version are exact. Ordinary version ranges cannot establish semantic compatibility. A version-changing relationship requires an explicit bridge that changes only the contract identity while preserving the claim payload and evidence. A conformance declaration is evidence, not universal proof.
 
-Trust is contextual rather than intrinsic to serialized IR. The core transports an exact attester, suite identity/version, subject digest, and result digest. An analysis host validates a conformance result and admits it only when bound to an exact operation identity and semantic claim; the default policy admits nothing. Copying an admitted attestation onto a different operation, contract, payload, or source cannot make that claim safe. Multiple claims for the same exact contract remain ambiguous rather than being resolved by trust precedence. See [decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
+Trust is contextual rather than intrinsic to serialized facts. Authority records
+bind an exact attester, suite identity/version, subject digest, and result
+digest to the exact fact or invocation they qualify; the default policy admits
+nothing. Copying an admitted authority record onto a different fact, value
+kind, payload, or source cannot make that fact safe. Conflicting records remain
+ambiguous rather than being resolved by trust precedence. See
+[decision 0002](DECISIONS/0002_EVIDENCE_TRUST_POLICY.md).
 
-## First product corpus
+## Historical first product corpus
 
-Buzz is the first product proof. Its source dialects may model protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These are not kernel concepts.
+Buzz was the first product probe. Its source dialects modeled protocol declarations, builders, CLI commands, runtime producers/consumers, storage indexes, renderers, tests, and documentation claims. These were never kernel concepts.
 
-The first analyzer consumes generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps are acceptance cases, never hard-coded analyzer branches.
+The retired analyzer consumed generic software-surface contracts such as `Declares`, `Produces`, `Accepts`, `Consumes`, `Suspends`, `Resumes`, and `ReachesTerminal`. Known Buzz gaps were acceptance cases, never hard-coded analyzer branches.
 
-`surface-completeness-analysis` receives only a generic `SurfaceProfile`, resolved relation claims, and resolved coverage-witness claims. A trusted opposite relation is an explicit contradiction. A missing relation becomes an error only when every coverage mechanism required by the profile has an admitted, exhaustive, gap-free witness in the exact scope; otherwise the result is unknown. Malformed, ambiguous, or unadmitted contract inputs also remain unknown. The Buzz projection and pinned local admission policy live in separate product-specific packages.
+That probe received only a generic `SurfaceProfile`, resolved relation claims,
+and coverage-witness claims. Its source-scope document and decision records are
+preserved as historical evidence; the operation/claim implementation and its
+product-specific projection are no longer active workspace packages.
 
 ## Open-world contract parametricity
 

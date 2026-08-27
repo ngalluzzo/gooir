@@ -2,6 +2,24 @@
 
 Status: complete
 
+## Recovery amendment
+
+[0031](0031_MINIMAL_SEMANTIC_SUBSTRATE.md) supersedes this decision's process
+ownership. The sections below preserve the historical experiment and its
+evidence; they do not make process launch, supervision, timeout, credentials,
+or admission responsibilities of the semantic substrate. In the target
+architecture an external execution host owns that lifecycle and returns a
+neutral result plus opaque evidence to GOOIR's single candidate, conformance,
+and admission path.
+
+`org.gooi.plugin/v2` is only a transitional compatibility wire. The existing
+process adapter needed a named input/output shape after `CapabilitySpec`
+acquired exact named ports, so v2 carries those names rather than inventing or
+discarding them. It is not the target execution-host protocol and creates no
+stable process ABI. `ProcessProvider` remains useful as historical quarry and
+as a compatibility adapter while consumers migrate; it is not process
+machinery that GOOIR core intends to own.
+
 ## The deferral this closes
 
 [0001](0001_BOOTSTRAP_BOUNDARIES.md) made the right call and then postponed the
@@ -15,7 +33,10 @@ Because the boundary was chosen correctly, closing it needed no new
 architecture: **a provider is any program that reads one JSON document and
 writes another.**
 
-`org.gooi.plugin/v1` is that document pair. `ProcessProvider` implements the
+`org.gooi.plugin/v1` was that document pair. During recovery,
+`org.gooi.plugin/v2` changed the compatibility document to follow the named
+ports introduced by [0031](0031_MINIMAL_SEMANTIC_SUBSTRATE.md).
+`ProcessProvider` implemented the
 ordinary `CapabilityProvider` trait by running a command, so the planner cannot
 tell a plugin from an in-process pass, and the registry validates its outputs
 and computes fact identities exactly as before. Protocol is orthogonal to
@@ -71,6 +92,12 @@ runs a program with the host's privileges. Installing one is a trust decision,
 and the measured digest is what makes it an exact one.
 
 ## Two out-of-process paths, deliberately different
+
+This comparison records the architecture at the time of the experiment. Its
+direct trust and process-ownership conclusions are superseded by 0031:
+installing process machinery establishes availability, not semantic truth,
+and both locally and remotely executed implementations now converge on one
+admission path.
 
 | | `ProcessProvider` | request / candidate / `verify_and_admit` |
 | --- | --- | --- |

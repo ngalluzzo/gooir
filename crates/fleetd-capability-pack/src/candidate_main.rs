@@ -20,7 +20,7 @@ use serde::Serialize;
 use serde_json::to_value;
 use sha2::{Digest, Sha256};
 
-const SUITE: &str = "dev.fleetd.conformance.runnable_web_surface@0.1.0";
+const SUITE: &str = "dev.fleetd.conformance/runnable_web_surface@0.2.0";
 const ASSETS: [(&str, &str); 4] = [
     ("web/operator/contract.json", "application/json"),
     ("web/operator/index.html", "text/html; charset=utf-8"),
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let request: CapabilityRequest = serde_json::from_slice(&fs::read(request_path)?)?;
     request.validate()?;
     if request.body.conformance_suite != SUITE {
-        return Err("request does not name the runnable-web suite v0.1.0".into());
+        return Err("request does not name the runnable-web suite v0.2.0".into());
     }
     let [input] = request.body.inputs.as_slice() else {
         return Err("runnable-web projection requires exactly one target input".into());
@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .collect::<Result<Vec<_>, std::io::Error>>()?,
     };
     let provider = ProviderDescriptor {
-        id: ProviderId::new("dev.fleetd.provider.git", "runnable_web_manifest", "0.1.0"),
+        id: ProviderId::new("dev.fleetd.provider.git", "runnable_web_manifest", "0.2.0"),
         capability: request.body.capability.clone(),
         implementation_digest: implementation_digest(),
     };

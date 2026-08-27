@@ -1,5 +1,5 @@
 {
-  "protocol": "org.gooi.plugin/v1",
+  "protocol": "org.gooi.plugin/v2",
   "provider": { "package": "test.plugin", "name": "sdk_absent_input", "version": "1.0.0" },
   "capability": { "package": "test.capability", "name": "make", "version": "1.0.0" },
   "command": { "program": "python3", "args": ["sdk_absent_input.py"] },

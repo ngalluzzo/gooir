@@ -41,7 +41,7 @@ fn the_authored_route_to_the_waist_is_planned_not_wired() {
     let plan = r
         .plan([authored_entity_spec_fact()], &data_model_fact())
         .expect("data model is reachable");
-    assert!(plan.is_executable());
+    assert!(plan.has_provider_for_every_step());
     assert_eq!(plan.steps.len(), 1);
 
     let report = r
@@ -85,7 +85,10 @@ fn a_specification_with_an_unresolved_defeat_cannot_be_lowered() {
     let plan = r
         .plan([authored_entity_spec_fact()], &postgres_ddl_fact())
         .expect("route exists");
-    assert!(plan.is_executable(), "a typed route exists regardless");
+    assert!(
+        plan.has_provider_for_every_step(),
+        "a typed route exists regardless"
+    );
 
     // Planning proves a route; execution still refuses a partial fact on a
     // complete-only edge.
@@ -105,12 +108,21 @@ fn an_uninstalled_lowering_becomes_an_exact_assignable_need() {
     let plan = r
         .plan([authored_entity_spec_fact()], &typescript_types_fact())
         .expect("the route is known even with no provider");
-    assert!(!plan.is_executable());
+    assert!(!plan.has_provider_for_every_step());
     assert_eq!(plan.needs.len(), 1);
     let need = &plan.needs[0];
-    assert_eq!(need.produces, vec![typescript_types_fact()]);
-    assert_eq!(need.requires[0].fact, data_model_fact());
-    assert!(!need.conformance_suite.is_empty(), "a need names its suite");
+    assert_eq!(
+        need.specification.output_ports[0].value_kind,
+        typescript_types_fact()
+    );
+    assert_eq!(
+        need.specification.input_ports[0].value_kind,
+        data_model_fact()
+    );
+    assert!(
+        !need.specification.default_conformance_suite.is_empty(),
+        "a need names its suite"
+    );
 }
 
 #[test]
@@ -182,7 +194,10 @@ fn the_checked_in_example_exercises_the_whole_authored_graph() {
     let missing = r
         .plan([authored_entity_spec_fact()], &typescript_types_fact())
         .expect("TypeScript route");
-    assert!(!missing.is_executable());
+    assert!(!missing.has_provider_for_every_step());
     assert_eq!(missing.needs.len(), 1);
-    assert_eq!(missing.needs[0].produces, vec![typescript_types_fact()]);
+    assert_eq!(
+        missing.needs[0].specification.output_ports[0].value_kind,
+        typescript_types_fact()
+    );
 }

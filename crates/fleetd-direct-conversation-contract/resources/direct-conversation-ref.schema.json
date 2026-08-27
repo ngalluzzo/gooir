@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.fleetd.dev/conversation/direct-conversation-ref/0.1.0",
+  "title": "DirectConversationRef",
+  "description": "One target-scoped Fleetd durable direct-conversation reference. Cross-member ordering and distinct-agent validation are enforced by the contract implementation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fleetd_target", "conversation_id", "created_at_ms", "members"],
+  "properties": {
+    "fleetd_target": { "$ref": "#/$defs/opaqueCoordinate" },
+    "conversation_id": { "$ref": "#/$defs/opaqueCoordinate" },
+    "created_at_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "members": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/member" }
+    }
+  },
+  "$defs": {
+    "opaqueCoordinate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "allOf": [
+        { "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" },
+        { "pattern": "^[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000]" },
+        { "pattern": "[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000]$" }
+      ]
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "delivery_mode"],
+      "properties": {
+        "agent_id": { "$ref": "#/$defs/opaqueCoordinate" },
+        "delivery_mode": {
+          "type": "string",
+          "enum": ["inbox", "stream_only"]
+        }
+      }
+    }
+  }
+}

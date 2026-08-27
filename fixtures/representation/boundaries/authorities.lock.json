@@ -1,0 +1,610 @@
+{
+  "protocol": "org.gooi.fixture.representation_boundaries/v1",
+  "products": [
+    {
+      "id": "grafana",
+      "governance_group": "grafana_labs",
+      "lifecycle": "current",
+      "declared_ecosystem": "react_web"
+    },
+    {
+      "id": "papermark",
+      "governance_group": "papermark",
+      "lifecycle": "current",
+      "declared_ecosystem": "react_web"
+    },
+    {
+      "id": "directus",
+      "governance_group": "directus",
+      "lifecycle": "current",
+      "declared_ecosystem": "vue_web"
+    },
+    {
+      "id": "nocodb",
+      "governance_group": "nocodb",
+      "lifecycle": "current",
+      "declared_ecosystem": "vue_web"
+    },
+    {
+      "id": "gemini_cli",
+      "governance_group": "google",
+      "lifecycle": "current",
+      "declared_ecosystem": "ink_terminal"
+    },
+    {
+      "id": "shopify_cli",
+      "governance_group": "shopify",
+      "lifecycle": "current",
+      "declared_ecosystem": "ink_terminal"
+    },
+    {
+      "id": "codex_ts_cli",
+      "governance_group": "openai",
+      "lifecycle": "historical",
+      "declared_ecosystem": "ink_terminal"
+    }
+  ],
+  "authorities": [
+    {
+      "id": "grafana.manifest",
+      "product_id": "grafana",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/grafana/grafana.git", "commit": "553f2f7de01bdb50d037ca40911fd166509a890a" },
+      "source_path": "package.json",
+      "snapshot_path": "grafana/package.json",
+      "sha256": "160b842c103e02e6653267ae3dccf2e39a1af92e44f5fd30f9bd0cae920cb9ec",
+      "license_snapshot": "grafana/LICENSE"
+    },
+    {
+      "id": "grafana.navigation_types",
+      "product_id": "grafana",
+      "role": "type_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/grafana/grafana.git", "commit": "553f2f7de01bdb50d037ca40911fd166509a890a" },
+      "source_path": "public/app/core/navigation/types.ts",
+      "snapshot_path": "grafana/navigation-types.ts",
+      "sha256": "62870388621cd7310c05335cd0473a0f46c579ab22822892d89341b02a432b9d",
+      "license_snapshot": "grafana/LICENSE"
+    },
+    {
+      "id": "grafana.routes",
+      "product_id": "grafana",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/grafana/grafana.git", "commit": "553f2f7de01bdb50d037ca40911fd166509a890a" },
+      "source_path": "public/app/routes/routes.tsx",
+      "snapshot_path": "grafana/routes.tsx",
+      "sha256": "f75b71cc7843935e201c77a5ef6914984267f6ccabd5861016e9e6b0e8906c0f",
+      "license_snapshot": "grafana/LICENSE"
+    },
+    {
+      "id": "grafana.connections",
+      "product_id": "grafana",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/grafana/grafana.git", "commit": "553f2f7de01bdb50d037ca40911fd166509a890a" },
+      "source_path": "public/app/features/connections/Connections.tsx",
+      "snapshot_path": "grafana/connections.tsx",
+      "sha256": "d3901e57f4f49d2d544fc3348d7380155dbec1835b75b60b40579c725776c4c2",
+      "license_snapshot": "grafana/LICENSE"
+    },
+    {
+      "id": "papermark.manifest",
+      "product_id": "papermark",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "package.json",
+      "snapshot_path": "papermark/package.json",
+      "sha256": "65d8e40deab9dd73ee88a59b425144b6af1a77eb0a73e39be100a875fe898c79",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.documents_page",
+      "product_id": "papermark",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "pages/documents/index.tsx",
+      "snapshot_path": "papermark/documents-page.tsx",
+      "sha256": "02a61745455457126b32b73a4b0547884d4d6bf096d5cb05640f991a495ddc2b",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.pages_app",
+      "product_id": "papermark",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "pages/_app.tsx",
+      "snapshot_path": "papermark/pages-app.tsx",
+      "sha256": "5cfa00e109318bc27d38199435bd13202fdec9bc3e0dd631a4f2e0ab72e3ad52",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.login_page",
+      "product_id": "papermark",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "app/(auth)/login/page.tsx",
+      "snapshot_path": "papermark/login-page.tsx",
+      "sha256": "8c58d6ebc3c6f62856cff29047a182d4fd66b22f57f5597e791e7eedb17556cc",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.host_document",
+      "product_id": "papermark",
+      "role": "host_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "pages/_document.tsx",
+      "snapshot_path": "papermark/pages-document.tsx",
+      "sha256": "0866a7bf83645160310fddd3c93e2805ae2f36d6e5994760b81e182f04e704f1",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.shadcn_config",
+      "product_id": "papermark",
+      "role": "registry_configuration",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "components.json",
+      "snapshot_path": "papermark/components.json",
+      "sha256": "5dc9e5227789c006175504d4ea7239ab798b1a29dd8ab2687ca555d9cc83489f",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "papermark.materialized_button",
+      "product_id": "papermark",
+      "role": "materialized_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "components/ui/button.tsx",
+      "snapshot_path": "papermark/button.tsx",
+      "sha256": "fe7ae61d1e86f18d4a966bab644cb7fa86dcdfc9959908051af0b545843919d5",
+      "license_snapshot": "papermark/LICENSE"
+    },
+    {
+      "id": "directus.manifest",
+      "product_id": "directus",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/package.json",
+      "snapshot_path": "directus/package.json",
+      "sha256": "edc986847cd681fc6e6e65eefa8c4f67a9a98fb704ed10827abd98b0dfd298d0",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "directus.module_registration",
+      "product_id": "directus",
+      "role": "application_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/src/modules/index.ts",
+      "snapshot_path": "directus/modules.ts",
+      "sha256": "76aae8f15aefb9d9b68fd02883dcc1679096cc51c0b0801c4642741d64bedb8a",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "directus.files_module",
+      "product_id": "directus",
+      "role": "application_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/src/modules/files/index.ts",
+      "snapshot_path": "directus/files-module.ts",
+      "sha256": "eba091a6d22feed1e85a20574271a6f5b095a1da428d31aae077e6b5add65c44",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "directus.files_collection",
+      "product_id": "directus",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/src/modules/files/routes/collection.vue",
+      "snapshot_path": "directus/files-collection.vue",
+      "sha256": "ab29422cb4d92a8a48d3163e7bbdb2a195848e6724409371d56899b258048bf5",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "directus.application_root",
+      "product_id": "directus",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/src/app.vue",
+      "snapshot_path": "directus/app.vue",
+      "sha256": "75b93f9ce9791ebacb1d46bcd9a509038660379ec557247b5bbe6c34096278fc",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "directus.host_document",
+      "product_id": "directus",
+      "role": "host_source",
+      "parser_variant": "html",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "app/index.html",
+      "snapshot_path": "directus/index.html",
+      "sha256": "37298c52db8dfa39f04e0e3fce4f4c1980a5ec2d36a01362a24483b5da7a408f",
+      "license_snapshot": "directus/LICENSE"
+    },
+    {
+      "id": "nocodb.manifest",
+      "product_id": "nocodb",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/package.json",
+      "snapshot_path": "nocodb/package.json",
+      "sha256": "724793c19a9df02681a058c2a7880472ea1fb5491407c4b2ef6650ff52b35ba9",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "nocodb.nuxt_config",
+      "product_id": "nocodb",
+      "role": "provider_configuration_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/nuxt.config.ts",
+      "snapshot_path": "nocodb/nuxt.config.ts",
+      "sha256": "84d8801475126940a5f440d980d497401b41abf41498598fd2c04cddd3441490",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "nocodb.dynamic_page",
+      "product_id": "nocodb",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/pages/index/[typeOrId]/[baseId]/index/index/[viewId]/[[viewTitle]].vue",
+      "snapshot_path": "nocodb/dynamic-page.vue",
+      "sha256": "fb90fd60afe2704af83190ed701886a822e140571c5da43d5773b245f3751b90",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "nocodb.smartsheet",
+      "product_id": "nocodb",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/components/tabs/Smartsheet.vue",
+      "snapshot_path": "nocodb/smartsheet.vue",
+      "sha256": "c84fa222aca43843585f6fbb73683d48e8152171a00c0af1545cb26d4c0e80df",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "nocodb.index_page",
+      "product_id": "nocodb",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/pages/index.vue",
+      "snapshot_path": "nocodb/index-page.vue",
+      "sha256": "cbef606eacc36d82e4ac564eb603d3f59bd292c568ca84bf53f0c3933c0352bb",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "nocodb.application_root",
+      "product_id": "nocodb",
+      "role": "application_source",
+      "parser_variant": "vue_sfc",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/app.vue",
+      "snapshot_path": "nocodb/app.vue",
+      "sha256": "477c7f9b71b4a3821ab734e007ce753545727ddb1da07b175bd7e5c2b87e63e8",
+      "license_snapshot": "nocodb/ROOT-LICENSE.md"
+    },
+    {
+      "id": "gemini_cli.manifest",
+      "product_id": "gemini_cli",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/package.json",
+      "snapshot_path": "gemini-cli/package.json",
+      "sha256": "cdff7d66f304cce56dcf446c20c5b2f147664e818a63fcdad83b5305d1937853",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.application_root",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/App.tsx",
+      "snapshot_path": "gemini-cli/app.tsx",
+      "sha256": "a595be0f2abff0d065315e7d50a66ecb81dc429a4a352fe98eec11d88ab94370",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.default_layout",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/layouts/DefaultAppLayout.tsx",
+      "snapshot_path": "gemini-cli/default-layout.tsx",
+      "sha256": "367e9b4d0ea77994d1d554e82506fe6736bba6c6680d9708683790ced517e858",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.screen_reader_layout",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/layouts/ScreenReaderAppLayout.tsx",
+      "snapshot_path": "gemini-cli/screen-reader-layout.tsx",
+      "sha256": "a18aabd1e06b3255329fc486d31763109cfce122322362cc3e126d4228f5cc77",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.main_content",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/components/MainContent.tsx",
+      "snapshot_path": "gemini-cli/main-content.tsx",
+      "sha256": "3e7667d77e704d67b805c275beb4311b3ca93bdb95fc32053b39ba672655eb34",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.history_item_display",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/components/HistoryItemDisplay.tsx",
+      "snapshot_path": "gemini-cli/history-item-display.tsx",
+      "sha256": "680d928744063cc44bc71d5b00bf8706a177720ec3f745f9537ecf1021e6c1ad",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.ui_types",
+      "product_id": "gemini_cli",
+      "role": "type_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/types.ts",
+      "snapshot_path": "gemini-cli/ui-types.ts",
+      "sha256": "29837e8e4d42170d35ee8a3f8f83e2d80b83ef225d887da5460ff571d48e7217",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.history_manager",
+      "product_id": "gemini_cli",
+      "role": "state_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/hooks/useHistoryManager.ts",
+      "snapshot_path": "gemini-cli/history-manager.ts",
+      "sha256": "a1a47a5bd21051f976b89da1386cab7b653d8c88fdcf3ad09b1f5b1d67c73d7a",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "gemini_cli.composer",
+      "product_id": "gemini_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "packages/cli/src/ui/components/Composer.tsx",
+      "snapshot_path": "gemini-cli/composer.tsx",
+      "sha256": "f60aed651e05a73e1100f85eb90049c935e9dbf776501b89cd30a843c64ba660",
+      "license_snapshot": "gemini-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.app_manifest",
+      "product_id": "shopify_cli",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/app/package.json",
+      "snapshot_path": "shopify-cli/app-package.json",
+      "sha256": "b43c7de944051cde7de40196a38e8ec631a7f527a6705bccaeeff3b202987385",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.kit_manifest",
+      "product_id": "shopify_cli",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/cli-kit/package.json",
+      "snapshot_path": "shopify-cli/kit-package.json",
+      "sha256": "2fa9ef78a5aa3efbb358039365adbdd505075852a4e40e517003d0e0b2272c04",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.ui_bridge",
+      "product_id": "shopify_cli",
+      "role": "runtime_bridge_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/cli-kit/src/private/node/ui.tsx",
+      "snapshot_path": "shopify-cli/ui-bridge.tsx",
+      "sha256": "9a03533685e9f09e032c15250440486ba065d5b966233a651ba4757eab763078",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.ink_export",
+      "product_id": "shopify_cli",
+      "role": "export_source",
+      "parser_variant": "typescript",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/cli-kit/src/public/node/ink.ts",
+      "snapshot_path": "shopify-cli/ink-export.ts",
+      "sha256": "752743d68d6ead54f84affc775b147ad129a1839a1910f72e3a9b74ce24536a1",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.dev_ui_selector",
+      "product_id": "shopify_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/app/src/cli/services/dev/ui.tsx",
+      "snapshot_path": "shopify-cli/dev-ui.tsx",
+      "sha256": "904a05abc564683032286668f067446856d2506e874df3a20f6b3505e4f2b073",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.dev_session_ui",
+      "product_id": "shopify_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/app/src/cli/services/dev/ui/components/DevSessionUI.tsx",
+      "snapshot_path": "shopify-cli/dev-session-ui.tsx",
+      "sha256": "db32acf58d1f1f8e1d647da135a60f83b47799f111148c40b7e589b19da593eb",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "shopify_cli.tab_panel",
+      "product_id": "shopify_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "packages/app/src/cli/services/dev/ui/components/TabPanel.tsx",
+      "snapshot_path": "shopify-cli/tab-panel.tsx",
+      "sha256": "44e90301266173f505150cf61ec6df623f632f920dded440bd83d5db9ad3bbf4",
+      "license_snapshot": "shopify-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.manifest",
+      "product_id": "codex_ts_cli",
+      "role": "manifest",
+      "parser_variant": "json",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/package.json",
+      "snapshot_path": "codex-ts-cli/package.json",
+      "sha256": "779b4d8b423ad11e911ef750ba3835c11134de4f29f4b76c1cde54586aeb5a35",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.application_root",
+      "product_id": "codex_ts_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/src/app.tsx",
+      "snapshot_path": "codex-ts-cli/app.tsx",
+      "sha256": "4cd42063ae26fe6a143a3f0155e2c3549aae3def98f65ffb92051358782005bf",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.terminal_chat",
+      "product_id": "codex_ts_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/src/components/chat/terminal-chat.tsx",
+      "snapshot_path": "codex-ts-cli/terminal-chat.tsx",
+      "sha256": "73d145d5353d2ee52cbd01850a82a2880b5aede91e7ff1535fcbe5d8952d947d",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.message_history",
+      "product_id": "codex_ts_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/src/components/chat/terminal-message-history.tsx",
+      "snapshot_path": "codex-ts-cli/message-history.tsx",
+      "sha256": "d53d2e90d3443d71c9bb91b3e15e85366600687fa43473e859dab9392653ca37",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.response_item",
+      "product_id": "codex_ts_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/src/components/chat/terminal-chat-response-item.tsx",
+      "snapshot_path": "codex-ts-cli/response-item.tsx",
+      "sha256": "fc7867006d9e73ef368b61c895f01bd94c6e8132299be4ffdf200b4f40bcb856",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    },
+    {
+      "id": "codex_ts_cli.chat_input",
+      "product_id": "codex_ts_cli",
+      "role": "application_source",
+      "parser_variant": "typescript_jsx",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "codex-cli/src/components/chat/terminal-chat-input.tsx",
+      "snapshot_path": "codex-ts-cli/chat-input.tsx",
+      "sha256": "0fd48ffdd0e28b8a0a5708e4c5473da6cc523a9a798c11134dd8440879ae2d52",
+      "license_snapshot": "codex-ts-cli/LICENSE"
+    }
+  ],
+  "licenses": [
+    {
+      "id": "grafana.license",
+      "product_id": "grafana",
+      "repository": { "url": "https://github.com/grafana/grafana.git", "commit": "553f2f7de01bdb50d037ca40911fd166509a890a" },
+      "source_path": "LICENSE",
+      "snapshot_path": "grafana/LICENSE",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+    },
+    {
+      "id": "papermark.license",
+      "product_id": "papermark",
+      "repository": { "url": "https://github.com/mfts/papermark.git", "commit": "1a9a0998831775cd5cdd93c5303d9194ddb90660" },
+      "source_path": "LICENSE",
+      "snapshot_path": "papermark/LICENSE",
+      "sha256": "af53cbdd317f500fbed63862ca8cf2ce23ad94df7d778e299b5d3a6ef7ac5839"
+    },
+    {
+      "id": "directus.license",
+      "product_id": "directus",
+      "repository": { "url": "https://github.com/directus/directus.git", "commit": "5869c06f6997af0d2f13b39b3d19297dd2ed2f65" },
+      "source_path": "license",
+      "snapshot_path": "directus/LICENSE",
+      "sha256": "f209dfa60e56b29f6e8e5cefde91dec4ce86f12289209ede63520556385d555d"
+    },
+    {
+      "id": "nocodb.root_license",
+      "product_id": "nocodb",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "LICENSE.md",
+      "snapshot_path": "nocodb/ROOT-LICENSE.md",
+      "sha256": "cbad8f8d8eb636b3b19cce7131b1fe930cef68f9fbaeeb28ec90543319acf9d6"
+    },
+    {
+      "id": "nocodb.package_license",
+      "product_id": "nocodb",
+      "repository": { "url": "https://github.com/nocodb/nocodb.git", "commit": "17d8acf1f279e6147cc508b73ca52fbb737794c2" },
+      "source_path": "packages/nc-gui/LICENSE.md",
+      "snapshot_path": "nocodb/PACKAGE-LICENSE.md",
+      "sha256": "4f051606c68addfcc5eedd2898192e9dc11063f2895ebb407349adc487dbfc84"
+    },
+    {
+      "id": "gemini_cli.license",
+      "product_id": "gemini_cli",
+      "repository": { "url": "https://github.com/google-gemini/gemini-cli.git", "commit": "812f7a2bcf20b6e80e2e50c3c8fa8e26567bc1e8" },
+      "source_path": "LICENSE",
+      "snapshot_path": "gemini-cli/LICENSE",
+      "sha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd"
+    },
+    {
+      "id": "shopify_cli.license",
+      "product_id": "shopify_cli",
+      "repository": { "url": "https://github.com/Shopify/cli.git", "commit": "1149f9f8dfe8fb2ff9f60c01410d24995de125e3" },
+      "source_path": "LICENSE",
+      "snapshot_path": "shopify-cli/LICENSE",
+      "sha256": "40614f57726c0804b64757fcf155ebfb59c9dddfc27cc17c7717e2993571c771"
+    },
+    {
+      "id": "codex_ts_cli.license",
+      "product_id": "codex_ts_cli",
+      "repository": { "url": "https://github.com/openai/codex.git", "commit": "5aafe190e2657dc8b9d53e98e7bf6ec6389183b1" },
+      "source_path": "LICENSE",
+      "snapshot_path": "codex-ts-cli/LICENSE",
+      "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
+    }
+  ]
+}

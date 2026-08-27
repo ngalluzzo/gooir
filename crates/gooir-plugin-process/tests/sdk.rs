@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use gooir_capability::{
     CapabilityId, CapabilityProvider, CapabilitySpec, FactCoverage, FactInstance, FactType,
-    Requirement,
+    InputPort, OutputPort, PortName,
 };
 use gooir_plugin_process::ProcessProvider;
 
@@ -29,9 +29,16 @@ fn produced() -> FactType {
 fn spec() -> CapabilitySpec {
     CapabilitySpec {
         id: CapabilityId::new("test.capability", "make", "1.0.0"),
-        requires: vec![Requirement::complete(source())],
-        produces: vec![produced()],
-        default_conformance_suite: "test.suite@1.0.0".to_owned(),
+        input_ports: vec![InputPort::complete(
+            PortName::parse("source").unwrap(),
+            source(),
+        )],
+        output_ports: vec![OutputPort::new(
+            PortName::parse("result").unwrap(),
+            produced(),
+        )],
+        default_conformance_suite: "test/suite@1.0.0".to_owned(),
+        extensions: Default::default(),
     }
 }
 

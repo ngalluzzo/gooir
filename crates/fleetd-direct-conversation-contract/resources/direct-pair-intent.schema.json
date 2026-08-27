@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.fleetd.dev/conversation/direct-pair-intent/0.1.0",
+  "title": "DirectPairIntent",
+  "description": "One exact Fleetd target and canonical unordered direct-conversation pair. Cross-member ordering and distinct-agent validation are enforced by the contract implementation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fleetd_target", "members"],
+  "properties": {
+    "fleetd_target": { "$ref": "#/$defs/opaqueCoordinate" },
+    "members": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/member" }
+    }
+  },
+  "$defs": {
+    "opaqueCoordinate": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "allOf": [
+        { "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" },
+        { "pattern": "^[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000]" },
+        { "pattern": "[^\\u0009-\\u000d\\u0020\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000]$" }
+      ]
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_id", "delivery_mode"],
+      "properties": {
+        "agent_id": { "$ref": "#/$defs/opaqueCoordinate" },
+        "delivery_mode": {
+          "type": "string",
+          "enum": ["inbox", "stream_only"]
+        }
+      }
+    }
+  }
+}

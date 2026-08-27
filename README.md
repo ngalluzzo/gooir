@@ -8,11 +8,24 @@ It never guesses. An identity is matched exactly and never by range, a fact
 that could not be fully established says so, and a capability nobody implements
 stays in the plan as an assignable need rather than disappearing.
 
+## The recovery boundary
+
+GOOIR has one semantic graph, but not everything the compiler or an execution
+host does belongs in that graph. A dialect is a governed vocabulary containing
+named value kinds; a fact is one value of one kind; a capability relates named
+input and output ports. Process lifecycle, credentials, leases, sessions,
+retries, and persistence belong to replaceable execution hosts.
+
+[Decision 0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) is the
+normative recovery boundary. It supersedes the parallel operation/claim IR and
+prevents compiler/runtime plumbing from recursively becoming ecosystem
+vocabulary.
+
 ## Five concepts
 
 | | |
 | --- | --- |
-| **Fact** | a typed, identified value, carrying whether its coverage was complete |
+| **Fact** | a content-identified value of one exact value kind; authority and coverage are recorded separately |
 | **Capability** | a versioned promise from exact input fact types to exact output fact types |
 | **Provider** | one implementation of a capability |
 | **Plan** | a derivation over capabilities from what you have to what you want |
@@ -62,30 +75,33 @@ cargo run -q --bin gooir -- derive model_types \
   --plugin examples/plugins/typescript-types/plugin.json
 ```
 
-A provider is any program that reads one JSON document and writes another, so
-it need not be Rust, or compiled, or built here. The host names each manifest
+A provider's semantic ABI is one JSON document in and one JSON document out, so
+it need not be Rust, or compiled, or built here. Effectful proof hosts may also
+deliver bounded live authority over a separate inherited channel; that
+authority never enters the semantic document. The host names each manifest
 explicitly and measures the implementation itself — see
-[0019](docs/DECISIONS/0019_PLUGIN_LIFECYCLE.md).
+[0019](docs/DECISIONS/0019_PLUGIN_LIFECYCLE.md) and
+[0032](docs/DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md).
 
 ## How the crates are organised
 
-Thirty-eight crates, six roles. Every crate is exactly one of these:
+Workspace crates have six roles. Every crate is exactly one of these:
 
 | role | what it holds | examples |
 | --- | --- | --- |
-| **kernel** | the primitives, knowing no domain | `gooir-identity`, `gooir-core`, `gooir-capability`, `gooir-analysis`, `gooir-doctor` |
-| **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-effects-v1` |
+| **kernel** | the finite primitives, knowing no domain | `gooir-identity`, `gooir-capability`, `gooir-package`, `gooir-planning`, `gooir-doctor` |
+| **fact family** | a versioned vocabulary of fact types | `semantics-data-model-v1`, `semantics-interaction-activation-v0`, `semantics-activity-projection-v0` |
 | **provider** | one implementation that produces facts | `prisma-schema-lifter`, `sql-ddl-lowering`, `entity-spec` |
 | **provider pack** | registers capabilities and providers into a graph | `gooir-datamodel-pack`, `fleetd-capability-pack` |
 | **tool** | reads or reports on a graph | `gooir-cli` — the one entry point |
-| **support** | shared machinery | `lift-defeasible`, `gooir-provider` (the SDK) |
+| **support** | shared machinery and empirical probes | `lift-defeasible`, `gooir-provider` (the SDK), `activity-projection-recurrence` |
 
 A crate named `*-lifter` or `*-lowering` is a provider; the suffix says which
 direction it travels, not that it is a different kind of thing.
 
 ## Where the reasoning lives
 
-Twenty-six decision records in [docs/DECISIONS](docs/DECISIONS) carry the
+Thirty-two decision records in [docs/DECISIONS](docs/DECISIONS) carry the
 argument, including the ones that overturned earlier plans. The most load-bearing:
 
 - [0002](docs/DECISIONS/0002_EVIDENCE_TRUST_POLICY.md) — evidence is trusted contextually, never by self-declaration
@@ -95,9 +111,87 @@ argument, including the ones that overturned earlier plans. The most load-bearin
 - [0017](docs/DECISIONS/0017_ONE_ADMISSION_RULE.md) — passing a suite and being admitted are two conditions
 - [0023](docs/DECISIONS/0023_PACK_MANIFEST.md) — a capability graph is declared as data
 - [0024](docs/DECISIONS/0024_PROVIDER_SDK.md) — a provider is its transformation; coverage is derived, never declared
+- [0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md) — interaction starts at observed activation, not a parallel component system
+- [0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md) — a screen is a state-scoped derived observation, not the semantic waist
+- [0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md) — agent activity recurs as a selected ordered projection
+- [0031](docs/DECISIONS/0031_MINIMAL_SEMANTIC_SUBSTRATE.md) — dialects contain value kinds; execution hosts remain external
+- [0032](docs/DECISIONS/0032_FLEETD_DIRECT_CONVERSATION_PROVIDER.md) — exact stateful replay against Fleetd before any generic effect interface
 
 Also the [project brief](docs/PROJECT_BRIEF.md),
 [architecture](docs/ARCHITECTURE.md) and [milestones](docs/MILESTONES.md).
+
+## Interaction recurrence probe
+
+The first ecosystem-derived interaction contract comes from pinned React,
+Vue, Ink, shadcn/ui, and Mantine source—not an authored GOOIR component model:
+
+```bash
+cargo test -p interaction-activation-recurrence
+npm ci --prefix tools/interaction-activation-lifters
+npm test --prefix tools/interaction-activation-lifters
+npm run check --prefix tools/interaction-activation-lifters
+```
+
+Source-specific AST projections over the independently governed React DOM and
+Vue runtime-dom lineages recur on only one positive meaning: a source-local
+activation invokes its registered handler. DOM buttons, terminal keys, labels,
+enablement, effect counts, renderers, and component-library names remain native
+or unknown. Ink is measured as a React renderer and non-voting host-diversity
+participant, with that lineage recovered from its pinned reconciler imports;
+shadcn as a registry/source materializer; Mantine as an installed React package.
+Existing programs can use those native routes without producing an Interaction
+fact at all.
+
+The checked-in corpus verifies exact upstream revisions and file digests. A
+pinned Babel parser and deterministic ecosystem-specific lifters produce exact
+source spans; mutation tests revoke the fact when any positive path is broken.
+The recurrence suite then proves that every measured divergence remains
+preserved. See [decision 0027](docs/DECISIONS/0027_INTERACTION_ACTIVATION_RECURRENCE.md).
+
+## Representation-boundary probe
+
+Production Grafana, Papermark, Directus, NocoDB, Gemini CLI, Shopify CLI, and
+historical TypeScript Codex sources reject a universal `Screen`, `Document`, or
+component-tree contract. The corpus pins sources containing native routing,
+wrapping, layout, outlet, portal, guarded-alternative, terminal, and stdout
+mechanisms. Its generic parser-backed inventory records only native syntax;
+provider behavior remains unprojected and is not renamed semantic UI.
+
+The web subset retains a narrower provider-backed route-binding candidate for
+a future navigation probe. Gemini and historical Codex retain a separate
+agent-session candidate—ordered human/agent/tool/system activity plus a current
+input or decision locus—but Shopify proves that Ink itself carries no such
+meaning. See [decision 0028](docs/DECISIONS/0028_REPRESENTATION_BOUNDARY_PROBE.md).
+
+## Activity-projection recurrence probe
+
+Exact reviewed selectors from Open WebUI and Hugging Face Chat UI, plus Gemini
+CLI's exact `useHistory` hook under React 19.2.4, now lower closed native
+fixtures into concrete `ActivityProjection` values and pass the Rust semantic
+verifier. LobeChat, LibreChat, and Codex remain static corroboration across six
+distinct current repositories. A canonical transcript, backing branch
+graph, global chronology, actor enum, portable payload, singular input locus,
+and durable stream delta are rejected.
+
+```bash
+npm ci --prefix tools/activity-projection-lifters
+npm test --prefix tools/activity-projection-lifters
+cargo test -p semantics-activity-projection-v0
+cargo test -p activity-projection-recurrence
+```
+
+The source-specific projectors use pinned mature parsers, exact source spans,
+and separately reviewed positive-node digests. The two exact upstream branch
+selectors execute in an isolated context; the exact Gemini React hook executes
+without a handwritten reducer and proves a settled, nonchronological state
+vector addressed by projection-local keys. Gemini's exact normal App/layout
+chain binds that state to its downstream `npm:@jrichman/ink` lineage, but no
+terminal rendering is claimed. The checked Rust probe byte-binds the
+canonical generated document and verifies the concrete semantic values.
+Content, participant attribution, outstanding
+requests, interaction, streaming, and native rendering remain separate facts.
+See
+[decision 0029](docs/DECISIONS/0029_ACTIVITY_PROJECTION_RECURRENCE.md).
 
 ## Fleetd multi-dialect dogfood
 
@@ -172,19 +266,38 @@ See also [decision 0013](docs/DECISIONS/0013_RUNNABLE_WEB_ARTIFACT_CONFORMANCE.m
 
 ## Earlier proof surfaces
 
-`GOOIR-000` proved the kernel boundary: unknown dialect data round-trips
-without a plugin, analyzers depend on exact contracts rather than dialect
-names, equivalent projections normalise equally, unverified claims never become
-safety facts, and a meaning-changing version requires an explicit bridge.
+`GOOIR-000` explored a kernel boundary through a parallel operation/claim IR.
+Its source and decisions remain historical evidence, but that IR and its
+analyzer line have been retired under decision 0031.
 
 `GOOIR-001` lifted a pinned Buzz event surface and reported a real cross-layer
-gap with exact scope and provenance:
+gap with exact scope and provenance. The [Slice 1 record](docs/SLICE_1_DEMO.md)
+documents that retired proof; it is not an active command surface.
 
-```bash
-cargo run -q -p buzz-surface-check
-```
+## Stateful Fleetd proof
 
-See the [ten-minute Slice 1 demo](docs/SLICE_1_DEMO.md).
+The first stateful ecosystem capability is Fleetd-native: two independently
+packaged HTTP clients open or resolve one exact direct conversation while an
+independent attester re-observes Fleetd's public state. The proof-local host
+binds exact packages, selected offer, native runtime, target deployment,
+credential revision, limits, replay laws, conformance, and admission without
+adding Fleetd meaning to the generic substrate or changing Fleetd source.
+
+Real product tests cover both client orders, concurrent `201`/`200`
+convergence, target restart, exact immutable-mode `409`, altered-output
+withholding, commit-before-response host loss, loaded-arm substitution,
+attester recovery/capacity, and offline replay of all three terminal outcomes.
+A separate Fleetd H/Fleetd T proof carries one opaque invocation through public
+reserve, arm, block/requeue, and completion APIs. H treats the request and
+result as opaque. Target authority is confined to the credential-owning runner
+and its separately piped provider/attester children; it enters neither H nor a
+child environment.
+
+The H/T proof is intentionally bounded: runner discontinuities are controlled
+process exits, only the admitted path is nested through H, and it does not
+claim H-daemon restart or a single nested H-kill/T-commit fault. The target
+unknown-outcome, `Unable`, and `Withheld` laws are established by the separate
+stateful product proofs.
 
 ## Development
 
@@ -193,6 +306,16 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
+The normal workspace command compiles and registers, but does not execute, the
+effectful optimized proofs. The five real Fleetd tests (`fleetd_real`,
+`fleetd_crash`, `fleetd_semantic_matrix`, `fleetd_attester`, and `fleetd_host`)
+require clean externally built release binaries and the environment documented
+in `crates/fleetd-direct-conversation-external-host-proof/tests/fleetd_real.rs`;
+run each with `--release --ignored --exact`. The native supervisor/runtime and
+32 MiB aggregate-bound proofs are also explicit optimized ignored tests. The
+current native qualification proof is limited to the current aarch64 macOS
+host.
 
 Verification harnesses that need a live PostgreSQL:
 
