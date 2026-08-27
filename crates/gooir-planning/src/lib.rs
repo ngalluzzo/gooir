@@ -728,6 +728,18 @@ impl SemanticPlanner {
         selection: RouteSelection,
     ) -> Result<SelectedRoute, PlanningError> {
         self.validate_exact_plan(plan)?;
+        if !plan.extensions.is_empty() {
+            return Err(PlanningError::UnsupportedPlanExtensions);
+        }
+        if let Some(planned) = plan
+            .capabilities
+            .iter()
+            .find(|planned| !planned.extensions.is_empty())
+        {
+            return Err(PlanningError::UnsupportedPlanNodeExtensions(
+                planned.specification.id.clone(),
+            ));
+        }
         for available in available_offers {
             let planned = plan
                 .planned_capability(&available.capability)
@@ -2865,6 +2877,18 @@ mod tests {
             ),
             Err(PlanningError::UnsupportedPlanExtensions)
         ));
+        let available = BTreeSet::from([AvailableOffer {
+            capability: edge.id.clone(),
+            offer: implementation.offer_id.clone(),
+        }]);
+        assert!(matches!(
+            planner.select_route_with_available_offers(
+                &decoded,
+                &available,
+                RouteSelection::UniqueOnly,
+            ),
+            Err(PlanningError::UnsupportedPlanExtensions | PlanningError::PlanInventoryMismatch)
+        ));
 
         let mut node_extended = planner.plan([kind("source")], kind("result")).unwrap();
         node_extended.capabilities[0]
@@ -2882,6 +2906,15 @@ mod tests {
                 ),
             ),
             Err(PlanningError::UnsupportedPlanNodeExtensions(_))
+        ));
+        assert!(matches!(
+            planner.select_route_with_available_offers(
+                &node_extended,
+                &available,
+                RouteSelection::UniqueOnly,
+            ),
+            Err(PlanningError::UnsupportedPlanNodeExtensions(_)
+                | PlanningError::PlanInventoryMismatch)
         ));
     }
 
