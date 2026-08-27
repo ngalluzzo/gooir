@@ -471,6 +471,12 @@ impl DerivationFacade {
                 fact: value.fact.clone(),
             });
         }
+        resolved.sort_by(|left, right| {
+            (&left.reference.fact_id, &left.reference.authority_record_id).cmp(&(
+                &right.reference.fact_id,
+                &right.reference.authority_record_id,
+            ))
+        });
         Ok(resolved)
     }
 
