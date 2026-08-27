@@ -102,7 +102,7 @@ different provider shapes:
   authored-data-model provider to the SDK and retained exact package
   installation, external-host execution, and its behavioral suite. Other
   providers in that pack remain on the legacy compatibility helper.
-- `gooir-http` commit `ba82ce1d9f45799608e283beb53d0b05a470d14e`
+- `gooir-http` commit `d72b536a5aa5616fa0edd93067e9964525085408`
   authors a named three-input HTTP-to-Axum provider and an Axum-to-Rust artifact
   provider, exposes stdio entry points through the SDK, and proves direct exact
   invocation plus their offer-free two-hop package plan.
