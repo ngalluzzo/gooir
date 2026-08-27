@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::native::{NativeQualificationError, QualifiedNativeArtifact};
+use crate::runtime::{QualifiedNativeRuntime, RuntimeQualificationError};
 
 #[cfg(target_os = "macos")]
 mod darwin;
@@ -42,7 +43,7 @@ const MAX_DARWIN_EXIT_CODE: i32 = 255;
 const MAX_DARWIN_SIGNAL: i32 = 31;
 /// Exact serialized receipt protocol.
 pub const PROCESS_RECEIPT_PROTOCOL: &str =
-    "org.gooi.proof.fleetd-native-command-process-receipt/v1";
+    "org.gooi.proof.fleetd-native-command-process-receipt/v2";
 
 /// Maximum canonical JSON size accepted for a supervisor receipt.
 ///
@@ -57,30 +58,32 @@ const _: () = assert!(
 
 /// Exact mechanics bound by [`NATIVE_SUPERVISOR_PROFILE_ID`].
 ///
-/// This is qualification input for a later complete native-runtime profile;
-/// it does not itself qualify a runtime or derive a journal lock.
+/// The proof-local native-runtime qualification binds this profile and holds
+/// its live runtime fence through the exact spawn operation.
 pub const NATIVE_SUPERVISOR_PROFILE: &str = concat!(
-    "org.gooi.proof/fleetd-native-command-supervisor@0.1.0;",
+    "org.gooi.proof/fleetd-native-command-supervisor@0.2.0;",
     "platform=darwin-aarch64;spawn=locked-direct-posix_spawn;argv0=fleetd-native-command;",
     "environment=empty;cwd=qualified-descriptor-addinherit-addfchdir-np-close;",
     "pipes=pipe-immediate-cloexec-explicit-source-close;",
     "fds=stdin-0,stdout-1,stderr-2,authority-3,cloexec-default-only;",
     "signals=empty-mask-defaults-reset;process-group=new;",
     "limits=stdin-16m,authority-abi-bound,stdout-384k,stderr-384k,wall-whole-ms-max-300s,receipt-json-4m;",
-    "deadline=monotonic-before-revalidation-spawn-thread-start;",
+    "deadline=monotonic-before-runtime-revalidation-artifact-revalidation-refuse-expired-before-spawn-thread-start;",
     "pumps=concurrent-bounded-active-enforcement;",
     "exit-observation=waitid-p-pid-wexited-wnohang-wnowait;",
     "group-kill=zombie-anchor-eperm-esrch-only-after-wnowait-exit;",
     "terminal=kill-group-before-reap-once-before-joins,drop-kill-reap;",
     "redaction=exact-document-endpoint-bearer-and-bounded-prefix;",
-    "receipt=protocol-profile-artifact-limits-input-digest-authority-correlation-stream-counts-derived-identity;",
+    "runtime=deployment-composition-qualification-guard-held-through-posix-spawn;",
+    "receipt=protocol-profile-runtime-qualification-artifact-limits-input-digest-authority-correlation-stream-counts-derived-identity;",
     "eligibility=normal-exit-zero-and-intact-only;",
-    "containment=process-group-only-qualified-artifact-trusted/v1"
+    "containment=process-group-only-qualified-artifact-trusted/v1",
+    "limitations=posix-spawn-non-preemptible-after-entry,same-uid-proof-host-writer-out-of-scope/v1"
 );
 
 /// Content identity of [`NATIVE_SUPERVISOR_PROFILE`].
 pub const NATIVE_SUPERVISOR_PROFILE_ID: &str =
-    "sha256:74ea77cac0bb0cdd0f510ae5d097d5e0a5fa8491f7a7fa35c38ec166fa4a35ed";
+    "sha256:96a7d0bbd2f5d9806eb70148d08b0fe4a228efc22a875f5c7cc9d71656f7e808";
 
 /// Exact caller-selected process bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -450,6 +453,7 @@ pub struct ProcessReceipt {
     receipt_id: String,
     protocol: String,
     supervisor_profile_id: String,
+    runtime_qualification_id: String,
     artifact_lock_id: String,
     limits: AppliedProcessLimits,
     input: ProcessInputBinding,
@@ -461,7 +465,12 @@ pub struct ProcessReceipt {
 }
 
 impl ProcessReceipt {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "receipt construction exposes the exact closed evidence tuple"
+    )]
     fn new(
+        runtime_qualification_id: &str,
         artifact_lock_id: &str,
         limits: ProcessLimits,
         input: ProcessInputBinding,
@@ -484,6 +493,7 @@ impl ProcessReceipt {
             receipt_id: placeholder_identity(),
             protocol: PROCESS_RECEIPT_PROTOCOL.to_owned(),
             supervisor_profile_id: NATIVE_SUPERVISOR_PROFILE_ID.to_owned(),
+            runtime_qualification_id: runtime_qualification_id.to_owned(),
             artifact_lock_id: artifact_lock_id.to_owned(),
             limits: AppliedProcessLimits::from_limits(limits),
             input,
@@ -511,6 +521,12 @@ impl ProcessReceipt {
     #[must_use]
     pub fn supervisor_profile_id(&self) -> &str {
         &self.supervisor_profile_id
+    }
+
+    /// Exact deployment-composition runtime qualification held through spawn.
+    #[must_use]
+    pub fn runtime_qualification_id(&self) -> &str {
+        &self.runtime_qualification_id
     }
 
     #[must_use]
@@ -564,6 +580,7 @@ impl ProcessReceipt {
     /// receipt.
     pub fn validate(&self) -> Result<(), SupervisorError> {
         validate_sha256(&self.receipt_id)?;
+        validate_sha256(&self.runtime_qualification_id)?;
         validate_sha256(&self.artifact_lock_id)?;
         if self.protocol != PROCESS_RECEIPT_PROTOCOL
             || self.supervisor_profile_id != NATIVE_SUPERVISOR_PROFILE_ID
@@ -615,6 +632,7 @@ impl ProcessReceipt {
         struct Body<'a> {
             protocol: &'a str,
             supervisor_profile_id: &'a str,
+            runtime_qualification_id: &'a str,
             artifact_lock_id: &'a str,
             limits: AppliedProcessLimits,
             input: &'a ProcessInputBinding,
@@ -627,6 +645,7 @@ impl ProcessReceipt {
         let canonical = serde_json_canonicalizer::to_vec(&Body {
             protocol: &self.protocol,
             supervisor_profile_id: &self.supervisor_profile_id,
+            runtime_qualification_id: &self.runtime_qualification_id,
             artifact_lock_id: &self.artifact_lock_id,
             limits: self.limits,
             input: &self.input,
@@ -653,6 +672,7 @@ impl ProcessReceipt {
 /// authority-bearing stdin, authority encoding failure, unsupported hosts,
 /// spawn/reap failure, or internal thread failure.
 pub fn launch(
+    runtime: &QualifiedNativeRuntime,
     artifact: &QualifiedNativeArtifact,
     authority: &AuthorityDocument,
     stdin: &[u8],
@@ -678,6 +698,7 @@ pub fn launch(
     #[cfg(target_os = "macos")]
     {
         launch_macos(
+            runtime,
             artifact,
             stdin,
             limits,
@@ -688,7 +709,14 @@ pub fn launch(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (artifact, authority_bytes, input_binding, endpoint, bearer);
+        let _ = (
+            runtime,
+            artifact,
+            authority_bytes,
+            input_binding,
+            endpoint,
+            bearer,
+        );
         Err(SupervisorError::UnsupportedPlatform)
     }
 }
@@ -705,6 +733,7 @@ fn validate_limits(limits: ProcessLimits) -> Result<(), SupervisorError> {
 
 #[cfg(target_os = "macos")]
 fn launch_macos(
+    runtime: &QualifiedNativeRuntime,
     artifact: &QualifiedNativeArtifact,
     stdin: &[u8],
     limits: ProcessLimits,
@@ -715,10 +744,23 @@ fn launch_macos(
     let deadline = Instant::now()
         .checked_add(limits.wall_time)
         .ok_or(SupervisorError::InvalidLimits)?;
+    let runtime_guard = runtime
+        .revalidated_spawn_guard(artifact.lock())
+        .map_err(SupervisorError::RuntimeQualification)?;
+    if runtime_guard.chosen_artifact_lock_id() != artifact.lock().lock_id()
+        || runtime_guard.chosen_role() != artifact.lock().role()
+    {
+        return Err(SupervisorError::RuntimeQualification(
+            RuntimeQualificationError::ArtifactLockMismatch,
+        ));
+    }
     let access = artifact
         .revalidated_spawn_access()
         .map_err(SupervisorError::Qualification)?;
-    let process = darwin::spawn(access.executable_path(), access.cwd())
+    if Instant::now() >= deadline {
+        return Err(SupervisorError::DeadlineElapsedBeforeSpawn);
+    }
+    let process = darwin::spawn(access.executable_path(), access.cwd(), &runtime_guard)
         .map_err(|_| SupervisorError::Spawn)?;
     let run = supervise_process(process, stdin, authority_bytes, limits, deadline)?;
     let needles = [
@@ -729,6 +771,7 @@ fn launch_macos(
     let stdout = finish_capture(run.stdout, &needles);
     let stderr = finish_capture(run.stderr, &needles);
     ProcessReceipt::new(
+        runtime_guard.qualification_id(),
         artifact.lock().lock_id(),
         limits,
         input_binding,
@@ -1140,6 +1183,8 @@ pub enum SupervisorError {
     AuthorityEncoding,
     UnsupportedPlatform,
     Qualification(NativeQualificationError),
+    RuntimeQualification(RuntimeQualificationError),
+    DeadlineElapsedBeforeSpawn,
     Spawn,
     Enforcement,
     Reap,
@@ -1157,6 +1202,8 @@ impl fmt::Display for SupervisorError {
             Self::AuthorityEncoding => "native process authority could not be encoded",
             Self::UnsupportedPlatform => "native supervisor supports only its Darwin profile",
             Self::Qualification(_) => "native artifact revalidation failed before spawn",
+            Self::RuntimeQualification(_) => "native runtime revalidation failed before spawn",
+            Self::DeadlineElapsedBeforeSpawn => "native process deadline elapsed before spawn",
             Self::Spawn => "native process spawn failed",
             Self::Enforcement => "native process-group enforcement failed",
             Self::Reap => "native process reap failed",
@@ -1171,6 +1218,7 @@ impl Error for SupervisorError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Qualification(error) => Some(error),
+            Self::RuntimeQualification(error) => Some(error),
             _ => None,
         }
     }
@@ -1246,6 +1294,7 @@ mod tests {
             .expect("input binding");
         let receipt = ProcessReceipt::new(
             &format!("sha256:{}", "a".repeat(64)),
+            &format!("sha256:{}", "d".repeat(64)),
             limits,
             input,
             ProcessTermination::Other {
@@ -1307,6 +1356,7 @@ mod tests {
         };
         let receipt = ProcessReceipt::new(
             &format!("sha256:{}", "a".repeat(64)),
+            &format!("sha256:{}", "d".repeat(64)),
             limits,
             input,
             ProcessTermination::Exited { code: 0 },

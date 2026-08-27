@@ -20,6 +20,8 @@ use std::path::Path;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
 
+use crate::runtime::NativeRuntimeSpawnGuard;
+
 const FIRST_PRIVATE_FD: RawFd = 10;
 
 unsafe extern "C" {
@@ -49,7 +51,11 @@ pub(super) enum WaitStatus {
     Other(i32),
 }
 
-pub(super) fn spawn(executable: &Path, cwd: BorrowedFd<'_>) -> io::Result<SpawnedProcess> {
+pub(super) fn spawn(
+    executable: &Path,
+    cwd: BorrowedFd<'_>,
+    runtime_guard: &NativeRuntimeSpawnGuard<'_>,
+) -> io::Result<SpawnedProcess> {
     let _spawn_guard = spawn_lock()
         .lock()
         .map_err(|_| io::Error::other("native spawn lock is poisoned"))?;
@@ -97,6 +103,9 @@ pub(super) fn spawn(executable: &Path, cwd: BorrowedFd<'_>) -> io::Result<Spawne
             environment.as_mut_ptr(),
         )
     })?;
+    // Keep the descriptor-backed runtime fence mechanically borrowed through
+    // the exact posix_spawn call above.
+    std::hint::black_box(runtime_guard.qualification_id());
 
     drop(stdin.reader);
     drop(stdout.writer);

@@ -11,5 +11,6 @@
 
 pub mod journal;
 pub mod native;
+pub mod runtime;
 pub mod supervisor;
 pub mod target;
