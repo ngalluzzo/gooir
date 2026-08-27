@@ -699,27 +699,12 @@ impl SemanticPlanner {
                 actual: plan.planning_scope_digest.clone(),
             });
         }
-        for planned in &plan.capabilities {
-            let capability = &planned.specification.id;
-            let installed_specification = self
-                .specifications
-                .get(capability)
-                .ok_or_else(|| PlanningError::CapabilityNotInstalled(capability.clone()))?;
-            if installed_specification != &planned.specification {
-                return Err(PlanningError::SpecificationInventoryMismatch(
-                    capability.clone(),
-                ));
-            }
-            let installed_offers = self
-                .offers
-                .get(capability)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            if installed_offers != planned.offers {
-                return Err(PlanningError::RouteOfferInventoryMismatch(
-                    capability.clone(),
-                ));
-            }
+        let expected = self.plan(
+            plan.initial_value_kinds.iter().cloned(),
+            plan.target_value_kind.clone(),
+        )?;
+        if &expected != plan {
+            return Err(PlanningError::PlanInventoryMismatch);
         }
         plan.select_route(selection, self.limits)
     }
@@ -975,7 +960,7 @@ pub enum PlanningError {
     AllRoutesBlocked(Box<BlockedRouteAnalysis>),
     AmbiguousCapabilityRoute,
     AmbiguousOffer(CapabilityId),
-    RouteOfferInventoryMismatch(CapabilityId),
+    PlanInventoryMismatch,
     UnsupportedPlanExtensions,
     UnsupportedPlanNodeExtensions(CapabilityId),
     CapabilityNotPlanned(CapabilityId),
@@ -1083,9 +1068,8 @@ impl fmt::Display for PlanningError {
                 formatter,
                 "the unique capability route has more than one offer for {capability}"
             ),
-            Self::RouteOfferInventoryMismatch(capability) => write!(
-                formatter,
-                "planned offers for capability {capability} differ from this exact planning inventory"
+            Self::PlanInventoryMismatch => formatter.write_str(
+                "semantic plan differs from the exact graph slice for this planning inventory",
             ),
             Self::UnsupportedPlanExtensions => formatter.write_str(
                 "semantic plan carries unknown root extensions and cannot be linked safely",
@@ -1756,6 +1740,30 @@ fn blocked_route_analysis(
             .collect::<Vec<_>>()
     };
 
+    let mut blocked_value_kinds = BTreeSet::from([plan.target_value_kind.clone()]);
+    let mut pending = vec![plan.target_value_kind.clone()];
+    let mut reached_capabilities = BTreeSet::new();
+    while let Some(value_kind) = pending.pop() {
+        for planned in &plan.capabilities {
+            if !planned
+                .specification
+                .output_ports
+                .iter()
+                .any(|output| output.value_kind == value_kind)
+                || !reached_capabilities.insert(planned.specification.id.clone())
+            {
+                continue;
+            }
+            for input in &planned.specification.input_ports {
+                if !available.contains(&input.value_kind)
+                    && blocked_value_kinds.insert(input.value_kind.clone())
+                {
+                    pending.push(input.value_kind.clone());
+                }
+            }
+        }
+    }
+
     BlockedRouteAnalysis {
         protocol: BLOCKED_ROUTE_PROTOCOL.to_owned(),
         plan_id: plan.plan_id.clone(),
@@ -1764,6 +1772,7 @@ fn blocked_route_analysis(
         nodes: plan
             .capabilities
             .iter()
+            .filter(|planned| reached_capabilities.contains(&planned.specification.id))
             .map(|planned| BlockedRouteNode {
                 capability: planned.specification.id.clone(),
                 missing_offer: planned.offers.is_empty(),
@@ -1785,7 +1794,10 @@ fn blocked_route_analysis(
         missing_needs: plan
             .capabilities
             .iter()
-            .filter(|planned| planned.offers.is_empty())
+            .filter(|planned| {
+                planned.offers.is_empty()
+                    && reached_capabilities.contains(&planned.specification.id)
+            })
             .map(|planned| planned.specification.clone())
             .collect(),
         extensions: BTreeMap::new(),
@@ -3015,6 +3027,67 @@ mod tests {
         let decoded: BlockedRouteAnalysis =
             serde_json::from_slice(&serde_json::to_vec(blocked.as_ref()).unwrap()).unwrap();
         assert_eq!(decoded, *blocked);
+
+        let mut extended = decoded;
+        extended
+            .extensions
+            .insert("org.example.blockage".to_owned(), json!({"future": true}));
+        extended.nodes[0]
+            .extensions
+            .insert("org.example.node".to_owned(), json!(1));
+        extended.target_alternatives[0]
+            .extensions
+            .insert("org.example.output".to_owned(), json!([1, 2]));
+        let round_trip: BlockedRouteAnalysis =
+            serde_json::from_slice(&serde_json::to_vec(&extended).unwrap()).unwrap();
+        assert_eq!(round_trip, extended);
+    }
+
+    #[test]
+    fn blocked_analysis_excludes_providerless_nodes_outside_the_blockage_dag() {
+        let source = kind("source");
+        let middle = kind("middle");
+        let result = kind("result");
+        let available = specification(
+            "available-middle",
+            &[("source", source.clone())],
+            &[("middle", middle.clone())],
+        );
+        let unnecessary = specification(
+            "unnecessary-middle",
+            &[("source", source.clone())],
+            &[("middle", middle.clone())],
+        );
+        let target = specification(
+            "missing-target",
+            &[("middle", middle)],
+            &[("result", result.clone())],
+        );
+        let planner = SemanticPlanner::new(
+            [unnecessary.clone(), target.clone(), available.clone()],
+            [offer(&available, "available-middle", 'a')],
+            limits(),
+        )
+        .unwrap();
+        let plan = planner.plan([source], result).unwrap();
+
+        let PlanningError::AllRoutesBlocked(blocked) = planner
+            .select_route(&plan, RouteSelection::UniqueOnly)
+            .unwrap_err()
+        else {
+            panic!("expected route-specific blockage");
+        };
+
+        assert_eq!(blocked.missing_needs, vec![target.clone()]);
+        assert_eq!(blocked.nodes.len(), 1);
+        assert_eq!(blocked.nodes[0].capability, target.id);
+        assert!(blocked.nodes[0].blocked_inputs.is_empty());
+        assert!(
+            !blocked
+                .missing_needs
+                .iter()
+                .any(|need| need.id == unnecessary.id)
+        );
     }
 
     #[test]
@@ -3038,6 +3111,38 @@ mod tests {
         assert!(matches!(
             changed_identity.validate(&plan, limits()),
             Err(PlanningError::RouteIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn inventory_bound_selection_rejects_an_omitted_alternative() {
+        let source = kind("source");
+        let result = kind("result");
+        let first = specification(
+            "first",
+            &[("source", source.clone())],
+            &[("result", result.clone())],
+        );
+        let second = specification(
+            "second",
+            &[("source", source.clone())],
+            &[("result", result.clone())],
+        );
+        let planner = SemanticPlanner::new(
+            [first.clone(), second.clone()],
+            [offer(&first, "first", 'a'), offer(&second, "second", 'b')],
+            limits(),
+        )
+        .unwrap();
+        let mut plan = planner.plan([source], result).unwrap();
+        plan.capabilities
+            .retain(|planned| planned.specification.id == first.id);
+        reidentify(&mut plan);
+        plan.validate(limits()).unwrap();
+
+        assert!(matches!(
+            planner.select_route(&plan, RouteSelection::UniqueOnly),
+            Err(PlanningError::PlanInventoryMismatch)
         ));
     }
 
