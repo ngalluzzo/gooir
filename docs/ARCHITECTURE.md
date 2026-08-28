@@ -144,6 +144,16 @@ deadline bounds; timeout kills and reaps the child. The child retains the
 caller's ordinary OS authority, so this is not a sandbox, credential boundary,
 daemon lifecycle, or durable host.
 
+`gooir-file-tree-v1` is an optional artifact dialect on the semantic side of
+this boundary. A `FileTree` fact describes bounded, content-addressed virtual
+files at portable relative paths. It has no absolute destination, filesystem
+handle, overwrite or deletion policy, permission bits, write status, or
+materialization receipt. A producer reaches it through an ordinary declared
+capability and it acquires authority through the existing independent
+conformance and admission path. A product host may materialize only an exact
+admitted fact under its own explicit local policy. That host operation is not
+a semantic capability, and the compiler driver does not perform it.
+
 ## Extension direction
 
 ```text
@@ -179,6 +189,11 @@ The older
 top-level in-process provider helpers, and `org.gooi.plugin/v2` are
 compatibility surfaces, not universal execution protocols. Their presence does
 not authorize a second runtime inside GOOIR.
+
+The file-tree contract is narrow optional support, not a new kernel concept or
+a generic effect model. Target-specific artifact dialects may remain richer;
+an explicit capability can project one into the generic file-tree kind when
+its information is sufficient.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.
