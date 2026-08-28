@@ -574,10 +574,14 @@ name = "gooir-cli"
 version = "0.1.0"
 dependencies = [
  "gooir-capability",
+ "gooir-derive",
  "gooir-doctor",
  "gooir-package",
  "gooir-planning",
  "gooir-plugin-process",
+ "nix",
+ "rustix",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -589,8 +593,10 @@ dependencies = [
  "gooir-capability",
  "gooir-package",
  "gooir-planning",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 

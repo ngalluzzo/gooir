@@ -19,11 +19,11 @@ use std::error::Error;
 use std::fmt;
 
 use gooir_capability::protocol::{ConformanceSuiteId, ImplementationId};
+use gooir_capability::strict_json::{self, StrictJsonError};
 use gooir_capability::{
     CapabilityId, CapabilityRegistry, CapabilitySpec, DialectId, FactAcceptance, InputPort,
     OutputPort, PortName, ValueKindId,
 };
-use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -1207,95 +1207,10 @@ fn manifest_value_digest(value: &Value) -> Result<PackageDigest, PackageManifest
 }
 
 fn parse_strict_json(input: &str) -> Result<Value, PackageManifestError> {
-    let mut deserializer = serde_json::Deserializer::from_str(input);
-    let value = StrictJsonValue::deserialize(&mut deserializer)
-        .map_err(|error| classify_json_error(error.to_string()))?;
-    deserializer
-        .end()
-        .map_err(|error| PackageManifestError::Parse(error.to_string()))?;
-    Ok(value.0)
-}
-
-fn classify_json_error(error: String) -> PackageManifestError {
-    const PREFIX: &str = "duplicate object key `";
-    if let Some(rest) = error.strip_prefix(PREFIX)
-        && let Some((key, _)) = rest.split_once('`')
-    {
-        return PackageManifestError::DuplicateJsonKey(key.to_owned());
-    }
-    PackageManifestError::Parse(error)
-}
-
-struct StrictJsonValue(Value);
-
-impl<'de> Deserialize<'de> for StrictJsonValue {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserializer.deserialize_any(StrictJsonVisitor)
-    }
-}
-
-struct StrictJsonVisitor;
-
-impl<'de> Visitor<'de> for StrictJsonVisitor {
-    type Value = StrictJsonValue;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("a JSON value without duplicate object keys")
-    }
-
-    fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::Bool(value)))
-    }
-
-    fn visit_i64<E: serde::de::Error>(self, value: i64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::Number(value.into())))
-    }
-
-    fn visit_u64<E: serde::de::Error>(self, value: u64) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::Number(value.into())))
-    }
-
-    fn visit_f64<E: serde::de::Error>(self, value: f64) -> Result<Self::Value, E> {
-        let number = serde_json::Number::from_f64(value)
-            .ok_or_else(|| E::custom("JSON number must be finite"))?;
-        Ok(StrictJsonValue(Value::Number(number)))
-    }
-
-    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
-        self.visit_string(value.to_owned())
-    }
-
-    fn visit_string<E: serde::de::Error>(self, value: String) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::String(value)))
-    }
-
-    fn visit_none<E: serde::de::Error>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::Null))
-    }
-
-    fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
-        Ok(StrictJsonValue(Value::Null))
-    }
-
-    fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
-        let mut values = Vec::new();
-        while let Some(value) = sequence.next_element::<StrictJsonValue>()? {
-            values.push(value.0);
-        }
-        Ok(StrictJsonValue(Value::Array(values)))
-    }
-
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut values = serde_json::Map::new();
-        while let Some((key, value)) = map.next_entry::<String, StrictJsonValue>()? {
-            if values.insert(key.clone(), value.0).is_some() {
-                return Err(serde::de::Error::custom(format!(
-                    "duplicate object key `{key}`"
-                )));
-            }
-        }
-        Ok(StrictJsonValue(Value::Object(values)))
-    }
+    strict_json::from_str(input).map_err(|error| match error {
+        StrictJsonError::DuplicateObjectKey(key) => PackageManifestError::DuplicateJsonKey(key),
+        StrictJsonError::Invalid(detail) => PackageManifestError::Parse(detail),
+    })
 }
 
 #[cfg(test)]

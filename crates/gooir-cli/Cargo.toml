@@ -6,13 +6,17 @@ license.workspace = true
 
 [dependencies]
 gooir-capability = { workspace = true }
+gooir-derive = { workspace = true }
 gooir-doctor = { workspace = true }
 gooir-package = { workspace = true }
 gooir-planning = { workspace = true }
 gooir-plugin-process = { workspace = true }
+rustix.workspace = true
+serde.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
+nix.workspace = true
 tempfile = { workspace = true }
 
 [[bin]]

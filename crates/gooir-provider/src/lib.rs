@@ -36,6 +36,7 @@ use lift_defeasible::Defeasible;
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 
+pub mod attester;
 pub mod neutral;
 
 /// Package under which in-process providers are identified.

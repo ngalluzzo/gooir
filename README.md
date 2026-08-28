@@ -25,15 +25,15 @@ The 0.1 semantic substrate and product façade consist of six crates:
 | `gooir-capability` | facts, typed capability declarations, candidates, conformance, and admission records |
 | `gooir-package` | exact package resources, dependencies, offers, exports, and installed locks |
 | `gooir-planning` | provider-neutral plans and explicit implementation linking |
-| `gooir-derive` | five-outcome derivation façade and external-host admission membrane |
+| `gooir-derive` | five-outcome façade, compiler driver, admission membrane, and bounded local stdio host |
 | `gooir-doctor` | diagnostics over an installed capability graph |
 
 The repository also contains narrow, optional support:
 
 | Crate | Status |
 | --- | --- |
-| `gooir-cli` | neutral graph inspection and a legacy local execution adapter |
-| `gooir-provider` | established neutral v1 provider-authoring SDK plus legacy in-process adapter; not trusted kernel |
+| `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
+| `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
@@ -47,11 +47,36 @@ cargo run -q --bin gooir -- doctor --package /path/to/package
 cargo run -q --bin gooir -- plan org.example/result@1.0.0 --package /path/to/package
 ```
 
-Planning displays the complete provider-neutral graph and exact offers. It
-does not choose or execute them. The temporary `derive --pack ... --plugin ...`
-command is explicitly a legacy compatibility bridge; it is not the 0.1 host
-boundary or a universal provider transport. GOOIR never scans for executable
-code.
+`gooir compile` is the default executable composition over that inventory. It
+accepts only explicitly named package directories, source-observation JSON,
+one admission-policy JSON document, attester-binding JSON, a target, and
+mandatory positive stdin/stdout/stderr/time bounds. It admits the observations,
+uses conservative complete selection, explicitly links each step, runs the
+exact copied offer artifact over local stdio, independently assesses it with an
+exact copied attester resource, and admits the result before linking a later
+step. Run `gooir --help` for the complete invocation.
+
+An attester-binding document is local host configuration, not a package offer:
+
+```json
+{
+  "authority": { "suite": "org.example.suite/exact@1.0.0", "attester": { "implementation": "org.example.attester/exact@1.0.0", "artifact_digest": "sha256:..." } },
+  "package": "org.example.attesters@1.0.0",
+  "resource": "exact-attester"
+}
+```
+
+The complete authority must be accepted by the policy, and its artifact digest
+must equal the copied installed resource bytes.
+
+This bounded adapter executes selected artifacts with the caller's OS
+privileges. It supplies no arguments or environment, performs no `PATH` lookup,
+and kills and reaps a child that exceeds its deadline, but it is not a sandbox
+or durable execution host. JSON output is the existing five-outcome derivation
+answer, not a new stable compile receipt, and no target-specific file is
+materialized. Planning remains separately inspectable and provider-neutral.
+The temporary `derive --pack ... --plugin ...` command remains an explicitly
+legacy compatibility bridge. GOOIR never scans for executable code.
 
 ## Writing a provider
 
@@ -82,8 +107,10 @@ inputs and outputs are first-class. `Context::input` refuses unhandled semantic
 extensions rather than dropping them, while `input_with_extensions` exposes
 the complete envelope to providers that understand them. The data-model and
 native HTTP/Axum ecosystems independently exercise this surface; its authoring
-contract is established for 0.1. Execution, artifact measurement, and trust
-remain external-host responsibilities.
+contract is established for 0.1. `gooir-provider::attester` supplies the
+corresponding narrow assessment-request and assessment-authoring seam for
+independent attesters. Execution, artifact measurement, and trust remain host
+responsibilities.
 
 ## Downstream ecosystems
 

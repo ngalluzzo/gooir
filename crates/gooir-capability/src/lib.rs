@@ -5,9 +5,11 @@
 //! meanings of facts nor domain verbs such as lift, analyze, or lower; it only
 //! constructs derivations over multi-input capability edges.
 
+pub mod assessment;
 pub mod authority;
 mod manifest;
 pub mod protocol;
+pub mod strict_json;
 
 pub use manifest::{PACK_PROTOCOL, PackManifestError, read_pack, register_pack, write_pack};
 
