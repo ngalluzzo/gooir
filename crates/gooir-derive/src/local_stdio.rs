@@ -629,6 +629,8 @@ impl Error for LocalStdioError {
 mod tests {
     use super::*;
 
+    const ORDINARY_TEST_TIMEOUT_MILLISECONDS: u64 = 5_000;
+
     fn limits(stdin: usize, stdout: usize, stderr: usize, timeout_ms: u64) -> LocalStdioLimits {
         LocalStdioLimits {
             max_stdin_bytes: NonZeroUsize::new(stdin).unwrap(),
@@ -643,7 +645,7 @@ mod tests {
         let output = run_artifact(
             b"#!/bin/sh\nread value\nprintf 'copied:%s' \"$value\"\n",
             b"input\n",
-            limits(32, 32, 32, 1_000),
+            limits(32, 32, 32, ORDINARY_TEST_TIMEOUT_MILLISECONDS),
         )
         .unwrap();
         assert_eq!(output, b"copied:input");
@@ -654,7 +656,7 @@ mod tests {
         let stdin = run_artifact(
             b"#!/bin/sh\nprintf ok\n",
             b"too large",
-            limits(2, 32, 32, 1_000),
+            limits(2, 32, 32, ORDINARY_TEST_TIMEOUT_MILLISECONDS),
         )
         .unwrap_err();
         assert!(matches!(stdin, LocalStdioError::StdinLimitExceeded { .. }));
@@ -662,7 +664,7 @@ mod tests {
         let stdout = run_artifact(
             b"#!/bin/sh\nprintf '12345'\n",
             b"",
-            limits(32, 4, 32, 1_000),
+            limits(32, 4, 32, ORDINARY_TEST_TIMEOUT_MILLISECONDS),
         )
         .unwrap_err();
         assert!(
@@ -673,7 +675,7 @@ mod tests {
         let stderr = run_artifact(
             b"#!/bin/sh\nprintf '12345' >&2\nprintf ok\n",
             b"",
-            limits(32, 32, 4, 1_000),
+            limits(32, 32, 4, ORDINARY_TEST_TIMEOUT_MILLISECONDS),
         )
         .unwrap_err();
         assert!(matches!(stderr, LocalStdioError::StderrLimitExceeded(4)));

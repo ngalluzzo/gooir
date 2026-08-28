@@ -36,6 +36,7 @@ The repository also contains narrow, optional support:
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-toolchain` | host SDK for measuring, staging, locking, and independently loading external provider/attester deployment images |
+| `gooir-artifact-sdk` | admitted portable content-set contract and checked managed-directory publisher; target-neutral host support |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -121,6 +122,36 @@ corresponding narrow assessment-request and assessment-authoring seam for
 independent attesters. Execution, artifact measurement, and trust remain host
 responsibilities.
 
+## Publishing admitted artifacts
+
+`gooir-artifact-sdk` is the optional, target-neutral bridge from an admitted
+generated value to a usable local directory. External generators return the
+offer-free `org.gooi.artifact.content_set/set@1.0.0` value kind through ordinary
+capabilities. A host resolves the exact admitted fact-authority reference,
+checks or diffs a dedicated managed output, and creates or atomically replaces
+the complete directory:
+
+```rust
+let artifact = Admitted::<ContentSet>::resolve(&ledger, &reference)?;
+let output = ManagedOutput::new(
+    ManagedOutputId::parse("my-product.rust@1")?,
+    "generated/rust",
+)?;
+let receipt = LocalPublisher::default().publish(&artifact, &output)?;
+```
+
+The SDK owns no Rust, SQL, OpenAPI, HTTP, CLI, MCP, or backend semantics. It
+publishes only exact bounded bytes that already have authority. Existing
+unmanaged, wrong-owner, drifted, or symlink-containing trees are refused before
+mutation. Repeated identical publication is `Unchanged`; changed clean output
+is a whole-tree atomic exchange that removes obsolete files.
+
+The first local publisher supports macOS and Linux local filesystems with
+atomic no-replace rename and directory exchange. Its parent lock coordinates
+cooperating publishers and assumes the caller controls the non-symlink parent;
+it is not a sandbox against a malicious process. Receipts explicitly preserve
+post-commit directory-sync and retired-tree cleanup uncertainty.
+
 ## Downstream ecosystems
 
 Three downstream repositories prove real consumer boundaries:
@@ -128,8 +159,8 @@ Three downstream repositories prove real consumer boundaries:
 - [`../gooir-datamodel`](../gooir-datamodel) is the data-model contract,
   provider pack, transformations, fixtures, and package/host proofs.
 - [`../gooir-http`](../gooir-http) is the independently expressive native HTTP,
-  Axum implementation, and Rust-source ecosystem with a two-hop neutral
-  provider plan.
+  Axum implementation, and Rust-source ecosystem with a three-hop neutral
+  provider plan ending in an admitted `ContentSet` and managed materialization.
 - [`../gooir-fleetd-direct-conversation`](../gooir-fleetd-direct-conversation)
   is the stateful Fleetd contract, two independent providers, attester,
   package proof, and crash-recoverable external host proof.
