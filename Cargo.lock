@@ -618,6 +618,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-module-observer"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-module-planning",
+ "gooir-module-v0",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+]
+
+[[package]]
 name = "gooir-module-planning"
 version = "0.1.0"
 dependencies = [
