@@ -25,6 +25,9 @@
   downstream consumer.
 - A neutral v1 provider-authoring SDK exercised independently by the
   authored-data-model provider and the native HTTP-to-Axum-to-Rust ecosystem.
+- A host-owned toolchain-image SDK for measuring final external provider and
+  attester resources, deriving exact offers and bindings, atomically staging a
+  create-only image, and independently reloading its package inventory.
 
 ## Current boundary
 
@@ -48,6 +51,11 @@ existing derivation answer without target-specific materialization or a new
 stable receipt protocol. Its child artifacts retain caller OS authority and
 receive no arguments or environment. Durable execution, credentials, retries,
 deployment, and sandboxing remain external-host concerns.
+
+External backend repositories remain independently governed. GOOIR supplies
+their neutral provider/attester authoring seams and the shared host machinery
+for building an exact installed toolchain image; it does not ship their target
+profiles, lowerings, generators, conventions, or artifact semantics.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative

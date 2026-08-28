@@ -1,0 +1,23 @@
+[package]
+name = "gooir-toolchain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gooir-capability.workspace = true
+gooir-derive.workspace = true
+gooir-package.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_canonicalizer.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
