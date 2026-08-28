@@ -22,6 +22,7 @@ use gooir_capability::protocol::{
     AdmittedFactRef, CapabilityFailure, CapabilityInvocation, CapabilityResult, EvidenceRef,
     FailureKindId, ImplementationId, NamedOutput, ProtocolError,
 };
+use gooir_capability::strict_json;
 use gooir_capability::{CapabilityId, CapabilitySpec, Fact, PortName, canonical_digest};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -31,7 +32,7 @@ fn invoke_json_document<F>(input: &str, dispatch: F) -> Result<String, ProviderE
 where
     F: FnOnce(&CapabilityInvocation) -> Result<CapabilityResult, ProviderError>,
 {
-    let invocation = serde_json::from_str(input)
+    let invocation = strict_json::from_str(input)
         .map_err(|error| ProviderError::InvocationJson(error.to_string()))?;
     let result = dispatch(&invocation)?;
     serde_json::to_string(&result).map_err(|error| ProviderError::ResultJson(error.to_string()))
@@ -1129,6 +1130,63 @@ mod tests {
     }
 
     #[test]
+    fn provider_json_framing_rejects_duplicates_at_every_depth_before_dispatch() {
+        let provider = provider();
+        let input = serde_json::to_string(&invocation(&provider)).expect("invocation encodes");
+        let hostile = [
+            format!(
+                r#"{{"x.duplicate":1,"x.duplicate":2,{}"#,
+                input.strip_prefix('{').expect("invocation is an object")
+            ),
+            input.replacen(
+                r#""specification":{"#,
+                r#""specification":{"x.duplicate":1,"x.duplicate":2,"#,
+                1,
+            ),
+            input.replacen(
+                r#""inputs":[{"#,
+                r#""inputs":[{"x.duplicate":1,"x.duplicate":2,"#,
+                1,
+            ),
+            format!(
+                r#"{{"x.extension":{{"same":1,"same":2}},{}"#,
+                input.strip_prefix('{').expect("invocation is an object")
+            ),
+        ];
+
+        for document in hostile {
+            let called = Cell::new(false);
+            let error = provider
+                .invoke_json(&document, |_| {
+                    called.set(true);
+                    unreachable!("duplicate-key input must not reach the handler")
+                })
+                .expect_err("duplicate-key invocation must be refused");
+            assert!(
+                matches!(error, ProviderError::InvocationJson(ref detail) if detail.contains("duplicate JSON object key")),
+                "unexpected duplicate-key failure: {error}"
+            );
+            assert!(!called.get());
+        }
+    }
+
+    #[test]
+    fn provider_json_framing_rejects_trailing_data_before_dispatch() {
+        let provider = provider();
+        let input = serde_json::to_string(&invocation(&provider)).expect("invocation encodes");
+        let called = Cell::new(false);
+        let error = provider
+            .invoke_json(&format!("{input}\n{{}}"), |_| {
+                called.set(true);
+                unreachable!("trailing input must not reach the handler")
+            })
+            .expect_err("trailing invocation data must be refused");
+
+        assert!(matches!(error, ProviderError::InvocationJson(_)));
+        assert!(!called.get());
+    }
+
+    #[test]
     fn stream_framing_writes_one_exact_result_document() {
         let provider = provider();
         let invocation = invocation(&provider);
@@ -1347,5 +1405,34 @@ mod tests {
         result
             .validate_against(&invocation)
             .expect("app result remains an exact neutral result");
+    }
+
+    #[test]
+    fn provider_app_json_framing_uses_the_same_strict_decoder() {
+        let calls = Rc::new(Cell::new(0));
+        let mut app = ProviderApp::new();
+        let handler_calls = Rc::clone(&calls);
+        app.register(specification(), implementation("combine_rust"), move |_| {
+            handler_calls.set(handler_calls.get() + 1);
+            unreachable!("duplicate-key input must not dispatch")
+        })
+        .expect("provider registers");
+        let selected = Provider::new(specification(), implementation("combine_rust"))
+            .expect("selected provider is valid");
+        let input = serde_json::to_string(&invocation(&selected)).expect("invocation encodes");
+        let hostile = input.replacen(
+            r#""inputs":[{"#,
+            r#""inputs":[{"x.duplicate":1,"x.duplicate":2,"#,
+            1,
+        );
+
+        let error = app
+            .invoke_json(&hostile)
+            .expect_err("duplicate-key invocation must be refused");
+        assert!(
+            matches!(error, ProviderError::InvocationJson(ref detail) if detail.contains("duplicate JSON object key `x.duplicate`")),
+            "unexpected duplicate-key failure: {error}"
+        );
+        assert_eq!(calls.get(), 0);
     }
 }
