@@ -36,6 +36,7 @@ The repository also contains narrow, optional support:
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
+| `gooir-module-v0` | foundational heterogeneous module dialect; structural composition, not a kernel concept |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
 Nothing domain-specific is installed by default. The CLI receives exact
@@ -77,6 +78,13 @@ answer, not a new stable compile receipt, and no target-specific file is
 materialized. Planning remains separately inspectable and provider-neutral.
 The temporary `derive --pack ... --plugin ...` command remains an explicitly
 legacy compatibility bridge. GOOIR never scans for executable code.
+
+`gooir-module-v0` is the optional whole-unit composition vocabulary. One
+module fact contains ordered operations that wrap ordinary content-identified
+facts from any explicitly declared dialect. Operations may declare local
+symbols and carry named, exactly typed references to other operations. The
+module adds no target, pass pipeline, implementation choice, execution, or
+domain meaning; those remain compiler request, capability, and host concerns.
 
 ## Writing a provider
 

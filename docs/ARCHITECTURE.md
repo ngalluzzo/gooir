@@ -40,6 +40,22 @@ A fact identity covers its exact value kind, payload, and preserved semantic
 extensions. It does not silently absorb provenance, implementation choice,
 conformance, or host policy. Those are evidence about the value.
 
+### Optional whole-unit composition
+
+`gooir-module-v0` is a dialect layered on this object graph, not another
+kernel level. A module is one ordinary fact containing an ordered sequence of
+operations; each operation wraps another ordinary fact from an explicitly
+declared dialect. Local symbol declarations and named, exactly typed symbol
+references provide structural links without interpreting either endpoint.
+
+The module contract deliberately contains no compilation target, pass
+pipeline, implementation selection, authority, or execution state. The
+current planner operates on outer value kinds and therefore does not infer
+progress or legality through same-kind `module -> module` rewrites. A future
+composition layer may expose contained facts to the existing capability graph
+and replace understood operations while preserving unknown operations and
+extensions, but that design does not change the five kernel concepts.
+
 ## Five kernel concepts
 
 ### Fact

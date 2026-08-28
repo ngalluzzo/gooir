@@ -25,6 +25,8 @@
   downstream consumer.
 - A neutral v1 provider-authoring SDK exercised independently by the
   authored-data-model provider and the native HTTP-to-Axum-to-Rust ecosystem.
+- A foundational v0 module dialect for target-independent composition of
+  heterogeneous, content-identified operations with exact local symbols.
 
 ## Current boundary
 
@@ -48,6 +50,12 @@ existing derivation answer without target-specific materialization or a new
 stable receipt protocol. Its child artifacts retain caller OS authority and
 receive no arguments or environment. Durable execution, credentials, retries,
 deployment, and sandboxing remain external-host concerns.
+
+The optional module dialect establishes the whole-unit semantic input needed
+by downstream code-generation consumers. It does not yet standardize a module
+pass manager, legality algorithm, target materializer, or serialized compiler
+request. Those remain consumer-driven follow-up work over the established
+capability and authority substrate.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative
