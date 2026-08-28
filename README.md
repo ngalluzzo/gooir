@@ -32,12 +32,9 @@ The repository also contains narrow, optional support:
 
 | Crate | Status |
 | --- | --- |
-| `gooir-cli` | bounded local `compile` and physical FileTree `build`, neutral graph inspection, and a legacy execution adapter |
+| `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
-| `gooir-file-tree-v1` | portable content-addressed virtual-file artifact dialect; no filesystem effects |
-| `gooir-file-tree-materializer` | admitted-authority gate and bounded atomic no-replace local publication host |
-| `gooir-file-tree-build` | product-host composition from admitted FileTree derivation to physical receipt |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -59,25 +56,6 @@ exact copied offer artifact over local stdio, independently assesses it with an
 exact copied attester resource, and admits the result before linking a later
 step. Run `gooir --help` for the complete invocation.
 
-`gooir build <destination>` is the physical FileTree entrypoint over the same
-explicit package, observation, policy, attester, and bounded stdio inputs. It
-fixes the target to `org.gooi.artifact.file_tree/tree@1.0.0`, requires explicit
-positive file/directory/byte limits and Unix modes, and atomically refuses every
-existing destination. Only an admitted `Produced` answer reaches the local
-materializer. Success prints the semantic identity, local destination, exact
-file digests, modes, and durability state as host-local evidence; there is no
-JSON flag or stable serialized build receipt.
-
-```sh
-cargo run -q --bin gooir -- build ./generated-project \
-  --package /path/to/file-tree-provider-package \
-  --policy ./policy.json --observation ./source.json --attester ./attester.json \
-  --stdin-bytes 1048576 --stdout-bytes 1048576 --stderr-bytes 65536 \
-  --timeout-ms 5000 --max-files 4096 --max-directories 4096 \
-  --max-file-bytes 67108864 --max-total-bytes 268435456 \
-  --directory-mode 0750 --file-mode 0640
-```
-
 An attester-binding document is local host configuration, not a package offer:
 
 ```json
@@ -92,16 +70,11 @@ The complete authority must be accepted by the policy, and its artifact digest
 must equal the copied installed resource bytes.
 
 This bounded adapter executes selected artifacts with the caller's OS
-privileges. It supplies no arguments and clears the environment by default.
-An optional local provider-environment document may grant explicit string
-values to one exact installed offer; the offer identity binds its capability,
-implementation, artifact digest, and extensions. Every unbound provider and
-every attester still receives an empty environment. Explicitly supplying
-`PATH` grants that provider path-discovery authority. The adapter kills and
-reaps a child that exceeds its deadline, but it is not a sandbox or durable
-execution host. JSON output is the existing five-outcome derivation answer,
-not a new stable compile receipt, and no target-specific file is materialized.
-Planning remains separately inspectable and provider-neutral.
+privileges. It supplies no arguments or environment, performs no `PATH` lookup,
+and kills and reaps a child that exceeds its deadline, but it is not a sandbox
+or durable execution host. JSON output is the existing five-outcome derivation
+answer, not a new stable compile receipt, and no target-specific file is
+materialized. Planning remains separately inspectable and provider-neutral.
 The temporary `derive --pack ... --plugin ...` command remains an explicitly
 legacy compatibility bridge. GOOIR never scans for executable code.
 
@@ -181,35 +154,6 @@ The short version:
   `Failed`, without collapsing their remedies;
 - unknown and incompatible claims fail closed;
 - GOOIR emits neutral documents; an external host performs effects.
-
-The optional `org.gooi.artifact.file_tree@1.0.0` dialect is one such neutral
-document. It can be the admitted output of a generation capability, but it
-contains only portable relative paths, exact bytes, media types, and content
-digests. It grants no destination or write authority and is not evidence that
-anything was materialized.
-
-The separate `gooir-file-tree-materializer` host library is the narrow bridge
-to physical files. It resolves an exact admitted reference inside the supplied
-host ledger, refuses unhandled extensions across the full authority chain and
-FileTree plus every existing destination, checks mandatory host limits and Unix
-modes, stages through retained no-follow directory descriptors, and atomically
-publishes the complete tree. Its receipt is local effect evidence, not another
-semantic fact or a claim that later actors cannot change the files.
-
-`gooir-file-tree-build` is the optional product composition over that bridge.
-It fixes the compiler target to FileTree, retains `Blocked`, `Unreachable`,
-`Refused`, and `Failed` without touching the filesystem, and refines only an
-admitted `Produced` answer into `Materialized { produced, receipt }`. The build
-host explicitly validates the compiler's complete-selection authority
-extension; every other unknown authority semantic and every FileTree extension
-still fails closed. Host failures retain the exact admitted product but do not
-become a serialized semantic outcome.
-
-The CLI exposes that exact composition as `gooir build`. This is the first
-end-to-end product path from explicitly installed dialect packages to actual
-files. It does not grant the dialect or compiler filesystem authority: the
-destination, no-replace policy, publication limits, and modes enter only at the
-host command boundary.
 
 ## Qualify
 

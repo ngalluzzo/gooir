@@ -139,74 +139,10 @@ universal runtime. It dispatches provider artifacts only by exact installed
 `OfferId` to `PackageRegistry::offer_artifact` copied bytes. Attesters are
 explicit complete `ConformanceAuthority` bindings to copied package resources
 with the same digest. Artifacts run from private temporary paths with no
-arguments and an empty environment by default under mandatory positive byte
-and deadline bounds; timeout kills and reaps the child. A local host may bind
-bounded string environment values to one exact installed `OfferId`. This is
-explicit launch authority, not a semantic fact or package-discovered grant;
-unbound providers and every attester remain environment-free. Supplying
-`PATH`, credentials, or tool handles deliberately grants those ambient powers
-to that exact artifact. The child retains the caller's ordinary OS authority,
-so this is not a sandbox, credential boundary, daemon lifecycle, or durable
-host.
-
-`gooir-file-tree-v1` is an optional artifact dialect on the semantic side of
-this boundary. A `FileTree` fact describes bounded, content-addressed virtual
-files at portable relative paths. It has no absolute destination, filesystem
-handle, overwrite or deletion policy, permission bits, write status, or
-materialization receipt. A producer reaches it through an ordinary declared
-capability and it acquires authority through the existing independent
-conformance and admission path. A product host may materialize only an exact
-admitted fact under its own explicit local policy. That host operation is not
-a semantic capability, and the compiler driver does not perform it.
-
-`gooir-file-tree-materializer` is one optional local implementation of that
-host operation. Its public authority gate accepts an `AdmissionLedger` plus one
-exact `AdmittedFactRef` and performs resolution internally; a caller cannot
-substitute a publicly assembled `ResolvedFact`. It revalidates the complete
-authority and FileTree payload and refuses unknown extensions anywhere in the
-reference, authority chain, fact, tree, or file rather than assuming they are
-irrelevant.
-The default gate rejects every authority extension. A composing host may
-supply an explicit validator for exact authority-extension scope, key, and
-value; doing so is an assertion that the host implements those semantics, not
-an inference by the materializer. FileTree fact, tree, and file extensions are
-never delegated to that validator.
-Mandatory host limits bound files, directories, per-file bytes, and total
-bytes. Mandatory policy fixes ordinary Unix file and directory modes and, in
-this first version, supports only atomic refusal of every existing destination.
-
-The local implementation creates a private random staging directory beside the
-destination, traverses it only through retained no-follow descriptors, writes
-and synchronizes exact files, then publishes the complete tree with atomic
-no-replace rename. After that commit point it returns a receipt even if syncing
-the parent directory fails; the receipt marks durability uncertain so a caller
-does not retry under the false assumption that no effect occurred. The receipt
-is non-constructible in-process host evidence, not a stable semantic protocol.
-Crashes may still leave a private staging directory or a published tree without
-a returned receipt; durable reconciliation belongs to a later product host.
-
-`gooir-file-tree-build` is the optional in-process product host that composes
-`CompilerDriver` with a selected `FileTreeMaterializer`. It owns both, fixes the
-semantic target to the exact FileTree value kind, and resolves `Produced.target`
-through the same ledger the compiler just mutated. It understands exactly the
-compiler's complete-selection extension at implementation-selection scope and
-requires its value to equal `Produced.selection_id`; every other extension is
-refused. `Blocked`, `Unreachable`, `Refused`, and `Failed` bypass the
-materializer unchanged. Physical success retains both the admitted
-`ProducedAnswer` and materializer receipt. Artifact-gate and materializer
-failures stay host-local errors and retain the admitted product for diagnosis.
-The library composition adds no build dialect, capability edge, serialized
-receipt, retry policy, or durable journal.
-
-`gooir build` is the concrete local product entrypoint over that composition.
-It loads only caller-named packages and authority documents, fixes the target
-to FileTree, and requires the caller to state one absent destination, every
-stdio and publication bound, and ordinary Unix modes. A non-produced semantic
-answer retains its category and exit remedy without entering the materializer.
-A successful local receipt is rendered for a human operator, including its
-durability state, but is not exposed as JSON or promoted to a stable protocol.
-Thus command orchestration knows about FileTree and filesystem effects while
-the compiler, planner, and dialect remain unaware of both.
+arguments, environment, or `PATH` lookup under mandatory positive byte and
+deadline bounds; timeout kills and reaps the child. The child retains the
+caller's ordinary OS authority, so this is not a sandbox, credential boundary,
+daemon lifecycle, or durable host.
 
 ## Extension direction
 
@@ -243,16 +179,6 @@ The older
 top-level in-process provider helpers, and `org.gooi.plugin/v2` are
 compatibility surfaces, not universal execution protocols. Their presence does
 not authorize a second runtime inside GOOIR.
-
-The file-tree contract is narrow optional support, not a new kernel concept or
-a generic effect model. Target-specific artifact dialects may remain richer;
-an explicit capability can project one into the generic file-tree kind when
-its information is sufficient.
-
-The matching local materializer and build driver are also optional support.
-Neither `CompilerDriver` nor the semantic planner depends on them. The build
-driver composes them by explicitly resolving the produced authority and then
-calling the host-side `FileTreeMaterializer` seam.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.

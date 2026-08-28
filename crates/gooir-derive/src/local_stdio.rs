@@ -6,11 +6,9 @@
 //! attester bytes come only from explicit package-resource bindings whose
 //! copied digest matches the complete selected conformance authority. Each
 //! artifact is materialized in a private temporary directory and invoked by
-//! that exact path with no arguments or implicit discovery. The environment is
-//! empty by default; a host may explicitly grant bounded variables to one
-//! exact [`OfferId`], including `PATH` when it intentionally grants lookup.
+//! that exact path with no arguments, environment, discovery, or `PATH`
+//! lookup.
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -65,31 +63,11 @@ pub struct LocalAttesterBinding {
     pub resource: ResourceName,
 }
 
-/// Explicit environment granted to one exact installed provider offer.
-///
-/// The default local stdio host supplies no environment. A binding is local
-/// host configuration, not package metadata or a semantic fact. Because the
-/// [`OfferId`] covers the capability, implementation, artifact digest, and
-/// offer extensions, the same values cannot silently flow to a substituted
-/// artifact.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct LocalProviderEnvironmentBinding {
-    pub offer: OfferId,
-    pub variables: BTreeMap<String, String>,
-}
-
-const MAX_PROVIDER_ENVIRONMENT_VARIABLES: usize = 64;
-const MAX_PROVIDER_ENVIRONMENT_NAME_BYTES: usize = 255;
-const MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES: usize = 64 * 1024;
-const MAX_PROVIDER_ENVIRONMENT_TOTAL_BYTES: usize = 1024 * 1024;
-
 /// One bounded local execution host over a fixed copied package snapshot.
 #[derive(Clone, Debug)]
 pub struct LocalStdioHost {
     registry: PackageRegistry,
     attesters: Vec<LocalAttesterBinding>,
-    provider_environments: BTreeMap<OfferId, BTreeMap<String, String>>,
     limits: LocalStdioLimits,
 }
 
@@ -103,25 +81,6 @@ impl LocalStdioHost {
     pub fn new(
         registry: &PackageRegistry,
         attesters: impl IntoIterator<Item = LocalAttesterBinding>,
-        limits: LocalStdioLimits,
-    ) -> Result<Self, LocalStdioError> {
-        Self::new_with_provider_environments(registry, attesters, [], limits)
-    }
-
-    /// Constructs a host with explicit environment bindings for exact offers.
-    ///
-    /// Attesters still receive no environment. Each provider binding must name
-    /// one installed offer and satisfy fixed name, count, value, and aggregate
-    /// bounds before any artifact is launched.
-    ///
-    /// # Errors
-    ///
-    /// Refuses invalid attester bindings, duplicate or unknown offer bindings,
-    /// malformed environment names, NUL-bearing values, and bounds violations.
-    pub fn new_with_provider_environments(
-        registry: &PackageRegistry,
-        attesters: impl IntoIterator<Item = LocalAttesterBinding>,
-        provider_environments: impl IntoIterator<Item = LocalProviderEnvironmentBinding>,
         limits: LocalStdioLimits,
     ) -> Result<Self, LocalStdioError> {
         let mut exact = Vec::new();
@@ -151,21 +110,9 @@ impl LocalStdioHost {
                     right.authority.attester.artifact_digest.to_string(),
                 ))
         });
-
-        let mut environments = BTreeMap::new();
-        for binding in provider_environments {
-            validate_provider_environment_binding(registry, &binding)?;
-            if environments
-                .insert(binding.offer.clone(), binding.variables)
-                .is_some()
-            {
-                return Err(LocalStdioError::DuplicateProviderEnvironment(binding.offer));
-            }
-        }
         Ok(Self {
             registry: registry.clone(),
             attesters: exact,
-            provider_environments: environments,
             limits,
         })
     }
@@ -175,13 +122,8 @@ impl LocalStdioHost {
         self.attesters.iter().map(|binding| &binding.authority)
     }
 
-    fn invoke_artifact(
-        &self,
-        artifact: &[u8],
-        request: &[u8],
-        environment: &BTreeMap<String, String>,
-    ) -> Result<Vec<u8>, LocalStdioError> {
-        run_artifact(artifact, request, environment, self.limits)
+    fn invoke_artifact(&self, artifact: &[u8], request: &[u8]) -> Result<Vec<u8>, LocalStdioError> {
+        run_artifact(artifact, request, self.limits)
     }
 }
 
@@ -211,12 +153,7 @@ impl DerivationHost for LocalStdioHost {
         }
         let request = serde_json::to_vec(invocation)
             .map_err(|error| LocalStdioError::RequestJson(error.to_string()))?;
-        let empty_environment = BTreeMap::new();
-        let environment = self
-            .provider_environments
-            .get(offer_id)
-            .unwrap_or(&empty_environment);
-        let output = self.invoke_artifact(artifact.bytes(), &request, environment)?;
+        let output = self.invoke_artifact(artifact.bytes(), &request)?;
         decode_response(&output)
     }
 
@@ -249,66 +186,9 @@ impl DerivationHost for LocalStdioHost {
         .map_err(|error| LocalStdioError::AssessmentRequest(error.to_string()))?;
         let request = serde_json::to_vec(&request)
             .map_err(|error| LocalStdioError::RequestJson(error.to_string()))?;
-        let output = self.invoke_artifact(artifact.bytes(), &request, &BTreeMap::new())?;
+        let output = self.invoke_artifact(artifact.bytes(), &request)?;
         decode_response(&output)
     }
-}
-
-fn validate_provider_environment_binding(
-    registry: &PackageRegistry,
-    binding: &LocalProviderEnvironmentBinding,
-) -> Result<(), LocalStdioError> {
-    if registry.offer(&binding.offer).is_none() {
-        return Err(LocalStdioError::UnknownProviderEnvironmentOffer(
-            binding.offer.clone(),
-        ));
-    }
-    if binding.variables.len() > MAX_PROVIDER_ENVIRONMENT_VARIABLES {
-        return Err(LocalStdioError::ProviderEnvironmentVariableLimitExceeded {
-            actual: binding.variables.len(),
-            limit: MAX_PROVIDER_ENVIRONMENT_VARIABLES,
-        });
-    }
-    let mut total = 0_usize;
-    for (name, value) in &binding.variables {
-        if !valid_environment_name(name) {
-            return Err(LocalStdioError::InvalidProviderEnvironmentName(
-                name.clone(),
-            ));
-        }
-        if value.as_bytes().contains(&0) {
-            return Err(LocalStdioError::InvalidProviderEnvironmentValue(
-                name.clone(),
-            ));
-        }
-        if value.len() > MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES {
-            return Err(LocalStdioError::ProviderEnvironmentValueLimitExceeded {
-                name: name.clone(),
-                actual: value.len(),
-                limit: MAX_PROVIDER_ENVIRONMENT_VALUE_BYTES,
-            });
-        }
-        total = total
-            .checked_add(name.len())
-            .and_then(|bytes| bytes.checked_add(value.len()))
-            .ok_or(LocalStdioError::ProviderEnvironmentTotalOverflow)?;
-        if total > MAX_PROVIDER_ENVIRONMENT_TOTAL_BYTES {
-            return Err(LocalStdioError::ProviderEnvironmentTotalLimitExceeded {
-                actual: total,
-                limit: MAX_PROVIDER_ENVIRONMENT_TOTAL_BYTES,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn valid_environment_name(name: &str) -> bool {
-    let mut bytes = name.bytes();
-    bytes
-        .next()
-        .is_some_and(|byte| byte == b'_' || byte.is_ascii_alphabetic())
-        && name.len() <= MAX_PROVIDER_ENVIRONMENT_NAME_BYTES
-        && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
 }
 
 fn validate_attester_binding(
@@ -338,7 +218,6 @@ fn decode_response<T: DeserializeOwned>(output: &[u8]) -> Result<T, LocalStdioEr
 fn run_artifact(
     artifact: &[u8],
     request: &[u8],
-    environment: &BTreeMap<String, String>,
     limits: LocalStdioLimits,
 ) -> Result<Vec<u8>, LocalStdioError> {
     if artifact.is_empty() {
@@ -363,7 +242,6 @@ fn run_artifact(
     materialize_artifact(&path, artifact)?;
     let mut child = Command::new(&path)
         .env_clear()
-        .envs(environment)
         .current_dir(directory.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -626,24 +504,6 @@ fn first_line(text: &str) -> &str {
 pub enum LocalStdioError {
     InvalidAttester(String),
     DuplicateAttester,
-    DuplicateProviderEnvironment(OfferId),
-    UnknownProviderEnvironmentOffer(OfferId),
-    ProviderEnvironmentVariableLimitExceeded {
-        actual: usize,
-        limit: usize,
-    },
-    InvalidProviderEnvironmentName(String),
-    InvalidProviderEnvironmentValue(String),
-    ProviderEnvironmentValueLimitExceeded {
-        name: String,
-        actual: usize,
-        limit: usize,
-    },
-    ProviderEnvironmentTotalOverflow,
-    ProviderEnvironmentTotalLimitExceeded {
-        actual: usize,
-        limit: usize,
-    },
     MissingAttesterResource {
         package: PackageId,
         resource: ResourceName,
@@ -689,40 +549,6 @@ impl fmt::Display for LocalStdioError {
         match self {
             Self::InvalidAttester(detail) => write!(formatter, "invalid attester: {detail}"),
             Self::DuplicateAttester => formatter.write_str("duplicate exact attester binding"),
-            Self::DuplicateProviderEnvironment(offer) => write!(
-                formatter,
-                "duplicate provider environment binding for offer `{offer}`"
-            ),
-            Self::UnknownProviderEnvironmentOffer(offer) => write!(
-                formatter,
-                "provider environment names uninstalled offer `{offer}`"
-            ),
-            Self::ProviderEnvironmentVariableLimitExceeded { actual, limit } => write!(
-                formatter,
-                "provider environment variable count {actual} exceeds bound {limit}"
-            ),
-            Self::InvalidProviderEnvironmentName(name) => {
-                write!(formatter, "invalid provider environment name `{name}`")
-            }
-            Self::InvalidProviderEnvironmentValue(name) => write!(
-                formatter,
-                "provider environment value for `{name}` contains NUL"
-            ),
-            Self::ProviderEnvironmentValueLimitExceeded {
-                name,
-                actual,
-                limit,
-            } => write!(
-                formatter,
-                "provider environment value `{name}` size {actual} exceeds bound {limit}"
-            ),
-            Self::ProviderEnvironmentTotalOverflow => {
-                formatter.write_str("provider environment aggregate size overflowed")
-            }
-            Self::ProviderEnvironmentTotalLimitExceeded { actual, limit } => write!(
-                formatter,
-                "provider environment aggregate size {actual} exceeds bound {limit}"
-            ),
             Self::MissingAttesterResource { package, resource } => {
                 write!(
                     formatter,
@@ -814,11 +640,9 @@ mod tests {
 
     #[test]
     fn exact_copied_artifact_runs_from_staged_bytes() {
-        let environment = BTreeMap::new();
         let output = run_artifact(
             b"#!/bin/sh\nread value\nprintf 'copied:%s' \"$value\"\n",
             b"input\n",
-            &environment,
             limits(32, 32, 32, 1_000),
         )
         .unwrap();
@@ -826,40 +650,10 @@ mod tests {
     }
 
     #[test]
-    fn environment_is_empty_by_default_and_exact_when_explicitly_supplied() {
-        let artifact = b"#!/bin/sh\nprintf '%s' \"${GOOIR_TEST_AUTHORITY-unset}\"\n";
-        let empty = BTreeMap::new();
-        assert_eq!(
-            run_artifact(artifact, b"", &empty, limits(32, 32, 32, 1_000)).unwrap(),
-            b"unset"
-        );
-
-        let explicit =
-            BTreeMap::from([("GOOIR_TEST_AUTHORITY".to_owned(), "exact-value".to_owned())]);
-        assert_eq!(
-            run_artifact(artifact, b"", &explicit, limits(32, 32, 32, 1_000)).unwrap(),
-            b"exact-value"
-        );
-    }
-
-    #[test]
-    fn provider_environment_names_and_values_are_conservatively_bounded() {
-        assert!(valid_environment_name("GOOIR_PRISMA_NODE"));
-        for invalid in ["", "9START", "WITH-DASH", "WITH=EQUALS", "NUL\0NAME"] {
-            assert!(!valid_environment_name(invalid), "accepted `{invalid:?}`");
-        }
-        assert!(!valid_environment_name(
-            &"A".repeat(MAX_PROVIDER_ENVIRONMENT_NAME_BYTES + 1)
-        ));
-    }
-
-    #[test]
     fn every_stdio_direction_has_an_enforced_bound() {
-        let environment = BTreeMap::new();
         let stdin = run_artifact(
             b"#!/bin/sh\nprintf ok\n",
             b"too large",
-            &environment,
             limits(2, 32, 32, 1_000),
         )
         .unwrap_err();
@@ -868,7 +662,6 @@ mod tests {
         let stdout = run_artifact(
             b"#!/bin/sh\nprintf '12345'\n",
             b"",
-            &environment,
             limits(32, 4, 32, 1_000),
         )
         .unwrap_err();
@@ -880,7 +673,6 @@ mod tests {
         let stderr = run_artifact(
             b"#!/bin/sh\nprintf '12345' >&2\nprintf ok\n",
             b"",
-            &environment,
             limits(32, 32, 4, 1_000),
         )
         .unwrap_err();
@@ -889,12 +681,10 @@ mod tests {
 
     #[test]
     fn timeout_kills_and_reaps_the_exact_child() {
-        let environment = BTreeMap::new();
         let started = Instant::now();
         let error = run_artifact(
             b"#!/bin/sh\nwhile :; do :; done\n",
             b"",
-            &environment,
             limits(32, 32, 32, 25),
         )
         .unwrap_err();
@@ -907,7 +697,6 @@ mod tests {
 
     #[test]
     fn deadline_bounds_collection_when_a_descendant_retains_output_descriptors() {
-        let environment = BTreeMap::new();
         let started = Instant::now();
         let error = run_artifact(
             br"#!/usr/bin/python3
@@ -925,7 +714,6 @@ while True:
     pass
 ",
             b"",
-            &environment,
             limits(32, 32, 32, 25),
         )
         .unwrap_err();
@@ -938,7 +726,6 @@ while True:
 
     #[test]
     fn deadline_bounds_stdin_when_a_descendant_keeps_it_open_without_reading() {
-        let environment = BTreeMap::new();
         let input = vec![b'x'; 2 * 1024 * 1024];
         let started = Instant::now();
         let error = run_artifact(
@@ -958,7 +745,6 @@ while True:
     pass
 ",
             &input,
-            &environment,
             limits(input.len(), 32, 32, 25),
         )
         .unwrap_err();
