@@ -282,6 +282,13 @@ pub struct SemanticPlan {
     pub planning_scope_digest: PlanningScopeDigest,
     pub initial_value_kinds: Vec<ValueKindId>,
     pub target_value_kind: ValueKindId,
+    /// Optional exact capability output requested by the caller.
+    ///
+    /// When absent, the plan retains the original value-kind query semantics.
+    /// When present, this coordinate is the root of the graph slice even when
+    /// the same value kind is already available as an initial value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_output: Option<RouteOutputRef>,
     pub capabilities: Vec<PlannedCapability>,
     /// Unknown plan-root data survives round trips but prevents linking until
     /// a caller installs code that understands it.
@@ -342,6 +349,13 @@ impl SemanticPlan {
             return Err(PlanningError::UnsupportedPlanNodeExtensions(
                 planned.specification.id.clone(),
             ));
+        }
+        if self
+            .target_output
+            .as_ref()
+            .is_some_and(|target| !target.extensions.is_empty())
+        {
+            return Err(PlanningError::UnsupportedTargetExtensions);
         }
         match selection {
             RouteSelection::UniqueOnly => select_unique_route(self),
@@ -451,6 +465,7 @@ impl SemanticPlan {
                 "planning_scope_digest",
                 "initial_value_kinds",
                 "target_value_kind",
+                "target_output",
                 "capabilities",
             ],
         )?;
@@ -459,6 +474,14 @@ impl SemanticPlan {
             return Err(PlanningError::InvalidValueKind(
                 self.target_value_kind.clone(),
             ));
+        }
+
+        if let Some(target) = &self.target_output {
+            validate_extensions(
+                "semantic plan target output",
+                &target.extensions,
+                &["capability", "output_port"],
+            )?;
         }
 
         let mut previous = None;
@@ -507,26 +530,7 @@ impl SemanticPlan {
             );
         }
 
-        if self.initial_value_kinds.contains(&self.target_value_kind) {
-            if !self.capabilities.is_empty() {
-                return Err(PlanningError::InvalidGraphSlice);
-            }
-            return Ok(());
-        }
-        let initial = self.initial_value_kinds.iter().cloned().collect();
-        let forward = forward_reachable(&specifications, &initial);
-        let reachable_kinds = forward_value_kinds(&specifications, &initial, &forward);
-        if !reachable_kinds.contains(&self.target_value_kind) {
-            return Err(PlanningError::InvalidGraphSlice);
-        }
-        let relevant =
-            backward_relevant(&specifications, &forward, &initial, &self.target_value_kind);
-        if relevant.len() != specifications.len()
-            || !specifications.keys().all(|id| relevant.contains(id))
-        {
-            return Err(PlanningError::InvalidGraphSlice);
-        }
-        Ok(())
+        validate_graph_slice(self, &specifications)
     }
 }
 
@@ -765,6 +769,13 @@ impl SemanticPlanner {
                 planned.specification.id.clone(),
             ));
         }
+        if plan
+            .target_output
+            .as_ref()
+            .is_some_and(|target| !target.extensions.is_empty())
+        {
+            return Err(PlanningError::UnsupportedTargetExtensions);
+        }
         for available in available_offers {
             let planned = plan
                 .planned_capability(&available.capability)
@@ -791,10 +802,15 @@ impl SemanticPlanner {
                 actual: plan.planning_scope_digest.clone(),
             });
         }
-        let expected = self.plan(
-            plan.initial_value_kinds.iter().cloned(),
-            plan.target_value_kind.clone(),
-        )?;
+        let expected = match &plan.target_output {
+            Some(target) => {
+                self.plan_output(plan.initial_value_kinds.iter().cloned(), target.clone())?
+            }
+            None => self.plan(
+                plan.initial_value_kinds.iter().cloned(),
+                plan.target_value_kind.clone(),
+            )?,
+        };
         if &expected != plan {
             return Err(PlanningError::PlanInventoryMismatch);
         }
@@ -905,6 +921,50 @@ impl SemanticPlanner {
         initial_value_kinds: impl IntoIterator<Item = ValueKindId>,
         target_value_kind: ValueKindId,
     ) -> Result<SemanticPlan, PlanningError> {
+        self.plan_internal(initial_value_kinds, target_value_kind, None)
+    }
+
+    /// Produces one finite graph slice rooted at an exact capability output.
+    ///
+    /// Unlike a value-kind query, the named capability remains required when
+    /// its output kind is already present among the initial values. This lets
+    /// independent generators share a portable artifact kind without erasing
+    /// the caller's requested generator.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unknown capability or output port, unsupported target
+    /// extensions, invalid initial kinds, configured bounds, and an exact
+    /// output whose capability is not reachable from the initial kinds.
+    pub fn plan_output(
+        &self,
+        initial_value_kinds: impl IntoIterator<Item = ValueKindId>,
+        target: RouteOutputRef,
+    ) -> Result<SemanticPlan, PlanningError> {
+        if !target.extensions.is_empty() {
+            return Err(PlanningError::UnsupportedTargetExtensions);
+        }
+        let specification = self
+            .specifications
+            .get(&target.capability)
+            .ok_or_else(|| PlanningError::CapabilityNotInstalled(target.capability.clone()))?;
+        let output = specification
+            .output_ports
+            .iter()
+            .find(|output| output.name == target.output_port)
+            .ok_or_else(|| PlanningError::OutputPortNotInstalled {
+                capability: target.capability.clone(),
+                output_port: target.output_port.clone(),
+            })?;
+        self.plan_internal(initial_value_kinds, output.value_kind.clone(), Some(target))
+    }
+
+    fn plan_internal(
+        &self,
+        initial_value_kinds: impl IntoIterator<Item = ValueKindId>,
+        target_value_kind: ValueKindId,
+        target_output: Option<RouteOutputRef>,
+    ) -> Result<SemanticPlan, PlanningError> {
         let mut initial = BTreeSet::new();
         for value_kind in initial_value_kinds {
             if !value_kind.is_well_formed() {
@@ -936,7 +996,16 @@ impl SemanticPlanner {
             self.limits.max_value_kinds,
         )?;
 
-        let relevant = if initial.contains(&target_value_kind) {
+        let relevant = if let Some(target) = &target_output {
+            let forward = forward_reachable(&self.specifications, &initial);
+            if !forward.contains(&target.capability) {
+                return Err(PlanningError::UnreachableOutput {
+                    target: Box::new(target.clone()),
+                    value_kind: target_value_kind,
+                });
+            }
+            backward_relevant_output(&self.specifications, &forward, &initial, &target.capability)
+        } else if initial.contains(&target_value_kind) {
             BTreeSet::new()
         } else {
             let forward = forward_reachable(&self.specifications, &initial);
@@ -967,6 +1036,7 @@ impl SemanticPlanner {
             planning_scope_digest: self.scope_digest.clone(),
             initial_value_kinds: initial.into_iter().collect(),
             target_value_kind,
+            target_output,
             capabilities,
             extensions: BTreeMap::new(),
         };
@@ -1008,6 +1078,10 @@ pub enum PlanningError {
     InvalidValueKind(ValueKindId),
     DuplicateInitialValueKind(ValueKindId),
     Unreachable(ValueKindId),
+    UnreachableOutput {
+        target: Box<RouteOutputRef>,
+        value_kind: ValueKindId,
+    },
     PlanningScopeMismatch {
         expected: PlanningScopeDigest,
         actual: PlanningScopeDigest,
@@ -1055,8 +1129,13 @@ pub enum PlanningError {
     PlanInventoryMismatch,
     UnsupportedPlanExtensions,
     UnsupportedPlanNodeExtensions(CapabilityId),
+    UnsupportedTargetExtensions,
     CapabilityNotPlanned(CapabilityId),
     CapabilityNotInstalled(CapabilityId),
+    OutputPortNotInstalled {
+        capability: CapabilityId,
+        output_port: PortName,
+    },
     SpecificationInventoryMismatch(CapabilityId),
     OfferNotPlanned {
         capability: CapabilityId,
@@ -1090,6 +1169,7 @@ impl fmt::Display for PlanningError {
             | Self::InvalidValueKind(_)
             | Self::DuplicateInitialValueKind(_)
             | Self::Unreachable(_)
+            | Self::UnreachableOutput { .. }
             | Self::InventoryInvariant { .. } => format_inventory_error(self, formatter),
             Self::PlanningScopeMismatch { expected, actual } => write!(
                 formatter,
@@ -1170,6 +1250,9 @@ impl fmt::Display for PlanningError {
                 formatter,
                 "planned capability {capability} carries unknown node extensions and cannot be linked safely"
             ),
+            Self::UnsupportedTargetExtensions => formatter.write_str(
+                "exact target output carries unknown extensions and cannot be selected safely",
+            ),
             Self::CapabilityNotPlanned(capability) => write!(
                 formatter,
                 "capability {capability} is not present in the exact semantic plan"
@@ -1177,6 +1260,13 @@ impl fmt::Display for PlanningError {
             Self::CapabilityNotInstalled(capability) => write!(
                 formatter,
                 "capability {capability} is not installed in this exact planning inventory"
+            ),
+            Self::OutputPortNotInstalled {
+                capability,
+                output_port,
+            } => write!(
+                formatter,
+                "output port {output_port} is not declared by installed capability {capability}"
             ),
             Self::SpecificationInventoryMismatch(capability) => write!(
                 formatter,
@@ -1277,6 +1367,11 @@ fn format_inventory_error(
         PlanningError::Unreachable(target) => write!(
             formatter,
             "target value kind {target} is unreachable from the declared capability graph"
+        ),
+        PlanningError::UnreachableOutput { target, .. } => write!(
+            formatter,
+            "target capability output {}/{} is unreachable from the declared capability graph",
+            target.capability, target.output_port
         ),
         PlanningError::InventoryInvariant { missing_capability } => write!(
             formatter,
@@ -1384,33 +1479,7 @@ fn available_route_alternatives(
     plan: &SemanticPlan,
     available_offers: &BTreeSet<AvailableOffer>,
 ) -> Result<Vec<SelectedRoute>, PlanningError> {
-    let (available, executable) = offer_reachable(plan, available_offers);
-    if !available.contains(&plan.target_value_kind) {
-        return Err(PlanningError::AllRoutesBlocked(Box::new(
-            blocked_route_analysis(plan, &available),
-        )));
-    }
-    let mut drafts = Vec::new();
-    for derivation in derive_value(
-        plan,
-        &plan.target_value_kind,
-        &BTreeMap::new(),
-        &BTreeSet::new(),
-        &executable,
-    ) {
-        push_distinct_capped(
-            &mut drafts,
-            DraftRoute {
-                target: derivation.source,
-                steps: derivation.steps,
-            },
-        );
-    }
-    if drafts.is_empty() {
-        return Err(PlanningError::AllRoutesBlocked(Box::new(
-            blocked_route_analysis(plan, &available),
-        )));
-    }
+    let (drafts, available) = available_draft_routes(plan, available_offers)?;
 
     let planned = plan
         .capabilities
@@ -1485,6 +1554,57 @@ fn available_route_alternatives(
     }
 }
 
+fn available_draft_routes(
+    plan: &SemanticPlan,
+    available_offers: &BTreeSet<AvailableOffer>,
+) -> Result<(Vec<DraftRoute>, BTreeSet<ValueKindId>), PlanningError> {
+    let (available, executable) = offer_reachable(plan, available_offers);
+    let exact_target_blocked = plan
+        .target_output
+        .as_ref()
+        .is_some_and(|target| !executable.contains(&target.capability));
+    if exact_target_blocked
+        || (plan.target_output.is_none() && !available.contains(&plan.target_value_kind))
+    {
+        return Err(PlanningError::AllRoutesBlocked(Box::new(
+            blocked_route_analysis(plan, &available),
+        )));
+    }
+    let derivations = match &plan.target_output {
+        Some(target) => derive_output(
+            plan,
+            target,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &executable,
+        ),
+        None => derive_value(
+            plan,
+            &plan.target_value_kind,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &executable,
+        ),
+    };
+    let mut drafts = Vec::new();
+    for derivation in derivations {
+        push_distinct_capped(
+            &mut drafts,
+            DraftRoute {
+                target: derivation.source,
+                steps: derivation.steps,
+            },
+        );
+    }
+    if drafts.is_empty() {
+        Err(PlanningError::AllRoutesBlocked(Box::new(
+            blocked_route_analysis(plan, &available),
+        )))
+    } else {
+        Ok((drafts, available))
+    }
+}
+
 fn route_ambiguity(first: &SelectedRoute, second: &SelectedRoute) -> PlanningError {
     let same_semantic_route = first.target == second.target
         && first.steps.len() == second.steps.len()
@@ -1521,89 +1641,115 @@ fn derive_value(
 
     let mut derivations = Vec::new();
     for planned in &plan.capabilities {
-        if !executable.contains(&planned.specification.id) {
-            continue;
-        }
-        let capability = &planned.specification.id;
         for output in planned
             .specification
             .output_ports
             .iter()
             .filter(|output| &output.value_kind == value_kind)
         {
-            let source = DraftRouteValueSource::CapabilityOutput {
-                capability: capability.clone(),
+            let target = RouteOutputRef {
+                capability: planned.specification.id.clone(),
                 output_port: output.name.clone(),
+                extensions: BTreeMap::new(),
             };
-            if selected.contains_key(capability) {
-                push_distinct_capped(
-                    &mut derivations,
-                    DraftDerivation {
-                        source,
-                        steps: selected.clone(),
-                    },
-                );
-                if derivations.len() == 2 {
-                    return derivations;
-                }
-                continue;
-            }
-            if visiting.contains(capability) {
-                continue;
-            }
-
-            let mut next_visiting = visiting.clone();
-            next_visiting.insert(capability.clone());
-            let mut partials = vec![(selected.clone(), Vec::new())];
-            for input in &planned.specification.input_ports {
-                let mut next_partials = Vec::new();
-                for (partial_steps, partial_inputs) in partials {
-                    for derived in derive_value(
-                        plan,
-                        &input.value_kind,
-                        &partial_steps,
-                        &next_visiting,
-                        executable,
-                    ) {
-                        let mut inputs = partial_inputs.clone();
-                        inputs.push(DraftRouteInputDependency {
-                            input_port: input.name.clone(),
-                            source: derived.source,
-                        });
-                        push_distinct_capped(&mut next_partials, (derived.steps, inputs));
-                        if next_partials.len() == 2 {
-                            break;
-                        }
-                    }
-                    if next_partials.len() == 2 {
-                        break;
-                    }
-                }
-                partials = next_partials;
-                if partials.is_empty() {
-                    break;
-                }
-            }
-            for (mut steps, inputs) in partials {
-                steps.insert(
-                    capability.clone(),
-                    DraftRouteStep {
-                        capability: capability.clone(),
-                        inputs,
-                    },
-                );
-                push_distinct_capped(
-                    &mut derivations,
-                    DraftDerivation {
-                        source: source.clone(),
-                        steps,
-                    },
-                );
+            for derived in derive_output(plan, &target, selected, visiting, executable) {
+                push_distinct_capped(&mut derivations, derived);
                 if derivations.len() == 2 {
                     return derivations;
                 }
             }
         }
+    }
+    derivations
+}
+
+fn derive_output(
+    plan: &SemanticPlan,
+    target: &RouteOutputRef,
+    selected: &BTreeMap<CapabilityId, DraftRouteStep>,
+    visiting: &BTreeSet<CapabilityId>,
+    executable: &BTreeSet<CapabilityId>,
+) -> Vec<DraftDerivation> {
+    let Some(planned) = plan
+        .capabilities
+        .iter()
+        .find(|planned| planned.specification.id == target.capability)
+    else {
+        return Vec::new();
+    };
+    if !executable.contains(&target.capability)
+        || !planned
+            .specification
+            .output_ports
+            .iter()
+            .any(|output| output.name == target.output_port)
+    {
+        return Vec::new();
+    }
+
+    let source = DraftRouteValueSource::CapabilityOutput {
+        capability: target.capability.clone(),
+        output_port: target.output_port.clone(),
+    };
+    if selected.contains_key(&target.capability) {
+        return vec![DraftDerivation {
+            source,
+            steps: selected.clone(),
+        }];
+    }
+    if visiting.contains(&target.capability) {
+        return Vec::new();
+    }
+
+    let mut next_visiting = visiting.clone();
+    next_visiting.insert(target.capability.clone());
+    let mut partials = vec![(selected.clone(), Vec::new())];
+    for input in &planned.specification.input_ports {
+        let mut next_partials = Vec::new();
+        for (partial_steps, partial_inputs) in partials {
+            for derived in derive_value(
+                plan,
+                &input.value_kind,
+                &partial_steps,
+                &next_visiting,
+                executable,
+            ) {
+                let mut inputs = partial_inputs.clone();
+                inputs.push(DraftRouteInputDependency {
+                    input_port: input.name.clone(),
+                    source: derived.source,
+                });
+                push_distinct_capped(&mut next_partials, (derived.steps, inputs));
+                if next_partials.len() == 2 {
+                    break;
+                }
+            }
+            if next_partials.len() == 2 {
+                break;
+            }
+        }
+        partials = next_partials;
+        if partials.is_empty() {
+            break;
+        }
+    }
+
+    let mut derivations = Vec::new();
+    for (mut steps, inputs) in partials {
+        steps.insert(
+            target.capability.clone(),
+            DraftRouteStep {
+                capability: target.capability.clone(),
+                inputs,
+            },
+        );
+        push_distinct_capped(
+            &mut derivations,
+            DraftDerivation {
+                source: source.clone(),
+                steps,
+            },
+        );
     }
     derivations
 }
@@ -1690,6 +1836,23 @@ fn validate_route_target(
         return Err(PlanningError::InvalidRouteTarget(
             "target source has the wrong value kind".to_owned(),
         ));
+    }
+    if let Some(expected) = &plan.target_output {
+        let RouteValueSource::CapabilityOutput {
+            capability,
+            output_port,
+            ..
+        } = target
+        else {
+            return Err(PlanningError::InvalidRouteTarget(
+                "exact capability-output goal was replaced by an initial value".to_owned(),
+            ));
+        };
+        if capability != &expected.capability || output_port != &expected.output_port {
+            return Err(PlanningError::InvalidRouteTarget(
+                "selected route does not end at the exact requested capability output".to_owned(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1905,9 +2068,31 @@ fn blocked_route_analysis(
             .collect::<Vec<_>>()
     };
 
-    let mut blocked_value_kinds = BTreeSet::from([plan.target_value_kind.clone()]);
-    let mut pending = vec![plan.target_value_kind.clone()];
-    let mut reached_capabilities = BTreeSet::new();
+    let target_alternatives = plan.target_output.as_ref().map_or_else(
+        || producer_alternatives(&plan.target_value_kind),
+        |target| vec![target.clone()],
+    );
+    let mut blocked_value_kinds = BTreeSet::new();
+    let mut pending = Vec::new();
+    let mut reached_capabilities = target_alternatives
+        .iter()
+        .map(|target| target.capability.clone())
+        .collect::<BTreeSet<_>>();
+    for capability in reached_capabilities.clone() {
+        if let Some(planned) = plan
+            .capabilities
+            .iter()
+            .find(|planned| planned.specification.id == capability)
+        {
+            for input in &planned.specification.input_ports {
+                if !available.contains(&input.value_kind)
+                    && blocked_value_kinds.insert(input.value_kind.clone())
+                {
+                    pending.push(input.value_kind.clone());
+                }
+            }
+        }
+    }
     while let Some(value_kind) = pending.pop() {
         for planned in &plan.capabilities {
             if !planned
@@ -1933,7 +2118,7 @@ fn blocked_route_analysis(
         protocol: BLOCKED_ROUTE_PROTOCOL.to_owned(),
         plan_id: plan.plan_id.clone(),
         target_value_kind: plan.target_value_kind.clone(),
-        target_alternatives: producer_alternatives(&plan.target_value_kind),
+        target_alternatives,
         nodes: plan
             .capabilities
             .iter()
@@ -2131,6 +2316,47 @@ fn forward_value_kinds(
     reachable
 }
 
+fn validate_graph_slice(
+    plan: &SemanticPlan,
+    specifications: &BTreeMap<CapabilityId, CapabilitySpec>,
+) -> Result<(), PlanningError> {
+    if plan.target_output.is_none() && plan.initial_value_kinds.contains(&plan.target_value_kind) {
+        return if plan.capabilities.is_empty() {
+            Ok(())
+        } else {
+            Err(PlanningError::InvalidGraphSlice)
+        };
+    }
+    let initial = plan.initial_value_kinds.iter().cloned().collect();
+    let forward = forward_reachable(specifications, &initial);
+    let relevant = if let Some(target) = &plan.target_output {
+        let specification = specifications
+            .get(&target.capability)
+            .ok_or(PlanningError::InvalidGraphSlice)?;
+        let output = specification
+            .output_ports
+            .iter()
+            .find(|output| output.name == target.output_port)
+            .ok_or(PlanningError::InvalidGraphSlice)?;
+        if output.value_kind != plan.target_value_kind || !forward.contains(&target.capability) {
+            return Err(PlanningError::InvalidGraphSlice);
+        }
+        backward_relevant_output(specifications, &forward, &initial, &target.capability)
+    } else {
+        let reachable_kinds = forward_value_kinds(specifications, &initial, &forward);
+        if !reachable_kinds.contains(&plan.target_value_kind) {
+            return Err(PlanningError::InvalidGraphSlice);
+        }
+        backward_relevant(specifications, &forward, &initial, &plan.target_value_kind)
+    };
+    if relevant.len() != specifications.len()
+        || !specifications.keys().all(|id| relevant.contains(id))
+    {
+        return Err(PlanningError::InvalidGraphSlice);
+    }
+    Ok(())
+}
+
 fn backward_relevant(
     specifications: &BTreeMap<CapabilityId, CapabilitySpec>,
     forward: &BTreeSet<CapabilityId>,
@@ -2139,6 +2365,49 @@ fn backward_relevant(
 ) -> BTreeSet<CapabilityId> {
     let mut required_kinds = BTreeSet::from([target.clone()]);
     let mut relevant = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for capability in forward {
+            let specification = specifications
+                .get(capability)
+                .expect("forward capability belongs to the supplied graph");
+            if specification
+                .output_ports
+                .iter()
+                .any(|output| required_kinds.contains(&output.value_kind))
+                && relevant.insert(capability.clone())
+            {
+                changed = true;
+                for input in &specification.input_ports {
+                    if !initial.contains(&input.value_kind) {
+                        changed |= required_kinds.insert(input.value_kind.clone());
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    relevant
+}
+
+fn backward_relevant_output(
+    specifications: &BTreeMap<CapabilityId, CapabilitySpec>,
+    forward: &BTreeSet<CapabilityId>,
+    initial: &BTreeSet<ValueKindId>,
+    target: &CapabilityId,
+) -> BTreeSet<CapabilityId> {
+    let target_specification = specifications
+        .get(target)
+        .expect("exact target capability belongs to the supplied graph");
+    let mut required_kinds = target_specification
+        .input_ports
+        .iter()
+        .filter(|input| !initial.contains(&input.value_kind))
+        .map(|input| input.value_kind.clone())
+        .collect::<BTreeSet<_>>();
+    let mut relevant = BTreeSet::from([target.clone()]);
     loop {
         let mut changed = false;
         for capability in forward {
@@ -2399,6 +2668,67 @@ mod tests {
         let first = offer(&edge, "first", 'a');
         let second = offer(&edge, "second", 'b');
         (edge, first, second)
+    }
+
+    struct MultiBackendFixture {
+        planner: SemanticPlanner,
+        content_set: ValueKindId,
+        read_http: CapabilityId,
+        generate_http: CapabilityId,
+        read_data_model: CapabilityId,
+        generate_sql: CapabilityId,
+    }
+
+    fn multi_backend_fixture() -> MultiBackendFixture {
+        let content_set = kind("content-set");
+        let http_model = kind("http-model");
+        let data_model = kind("data-model");
+        let read_http = specification(
+            "read-http-spec",
+            &[("source", content_set.clone())],
+            &[("http", http_model.clone())],
+        );
+        let generate_http = specification(
+            "generate-http-routes",
+            &[("http", http_model)],
+            &[("files", content_set.clone())],
+        );
+        let read_data_model = specification(
+            "read-data-model-spec",
+            &[("source", content_set.clone())],
+            &[("model", data_model.clone())],
+        );
+        let generate_sql = specification(
+            "generate-sql-migrations",
+            &[("model", data_model)],
+            &[("files", content_set.clone())],
+        );
+        let offers = [
+            offer(&read_http, "read-http", 'a'),
+            offer(&generate_http, "generate-http", 'b'),
+            offer(&read_data_model, "read-data-model", 'c'),
+            offer(&generate_sql, "generate-sql", 'd'),
+        ];
+        let ids = (
+            read_http.id.clone(),
+            generate_http.id.clone(),
+            read_data_model.id.clone(),
+            generate_sql.id.clone(),
+        );
+        let planner = SemanticPlanner::new(
+            [read_http, generate_http, read_data_model, generate_sql],
+            offers,
+            limits(),
+        )
+        .unwrap();
+        MultiBackendFixture {
+            planner,
+            content_set,
+            read_http: ids.0,
+            generate_http: ids.1,
+            read_data_model: ids.2,
+            generate_sql: ids.3,
+        }
     }
 
     fn reidentify(plan: &mut SemanticPlan) {
@@ -3003,6 +3333,353 @@ mod tests {
 
         assert!(plan.capabilities.is_empty());
         plan.validate(limits()).unwrap();
+    }
+
+    #[test]
+    fn exact_output_goal_runs_one_generator_when_source_and_outputs_share_a_kind() {
+        let fixture = multi_backend_fixture();
+
+        let kind_only = fixture
+            .planner
+            .plan([fixture.content_set.clone()], fixture.content_set.clone())
+            .unwrap();
+        assert!(kind_only.capabilities.is_empty());
+        assert!(
+            !serde_json::to_value(&kind_only)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("target_output"),
+            "legacy value-kind plans must omit the additive exact target field"
+        );
+
+        let http_target = RouteOutputRef {
+            capability: fixture.generate_http.clone(),
+            output_port: port("files"),
+            extensions: BTreeMap::new(),
+        };
+        let http_plan = fixture
+            .planner
+            .plan_output([fixture.content_set.clone()], http_target.clone())
+            .unwrap();
+        assert_eq!(http_plan.target_output, Some(http_target.clone()));
+        assert_eq!(
+            serde_json::from_slice::<SemanticPlan>(&serde_json::to_vec(&http_plan).unwrap())
+                .unwrap(),
+            http_plan
+        );
+        assert_eq!(
+            http_plan
+                .capabilities
+                .iter()
+                .map(|planned| planned.specification.id.clone())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([fixture.read_http.clone(), fixture.generate_http.clone()])
+        );
+        let http_route = fixture
+            .planner
+            .select_route(&http_plan, RouteSelection::UniqueOnly)
+            .unwrap();
+        assert_eq!(
+            http_route.target,
+            RouteValueSource::CapabilityOutput {
+                capability: http_target.capability,
+                output_port: http_target.output_port,
+                extensions: BTreeMap::new(),
+            }
+        );
+
+        let sql_target = RouteOutputRef {
+            capability: fixture.generate_sql.clone(),
+            output_port: port("files"),
+            extensions: BTreeMap::new(),
+        };
+        let sql_plan = fixture
+            .planner
+            .plan_output([fixture.content_set], sql_target.clone())
+            .unwrap();
+        assert_eq!(
+            sql_plan
+                .capabilities
+                .iter()
+                .map(|planned| planned.specification.id.clone())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([fixture.read_data_model, fixture.generate_sql])
+        );
+        let sql_route = fixture
+            .planner
+            .select_route(&sql_plan, RouteSelection::UniqueOnly)
+            .unwrap();
+        assert_eq!(
+            sql_route.target,
+            RouteValueSource::CapabilityOutput {
+                capability: sql_target.capability,
+                output_port: sql_target.output_port,
+                extensions: BTreeMap::new(),
+            }
+        );
+        assert_ne!(http_plan.plan_id, sql_plan.plan_id);
+    }
+
+    #[test]
+    fn exact_output_goal_does_not_fall_through_to_an_available_sibling() {
+        let source = kind("source");
+        let content_set = kind("content-set");
+        let requested = specification(
+            "requested-generator",
+            &[("source", source.clone())],
+            &[("files", content_set.clone())],
+        );
+        let sibling = specification(
+            "available-sibling",
+            &[("source", source.clone())],
+            &[("files", content_set)],
+        );
+        let planner = SemanticPlanner::new(
+            [requested.clone(), sibling.clone()],
+            [offer(&sibling, "available-sibling", 'a')],
+            limits(),
+        )
+        .unwrap();
+        let target = RouteOutputRef {
+            capability: requested.id.clone(),
+            output_port: port("files"),
+            extensions: BTreeMap::new(),
+        };
+        let plan = planner.plan_output([source], target.clone()).unwrap();
+
+        let PlanningError::AllRoutesBlocked(blocked) = planner
+            .select_route(&plan, RouteSelection::UniqueOnly)
+            .unwrap_err()
+        else {
+            panic!("the exact requested generator must remain blocked")
+        };
+        assert_eq!(blocked.target_alternatives, vec![target]);
+        assert_eq!(blocked.nodes.len(), 1);
+        assert_eq!(blocked.nodes[0].capability, requested.id);
+        assert!(blocked.nodes[0].missing_offer);
+        assert!(
+            plan.capabilities
+                .iter()
+                .all(|planned| planned.specification.id != sibling.id)
+        );
+    }
+
+    #[test]
+    fn unreachable_exact_output_names_the_terminal_even_when_its_kind_is_reachable() {
+        let source = kind("source");
+        let missing = kind("missing");
+        let content_set = kind("content-set");
+        let requested = specification(
+            "unreachable-generator",
+            &[("missing", missing)],
+            &[("files", content_set.clone())],
+        );
+        let sibling = specification(
+            "reachable-sibling",
+            &[("source", source.clone())],
+            &[("files", content_set)],
+        );
+        let planner = SemanticPlanner::new(
+            [requested.clone(), sibling.clone()],
+            [
+                offer(&requested, "unreachable-generator", 'a'),
+                offer(&sibling, "reachable-sibling", 'b'),
+            ],
+            limits(),
+        )
+        .unwrap();
+        let target = RouteOutputRef {
+            capability: requested.id,
+            output_port: port("files"),
+            extensions: BTreeMap::new(),
+        };
+
+        let error = planner.plan_output([source], target.clone()).unwrap_err();
+
+        assert!(matches!(
+            &error,
+            PlanningError::UnreachableOutput {
+                target: actual,
+                ..
+            } if actual.as_ref() == &target
+        ));
+        assert!(error.to_string().contains(&target.capability.to_string()));
+        assert!(!error.to_string().contains("target value kind"));
+    }
+
+    #[test]
+    fn exact_output_goal_does_not_invent_a_seed_for_a_pure_cycle() {
+        let model = kind("model");
+        let content_set = kind("content-set");
+        let reader = specification(
+            "reader",
+            &[("source", content_set.clone())],
+            &[("model", model.clone())],
+        );
+        let generator = specification("generator", &[("model", model)], &[("files", content_set)]);
+        let planner = SemanticPlanner::new(
+            [reader.clone(), generator.clone()],
+            [
+                offer(&reader, "reader", 'a'),
+                offer(&generator, "generator", 'b'),
+            ],
+            limits(),
+        )
+        .unwrap();
+        let target = RouteOutputRef {
+            capability: generator.id,
+            output_port: port("files"),
+            extensions: BTreeMap::new(),
+        };
+
+        assert!(matches!(
+            planner.plan_output([], target),
+            Err(PlanningError::UnreachableOutput { .. })
+        ));
+    }
+
+    #[test]
+    fn exact_output_goal_keeps_dependency_route_ambiguity_conservative() {
+        let source = kind("source");
+        let middle = kind("middle");
+        let content_set = kind("content-set");
+        let first = specification(
+            "first-reader",
+            &[("source", source.clone())],
+            &[("model", middle.clone())],
+        );
+        let second = specification(
+            "second-reader",
+            &[("source", source.clone())],
+            &[("model", middle.clone())],
+        );
+        let generator = specification("generator", &[("model", middle)], &[("files", content_set)]);
+        let planner = SemanticPlanner::new(
+            [first.clone(), second.clone(), generator.clone()],
+            [
+                offer(&first, "first-reader", 'a'),
+                offer(&second, "second-reader", 'b'),
+                offer(&generator, "generator", 'c'),
+            ],
+            limits(),
+        )
+        .unwrap();
+        let plan = planner
+            .plan_output(
+                [source],
+                RouteOutputRef {
+                    capability: generator.id,
+                    output_port: port("files"),
+                    extensions: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+
+        assert!(matches!(
+            planner.select_route(&plan, RouteSelection::UniqueOnly),
+            Err(PlanningError::AmbiguousCapabilityRoute)
+        ));
+    }
+
+    #[test]
+    fn exact_output_goal_rejects_unknown_coordinates_and_extensions() {
+        let source = kind("source");
+        let result = kind("result");
+        let generator = specification(
+            "generator",
+            &[("source", source.clone())],
+            &[("files", result)],
+        );
+        let planner = SemanticPlanner::new(
+            [generator.clone()],
+            [offer(&generator, "generator", 'a')],
+            limits(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            planner.plan_output(
+                [source.clone()],
+                RouteOutputRef {
+                    capability: capability("unknown"),
+                    output_port: port("files"),
+                    extensions: BTreeMap::new(),
+                }
+            ),
+            Err(PlanningError::CapabilityNotInstalled(_))
+        ));
+        assert!(matches!(
+            planner.plan_output(
+                [source.clone()],
+                RouteOutputRef {
+                    capability: generator.id.clone(),
+                    output_port: port("missing"),
+                    extensions: BTreeMap::new(),
+                }
+            ),
+            Err(PlanningError::OutputPortNotInstalled { .. })
+        ));
+        assert!(matches!(
+            planner.plan_output(
+                [source],
+                RouteOutputRef {
+                    capability: generator.id,
+                    output_port: port("files"),
+                    extensions: BTreeMap::from([("org.example.future".to_owned(), json!(true))]),
+                }
+            ),
+            Err(PlanningError::UnsupportedTargetExtensions)
+        ));
+    }
+
+    #[test]
+    fn same_kind_output_ports_have_distinct_goals_and_reject_substitution() {
+        let source = kind("source");
+        let result = kind("result");
+        let generator = specification(
+            "generator",
+            &[("source", source.clone())],
+            &[("first", result.clone()), ("second", result)],
+        );
+        let planner = SemanticPlanner::new(
+            [generator.clone()],
+            [offer(&generator, "generator", 'a')],
+            limits(),
+        )
+        .unwrap();
+        let target = |name| RouteOutputRef {
+            capability: generator.id.clone(),
+            output_port: port(name),
+            extensions: BTreeMap::new(),
+        };
+        let first = planner
+            .plan_output([source.clone()], target("first"))
+            .unwrap();
+        let second = planner.plan_output([source], target("second")).unwrap();
+        assert_ne!(first.plan_id, second.plan_id);
+
+        let mut route = planner
+            .select_route(&first, RouteSelection::UniqueOnly)
+            .unwrap();
+        route.target = RouteValueSource::CapabilityOutput {
+            capability: generator.id,
+            output_port: port("second"),
+            extensions: BTreeMap::new(),
+        };
+        route.route_id = RouteId::parse(route_digest(&route).unwrap()).unwrap();
+        assert!(matches!(
+            route.validate(&first, limits()),
+            Err(PlanningError::InvalidRouteTarget(_))
+        ));
+
+        let mut forged = first;
+        forged.target_value_kind = kind("other");
+        reidentify(&mut forged);
+        assert!(matches!(
+            forged.validate(limits()),
+            Err(PlanningError::InvalidGraphSlice)
+        ));
     }
 
     #[test]

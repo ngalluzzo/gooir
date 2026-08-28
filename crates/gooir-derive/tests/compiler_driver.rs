@@ -26,7 +26,7 @@ use gooir_package::{
     PackageId, PackageManifest, PackageRegistry, PackageResource, ResourceDigest, ResourceName,
     ValueKindDeclaration, load_local_package, write_manifest,
 };
-use gooir_planning::PlanLimits;
+use gooir_planning::{PlanLimits, RouteOutputRef};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 
@@ -391,6 +391,52 @@ fn multi_hop_compile_uses_installed_offers_linking_host_assessment_and_admission
     let resolved_target = driver.ledger().resolve(&produced.target).unwrap();
     assert_eq!(resolved_target.fact.value_kind, value_kind("target"));
     assert_eq!(resolved_target.fact.payload, json!({"value": 3}));
+}
+
+#[test]
+fn compiler_driver_accepts_an_exact_capability_output_goal() {
+    let fixture = Fixture::new(true);
+    let mut driver = fixture.driver(RecordingHost::producing(), [fixture.attester.clone()]);
+    let target = RouteOutputRef {
+        capability: capability("second"),
+        output_port: port("result"),
+        extensions: BTreeMap::new(),
+    };
+
+    let answer = driver.compile_output(target.clone(), [fixture.source.clone()]);
+
+    let Answer::Produced(produced) = answer else {
+        panic!("expected the exact capability output to be admitted")
+    };
+    assert_eq!(
+        produced
+            .admitted
+            .last()
+            .and_then(|authority| match &authority.basis {
+                AuthorityBasis::Derived { invocation, .. } => Some(&invocation.specification.id),
+                AuthorityBasis::Source { .. } => None,
+            }),
+        Some(&target.capability)
+    );
+    let blocked_fixture = Fixture::new(true);
+    let mut blocked_driver = blocked_fixture.driver(RecordingHost::producing(), []);
+    let blocked = blocked_driver.compile_output(
+        RouteOutputRef {
+            capability: capability("second"),
+            output_port: port("result"),
+            extensions: BTreeMap::new(),
+        },
+        [blocked_fixture.source],
+    );
+    let Answer::Blocked(blocked) = blocked else {
+        panic!("the requested output must remain blocked without an attester")
+    };
+    assert_eq!(blocked.blockage.target_alternatives.len(), 1);
+    assert_eq!(
+        blocked.blockage.target_alternatives[0].capability,
+        capability("second")
+    );
+    assert!(blocked_driver.host().invocations.is_empty());
 }
 
 #[test]

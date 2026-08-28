@@ -20,7 +20,7 @@ use gooir_planning::{
     PlanningError, PlanningScopeDigest, RouteOutputRef, RouteValueSource, SelectedRoute,
     SelectedRouteStep, SemanticPlan, SemanticPlanner,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::{
@@ -92,11 +92,66 @@ impl AttesterInventory {
 /// One derivation question at the product door.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DerivationRequest {
-    pub target: ValueKindId,
+    pub target: DerivationGoal,
     pub inputs: Vec<AdmittedFactRef>,
     pub selection: DerivationSelection,
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
+}
+
+/// Caller-owned semantic terminal for one derivation.
+///
+/// The untagged value-kind form preserves the original request JSON. The
+/// capability-output form retains generator intent when several capabilities,
+/// or an initial source bundle, share the same portable value kind.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum DerivationGoal {
+    ValueKind(ValueKindId),
+    CapabilityOutput(RouteOutputRef),
+}
+
+impl<'de> Deserialize<'de> for DerivationGoal {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let fields = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("derivation goal must be an object"))?;
+
+        // Capability/output keys are a wire discriminator, not ignorable data.
+        // This prevents Serde's permissive struct decoding from silently
+        // reinterpreting an exact-output goal as a legacy value-kind goal.
+        if fields.contains_key("capability") || fields.contains_key("output_port") {
+            serde_json::from_value(value)
+                .map(Self::CapabilityOutput)
+                .map_err(serde::de::Error::custom)
+        } else {
+            const VALUE_KIND_FIELDS: [&str; 3] = ["package", "name", "version"];
+            if let Some(field) = fields
+                .keys()
+                .find(|field| !VALUE_KIND_FIELDS.contains(&field.as_str()))
+            {
+                return Err(serde::de::Error::custom(format!(
+                    "unsupported value-kind goal field `{field}`"
+                )));
+            }
+            serde_json::from_value(value)
+                .map(Self::ValueKind)
+                .map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+impl From<ValueKindId> for DerivationGoal {
+    fn from(value_kind: ValueKindId) -> Self {
+        Self::ValueKind(value_kind)
+    }
+}
+
+impl From<RouteOutputRef> for DerivationGoal {
+    fn from(output: RouteOutputRef) -> Self {
+        Self::CapabilityOutput(output)
+    }
 }
 
 impl DerivationRequest {
@@ -112,7 +167,24 @@ impl DerivationRequest {
         inputs: impl IntoIterator<Item = AdmittedFactRef>,
     ) -> Self {
         Self {
-            target,
+            target: DerivationGoal::ValueKind(target),
+            inputs: inputs.into_iter().collect(),
+            selection: DerivationSelection::UniqueOnly {
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        }
+    }
+
+    /// Constructs an untrusted request for one exact capability output using
+    /// conservative unique-only selection beneath that terminal.
+    #[must_use]
+    pub fn unique_output(
+        target: RouteOutputRef,
+        inputs: impl IntoIterator<Item = AdmittedFactRef>,
+    ) -> Self {
+        Self {
+            target: DerivationGoal::CapabilityOutput(target),
             inputs: inputs.into_iter().collect(),
             selection: DerivationSelection::UniqueOnly {
                 extensions: BTreeMap::new(),
@@ -129,12 +201,12 @@ impl DerivationRequest {
     /// host effect.
     #[must_use]
     pub fn explicit(
-        target: ValueKindId,
+        target: impl Into<DerivationGoal>,
         inputs: impl IntoIterator<Item = AdmittedFactRef>,
         selection: ExplicitSelection,
     ) -> Self {
         Self {
-            target,
+            target: target.into(),
             inputs: inputs.into_iter().collect(),
             selection: DerivationSelection::Explicit {
                 selection: Box::new(selection),
@@ -309,6 +381,8 @@ pub struct BlockedAnswer {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UnreachableAnswer {
     pub target: ValueKindId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_output: Option<RouteOutputRef>,
     pub initial_value_kinds: Vec<ValueKindId>,
     pub planning_scope_digest: PlanningScopeDigest,
     pub detail: String,
@@ -441,14 +515,29 @@ impl DerivationFacade {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let plan = match self
-            .planner
-            .plan(initial_value_kinds.clone(), request.target.clone())
-        {
+        let planned = match &request.target {
+            DerivationGoal::ValueKind(target) => self
+                .planner
+                .plan(initial_value_kinds.clone(), target.clone()),
+            DerivationGoal::CapabilityOutput(target) => self
+                .planner
+                .plan_output(initial_value_kinds.clone(), target.clone()),
+        };
+        let plan = match planned {
             Ok(plan) => plan,
-            Err(PlanningError::Unreachable(_)) => {
+            Err(PlanningError::Unreachable(target)) => {
                 return Preparation::Answer(Answer::Unreachable(Box::new(UnreachableAnswer {
-                    target: request.target.clone(),
+                    target,
+                    target_output: None,
+                    initial_value_kinds,
+                    planning_scope_digest: self.planner.scope_digest().clone(),
+                    detail: "no declared semantic route reaches the target".to_owned(),
+                })));
+            }
+            Err(PlanningError::UnreachableOutput { target, value_kind }) => {
+                return Preparation::Answer(Answer::Unreachable(Box::new(UnreachableAnswer {
+                    target: value_kind,
+                    target_output: Some(*target),
                     initial_value_kinds,
                     planning_scope_digest: self.planner.scope_digest().clone(),
                     detail: "no declared semantic route reaches the target".to_owned(),
@@ -491,10 +580,22 @@ impl DerivationFacade {
         attesters: &AttesterInventory,
         request: &DerivationRequest,
     ) -> Result<Vec<ResolvedInput>, Refusal> {
-        if !request.target.is_well_formed() {
-            return Err(Refusal::InvalidRequest {
-                detail: "target value kind is not exact".to_owned(),
-            });
+        match &request.target {
+            DerivationGoal::ValueKind(target) if !target.is_well_formed() => {
+                return Err(Refusal::InvalidRequest {
+                    detail: "target value kind is not exact".to_owned(),
+                });
+            }
+            DerivationGoal::CapabilityOutput(target)
+                if !target.capability.is_well_formed() || !target.extensions.is_empty() =>
+            {
+                return Err(Refusal::InvalidRequest {
+                    detail:
+                        "target capability output is not exact or carries unsupported extensions"
+                            .to_owned(),
+                });
+            }
+            DerivationGoal::ValueKind(_) | DerivationGoal::CapabilityOutput(_) => {}
         }
         if !request.extensions.is_empty() {
             return Err(Refusal::InvalidRequest {
@@ -1577,8 +1678,70 @@ mod tests {
         assert!(request.extensions.is_empty());
         assert!(matches!(
             request.selection,
-            DerivationSelection::UniqueOnly { extensions } if extensions.is_empty()
+            DerivationSelection::UniqueOnly { ref extensions } if extensions.is_empty()
         ));
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded["target"], serde_json::to_value(target()).unwrap());
+        assert_eq!(
+            serde_json::from_value::<DerivationRequest>(encoded).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn exact_output_constructor_retains_the_capability_and_named_port() {
+        let output = RouteOutputRef {
+            capability: CapabilityId::new("org.example.generator", "rust", "1.0.0"),
+            output_port: PortName::parse("files").unwrap(),
+            extensions: BTreeMap::new(),
+        };
+
+        let request = DerivationRequest::unique_output(output.clone(), [admitted('1', 'a')]);
+
+        assert_eq!(
+            request.target,
+            DerivationGoal::CapabilityOutput(output.clone())
+        );
+        assert!(matches!(
+            request.selection,
+            DerivationSelection::UniqueOnly { ref extensions } if extensions.is_empty()
+        ));
+        let encoded = serde_json::to_vec(&request).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<DerivationRequest>(&encoded).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn exact_output_wire_shape_cannot_fall_through_to_a_value_kind() {
+        let output = RouteOutputRef {
+            capability: CapabilityId::new("org.example.generator", "rust", "1.0.0"),
+            output_port: PortName::parse("files").unwrap(),
+            extensions: BTreeMap::from([
+                (
+                    "package".to_owned(),
+                    Value::String("hostile.package".to_owned()),
+                ),
+                ("name".to_owned(), Value::String("hostile-name".to_owned())),
+                ("version".to_owned(), Value::String("9.9.9".to_owned())),
+            ]),
+        };
+        let encoded =
+            serde_json::to_value(DerivationGoal::CapabilityOutput(output.clone())).unwrap();
+
+        assert_eq!(
+            serde_json::from_value::<DerivationGoal>(encoded).unwrap(),
+            DerivationGoal::CapabilityOutput(output)
+        );
+    }
+
+    #[test]
+    fn value_kind_goal_refuses_unknown_wire_fields() {
+        let mut encoded = serde_json::to_value(target()).unwrap();
+        encoded["future"] = Value::Bool(true);
+
+        assert!(serde_json::from_value::<DerivationGoal>(encoded).is_err());
     }
 
     #[test]

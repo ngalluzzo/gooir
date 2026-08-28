@@ -1,5 +1,9 @@
 # 0036 — Compiler driver and bounded local stdio host
 
+> Decision 0043 adds exact capability/output goals and
+> `CompilerDriver::compile_output`. The value-kind `compile` path and all host,
+> admission, and execution boundaries below remain unchanged.
+
 Status: accepted first corrective composition
 
 ## Context
