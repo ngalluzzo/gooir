@@ -26,6 +26,9 @@
 - A bounded local file-tree materializer that requires exact admitted
   authority, rejects unknown semantic extensions and existing destinations,
   and atomically publishes a synchronized same-parent staging tree.
+- A FileTree build host that composes the compiler driver and materializer,
+  preserves all non-produced semantic outcomes without filesystem effects, and
+  binds physical success to both the admitted product and effect receipt.
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
   downstream consumer.
@@ -50,14 +53,20 @@ concerns and are not implied by SDK stability.
 The optional file-tree dialect standardizes only an artifact value shared by
 independent consumers. It does not widen `CompilerDriver`: destination choice,
 write policy, materialization, receipts, and product build orchestration remain
-outside the semantic driver. A future product build driver must resolve an
-exact admitted file-tree authority before invoking any host materializer.
+outside the semantic driver. The optional FileTree build host resolves the
+exact admitted authority before invoking its selected materializer and keeps
+that composition outside the kernel.
 
 The first local materializer supplies that authority gate and a
 non-constructible host receipt. It intentionally supports only no-replace
 publication with mandatory limits and modes. It does not give the compiler
 driver filesystem authority, define overwrite or deletion policy, serialize a
 universal receipt, or recover an interrupted build.
+
+The first build host is deliberately in-process and policy-thin. It recognizes
+only the compiler's exact complete-selection authority extension, does not add
+a stable build protocol, and delegates retry and post-crash interpretation to
+the selected materializer and surrounding product host.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,

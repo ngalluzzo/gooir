@@ -4,6 +4,7 @@ members = [
     "crates/gooir-cli",
     "crates/gooir-doctor",
     "crates/gooir-derive",
+    "crates/gooir-file-tree-build",
     "crates/gooir-file-tree-materializer",
     "crates/gooir-file-tree-v1",
     "crates/gooir-identity",
@@ -26,6 +27,7 @@ gooir-capability = { path = "crates/gooir-capability" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-derive = { path = "crates/gooir-derive" }
+gooir-file-tree-build = { path = "crates/gooir-file-tree-build" }
 gooir-file-tree-materializer = { path = "crates/gooir-file-tree-materializer" }
 gooir-file-tree-v1 = { path = "crates/gooir-file-tree-v1" }
 gooir-identity = { path = "crates/gooir-identity" }

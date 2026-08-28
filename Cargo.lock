@@ -617,6 +617,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-file-tree-build"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-derive",
+ "gooir-file-tree-materializer",
+ "gooir-file-tree-v1",
+ "gooir-package",
+ "gooir-planning",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "gooir-file-tree-materializer"
 version = "0.1.0"
 dependencies = [
