@@ -32,7 +32,7 @@ The repository also contains narrow, optional support:
 
 | Crate | Status |
 | --- | --- |
-| `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
+| `gooir-cli` | reference bounded local `compile`/managed `build` compositions, neutral graph inspection, and a legacy execution adapter |
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-toolchain` | host SDK for measuring, staging, locking, and independently loading external provider/attester deployment images |
@@ -78,7 +78,52 @@ An attester-binding document is local host configuration, not a package offer:
 The complete authority must be accepted by the policy, and its artifact digest
 must equal the copied installed resource bytes.
 
-External ecosystems do not need to recreate that deployment assembly.
+`gooir build` is the reference composition from raw portable files to a
+managed admitted artifact. It takes an installed toolchain, an exact capability
+and output port, explicit source authority and admission policy, one or more
+binary-safe source paths, a managed-output identity and destination, and
+mandatory process bounds. The named output must declare `ContentSet`; naming
+the exact output prevents an input `ContentSet` or an unrelated generator with
+the same carrier kind from satisfying the request.
+
+```sh
+gooir build org.example.rust/generate@1.0.0 files \
+  --toolchain /opt/example-toolchain \
+  --source specs/api.yaml \
+  --source-authority source-authority.json \
+  --policy admission-policy.json \
+  --output generated/rust --output-id example.rust@1.0.0 \
+  --stdin-bytes 16777216 --stdout-bytes 16777216 \
+  --stderr-bytes 1048576 --timeout-ms 30000
+```
+
+This command adds no build-description protocol. It packages each explicitly
+named source path and its exact bytes into one admitted `ContentSet`, then uses
+the same public SDK composition available to any host:
+
+```rust
+let installed = InstalledToolchain::load(toolchain, ToolchainLimits::default())?;
+let host = LocalStdioHost::new(
+    installed.registry(),
+    installed.local_attester_bindings().iter().cloned(),
+    stdio_limits,
+)?;
+let authorities = host.authorities().cloned().collect::<Vec<_>>();
+let mut compiler = CompilerDriver::new(
+    installed.registry(), policy, authorities, host, derivation_limits,
+)?;
+if let Answer::Produced(produced) = compiler.compile_output(exact_output, observations) {
+    let artifact = Admitted::<ContentSet>::resolve(compiler.ledger(), &produced.target)?;
+    let receipt = LocalPublisher::default().publish(&artifact, &managed_output)?;
+}
+```
+
+The CLI is only this reference host. Backend repositories ship independently
+versioned provider and attester packages that can be assembled into a
+toolchain image; they do not need per-dialect CLIs. Other hosts can use the
+same Rust SDKs with their own execution and policy boundary.
+
+External ecosystems do not need to recreate the deployment assembly.
 `gooir-toolchain` accepts exact offer-free package manifests plus explicitly
 named final provider and attester resources, measures their bytes, derives
 ordinary provider offers, retains attesters only as host bindings, publishes a
