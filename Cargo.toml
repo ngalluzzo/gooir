@@ -5,6 +5,7 @@ members = [
     "crates/gooir-doctor",
     "crates/gooir-derive",
     "crates/gooir-identity",
+    "crates/gooir-module-v0",
     "crates/gooir-package",
     "crates/gooir-planning",
     "crates/gooir-plugin-process",
@@ -25,6 +26,7 @@ gooir-cli = { path = "crates/gooir-cli" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-derive = { path = "crates/gooir-derive" }
 gooir-identity = { path = "crates/gooir-identity" }
+gooir-module-v0 = { path = "crates/gooir-module-v0" }
 gooir-package = { path = "crates/gooir-package" }
 gooir-planning = { path = "crates/gooir-planning" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
