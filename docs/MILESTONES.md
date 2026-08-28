@@ -33,6 +33,9 @@
 - An optional admitted-artifact SDK with an offer-free portable content-set
   contract, exact ledger gate, read-only check/diff, owner-fenced create or
   atomic clean replacement, canonical manifest, and uncertainty-aware receipt.
+- One generic managed-build CLI and public SDK composition from explicit raw
+  source paths through an exact installed capability output, independent
+  conformance and admission, to repeated `ContentSet` publication.
 
 ## Current boundary
 
@@ -61,6 +64,9 @@ External backend repositories remain independently governed. GOOIR supplies
 their neutral provider/attester authoring seams and the shared host machinery
 for building an exact installed toolchain image; it does not ship their target
 profiles, lowerings, generators, conventions, or artifact semantics.
+Those repositories ship ordinary provider and attester packages rather than
+per-dialect GOOIR CLIs. The generic `gooir build` command is one reference host
+over the same public Rust SDK composition available to other hosts.
 
 Those repositories may converge on `ContentSet` as their final admitted bytes
 and reuse the managed local publisher. This is host machinery after admission,

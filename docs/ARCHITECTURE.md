@@ -187,6 +187,32 @@ This boundary adds no `Backend`, `Materialize`, lowering/lifting, or lens edge.
 Generation remains an ordinary capability. Concrete target contracts and
 providers remain external packages.
 
+## Reference managed-build composition
+
+The generic CLI demonstrates, but does not hide, the complete public Rust SDK
+path:
+
+```text
+InstalledToolchain
+  -> LocalStdioHost
+  -> CompilerDriver::compile_output(exact capability, exact output port)
+  -> Admitted<ContentSet>::resolve(the same driver's ledger)
+  -> LocalPublisher
+```
+
+Raw source paths enter only as one caller-authorized `ContentSet` observation.
+The CLI preserves their portable paths and binary bytes, records a documented
+raw-file SHA-256 evidence kind, and requires a complete explicit observation
+authority accepted by the admission policy. It neither parses domain syntax
+nor claims that the named observer artifact executed. The exact output is
+preflighted as `ContentSet` before provider execution, and only a `Produced`
+answer can reach publication.
+
+This reference path is intentionally a command composition rather than a new
+host or build protocol. Backend repositories supply provider and attester
+packages for installed toolchains, not per-dialect CLIs. Product hosts may call
+the same public crates with a different `DerivationHost` or effect policy.
+
 ## Extension direction
 
 ```text

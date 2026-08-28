@@ -13,11 +13,17 @@ use std::{
     process,
 };
 
-use gooir_capability::authority::{AdmissionPolicy, SourceObservation};
+use gooir_artifact_sdk::{
+    Admitted, ContentFile, ContentPath, ContentSet, LocalPublisher, ManagedOutput, ManagedOutputId,
+    PublicationReceipt, content_set_contract,
+};
+use gooir_capability::authority::{AdmissionPolicy, ObservationAuthority, SourceObservation};
+use gooir_capability::protocol::{EvidenceDigest, EvidenceKindId, EvidenceRef};
 use gooir_capability::strict_json;
 use gooir_capability::{
-    Answer as LegacyAnswer, CapabilityRegistry, DerivationRequest as LegacyDerivationRequest,
-    FactInstance, FactType, RequestRefusal, register_pack,
+    Answer as LegacyAnswer, CapabilityId, CapabilityRegistry,
+    DerivationRequest as LegacyDerivationRequest, Fact, FactInstance, FactType, PortName,
+    RequestRefusal, register_pack,
 };
 use gooir_cli::{known_value_kinds, resolve_value_kind};
 use gooir_derive::{
@@ -25,9 +31,11 @@ use gooir_derive::{
     LocalStdioHost, LocalStdioLimits, Refusal,
 };
 use gooir_package::{LoadLimits, PackageRegistry, load_local_package};
-use gooir_planning::{PlanLimits, SemanticPlanner};
+use gooir_planning::{PlanLimits, RouteOutputRef, SemanticPlanner};
+use gooir_toolchain::{InstalledToolchain, ToolchainLimits};
 use rustix::fs::{Mode, OFlags, open};
 use serde::de::DeserializeOwned;
+use sha2::{Digest as _, Sha256};
 
 fn main() {
     if let Err(error) = run() {
@@ -37,12 +45,18 @@ fn main() {
 }
 
 const USAGE: &str = "\
-gooir — compile over an explicitly installed capability graph
+gooir — compile and build over an explicitly installed capability graph
 
 Compiler driver (GOOIR 0.1):
   gooir compile <target> --package DIR --policy JSON [--observation JSON]
       [--attester JSON] --stdin-bytes N --stdout-bytes N --stderr-bytes N
       --timeout-ms N [--json]
+
+Managed admitted artifact build:
+  gooir build <capability> <output-port> --toolchain DIR --source PATH
+      [--source PATH] [--observation JSON] --source-authority JSON --policy JSON
+      --output DIR --output-id NAME@VERSION --stdin-bytes N --stdout-bytes N
+      --stderr-bytes N --timeout-ms N [--json]
 
 The compile command admits explicit source observations, conservatively fixes
 one complete route/offer/attester selection, invokes exact copied package
@@ -56,6 +70,18 @@ Answer shape, not a new stable compile receipt protocol.
 Policy, observation, and attester inputs must be regular files: no symlinks,
 FIFOs, or directories. Each is bounded to 16 MiB and their aggregate to
 64 MiB before JSON decoding.
+
+The build command frames the explicitly named source files as one portable
+ContentSet observation, derives one exact capability output from an installed
+toolchain, resolves that output through the same admission ledger, and then
+publishes it as one managed directory. Source PATH is both the local path and
+the portable content path, so it must be relative and portable. Source bytes
+use evidence kind org.gooi.cli.evidence/raw-file-sha256@1.0.0, whose digest is
+SHA-256 over the exact file bytes. The explicit source authority must name that
+evidence kind and the ContentSet value kind, and the policy must accept it.
+The authority is still a caller-supplied untrusted claim; the CLI does not
+claim it measured or executed the named observer. The named output must itself
+be ContentSet. No backend, dialect parser, or executable is discovered.
 
 Package inspection and planning (GOOIR 0.1):
   gooir facts --package DIR                 every value kind and its producers
@@ -115,6 +141,9 @@ fn derivation_limits() -> DerivationLimits {
 const MAX_COMPILE_PACKAGES: usize = 4_096;
 const MAX_COMPILE_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_COMPILE_TOTAL_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+const RAW_FILE_EVIDENCE_PACKAGE: &str = "org.gooi.cli.evidence";
+const RAW_FILE_EVIDENCE_NAME: &str = "raw-file-sha256";
+const RAW_FILE_EVIDENCE_VERSION: &str = "1.0.0";
 
 #[derive(Clone, Copy, Debug)]
 struct CompileInputLimits {
@@ -152,6 +181,195 @@ struct CompileArguments {
     stdio_limits: LocalStdioLimits,
     input_limits: CompileInputLimits,
     json: bool,
+}
+
+#[derive(Debug)]
+struct BuildArguments {
+    target: RouteOutputRef,
+    toolchain: PathBuf,
+    sources: Vec<PathBuf>,
+    policy: PathBuf,
+    source_authority: PathBuf,
+    observations: Vec<PathBuf>,
+    output: ManagedOutput,
+    stdio_limits: LocalStdioLimits,
+    input_limits: CompileInputLimits,
+    json: bool,
+}
+
+impl BuildArguments {
+    fn parse(args: &[String], input_limits: CompileInputLimits) -> Result<Self, String> {
+        input_limits.validate_for("build")?;
+        let capability = CapabilityId::parse(
+            args.get(1)
+                .filter(|value| !value.starts_with("--"))
+                .ok_or_else(|| {
+                    "usage: gooir build <capability> <output-port> --toolchain DIR --source PATH"
+                        .to_owned()
+                })?,
+        )
+        .map_err(|error| format!("invalid build capability: {error}"))?;
+        let output_port = PortName::parse(
+            args.get(2)
+                .filter(|value| !value.starts_with("--"))
+                .ok_or_else(|| {
+                    "usage: gooir build <capability> <output-port> --toolchain DIR --source PATH"
+                        .to_owned()
+                })?
+                .clone(),
+        )
+        .map_err(|error| format!("invalid build output port: {error}"))?;
+        let mut toolchain = None;
+        let mut sources = Vec::new();
+        let mut policy = None;
+        let mut source_authority = None;
+        let mut observations = Vec::new();
+        let mut output = None;
+        let mut output_id = None;
+        let mut stdin_bytes = None;
+        let mut stdout_bytes = None;
+        let mut stderr_bytes = None;
+        let mut timeout_milliseconds = None;
+        let mut json = false;
+        let mut index = 3;
+
+        while let Some(argument) = args.get(index) {
+            match argument.as_str() {
+                "--toolchain" => set_once_for(
+                    &mut toolchain,
+                    flag_path_for(args, &mut index, "build", "--toolchain")?,
+                    "build",
+                    "--toolchain",
+                )?,
+                "--source" => {
+                    ensure_path_slot_for(
+                        sources.len(),
+                        input_limits.max_observations,
+                        "build",
+                        "source files",
+                    )?;
+                    sources.push(flag_path_for(args, &mut index, "build", "--source")?);
+                }
+                "--policy" => set_once_for(
+                    &mut policy,
+                    flag_path_for(args, &mut index, "build", "--policy")?,
+                    "build",
+                    "--policy",
+                )?,
+                "--source-authority" => set_once_for(
+                    &mut source_authority,
+                    flag_path_for(args, &mut index, "build", "--source-authority")?,
+                    "build",
+                    "--source-authority",
+                )?,
+                "--observation" => {
+                    ensure_path_slot_for(
+                        observations.len(),
+                        input_limits.max_observations.saturating_sub(1),
+                        "build",
+                        "observation documents",
+                    )?;
+                    observations.push(flag_path_for(args, &mut index, "build", "--observation")?);
+                }
+                "--output" => set_once_for(
+                    &mut output,
+                    flag_path_for(args, &mut index, "build", "--output")?,
+                    "build",
+                    "--output",
+                )?,
+                "--output-id" => set_once_for(
+                    &mut output_id,
+                    ManagedOutputId::parse(flag_value_for(
+                        args,
+                        &mut index,
+                        "build",
+                        "--output-id",
+                    )?)
+                    .map_err(|error| error.to_string())?,
+                    "build",
+                    "--output-id",
+                )?,
+                "--stdin-bytes" => set_once_for(
+                    &mut stdin_bytes,
+                    positive_usize_value(
+                        "--stdin-bytes",
+                        flag_value_for(args, &mut index, "build", "--stdin-bytes")?,
+                    )?,
+                    "build",
+                    "--stdin-bytes",
+                )?,
+                "--stdout-bytes" => set_once_for(
+                    &mut stdout_bytes,
+                    positive_usize_value(
+                        "--stdout-bytes",
+                        flag_value_for(args, &mut index, "build", "--stdout-bytes")?,
+                    )?,
+                    "build",
+                    "--stdout-bytes",
+                )?,
+                "--stderr-bytes" => set_once_for(
+                    &mut stderr_bytes,
+                    positive_usize_value(
+                        "--stderr-bytes",
+                        flag_value_for(args, &mut index, "build", "--stderr-bytes")?,
+                    )?,
+                    "build",
+                    "--stderr-bytes",
+                )?,
+                "--timeout-ms" => set_once_for(
+                    &mut timeout_milliseconds,
+                    positive_u64_value(
+                        "--timeout-ms",
+                        flag_value_for(args, &mut index, "build", "--timeout-ms")?,
+                    )?,
+                    "build",
+                    "--timeout-ms",
+                )?,
+                "--json" if !json => {
+                    json = true;
+                    index += 1;
+                }
+                "--json" => return Err("gooir build accepts --json exactly once".to_owned()),
+                unknown if unknown.starts_with("--") => {
+                    return Err(format!("unknown gooir build flag `{unknown}`"));
+                }
+                positional => {
+                    return Err(format!(
+                        "unexpected extra gooir build argument `{positional}`"
+                    ));
+                }
+            }
+        }
+        if sources.is_empty() {
+            return Err("gooir build requires at least one --source".to_owned());
+        }
+        let output = ManagedOutput::new(
+            required_for(output_id, "build", "--output-id")?,
+            required_for(output, "build", "--output")?,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(Self {
+            target: RouteOutputRef {
+                capability,
+                output_port,
+                extensions: Default::default(),
+            },
+            toolchain: required_for(toolchain, "build", "--toolchain")?,
+            sources,
+            policy: required_for(policy, "build", "--policy")?,
+            source_authority: required_for(source_authority, "build", "--source-authority")?,
+            observations,
+            output,
+            stdio_limits: LocalStdioLimits {
+                max_stdin_bytes: required_for(stdin_bytes, "build", "--stdin-bytes")?,
+                max_stdout_bytes: required_for(stdout_bytes, "build", "--stdout-bytes")?,
+                max_stderr_bytes: required_for(stderr_bytes, "build", "--stderr-bytes")?,
+                timeout_milliseconds: required_for(timeout_milliseconds, "build", "--timeout-ms")?,
+            },
+            input_limits,
+            json,
+        })
+    }
 }
 
 impl CompileArguments {
@@ -270,6 +488,10 @@ impl CompileArguments {
 
 impl CompileInputLimits {
     fn validate(self) -> Result<(), String> {
+        self.validate_for("compile")
+    }
+
+    fn validate_for(self, command: &str) -> Result<(), String> {
         if self.max_packages == 0
             || self.max_observations == 0
             || self.max_attesters == 0
@@ -277,7 +499,7 @@ impl CompileInputLimits {
             || self.max_document_bytes == 0
             || self.max_total_document_bytes == 0
         {
-            return Err("gooir compile resource limits must be positive".to_owned());
+            return Err(format!("gooir {command} resource limits must be positive"));
         }
         Ok(())
     }
@@ -288,10 +510,19 @@ fn flag_value<'args>(
     index: &mut usize,
     flag: &str,
 ) -> Result<&'args str, String> {
+    flag_value_for(args, index, "compile", flag)
+}
+
+fn flag_value_for<'args>(
+    args: &'args [String],
+    index: &mut usize,
+    command: &str,
+    flag: &str,
+) -> Result<&'args str, String> {
     let value = args
         .get(index.saturating_add(1))
         .filter(|value| !value.starts_with("--"))
-        .ok_or_else(|| format!("gooir compile flag {flag} requires a value"))?;
+        .ok_or_else(|| format!("gooir {command} flag {flag} requires a value"))?;
     *index += 2;
     Ok(value)
 }
@@ -300,20 +531,51 @@ fn flag_path(args: &[String], index: &mut usize, flag: &str) -> Result<PathBuf, 
     flag_value(args, index, flag).map(PathBuf::from)
 }
 
+fn flag_path_for(
+    args: &[String],
+    index: &mut usize,
+    command: &str,
+    flag: &str,
+) -> Result<PathBuf, String> {
+    flag_value_for(args, index, command, flag).map(PathBuf::from)
+}
+
 fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    set_once_for(slot, value, "compile", flag)
+}
+
+fn set_once_for<T>(
+    slot: &mut Option<T>,
+    value: T,
+    command: &str,
+    flag: &str,
+) -> Result<(), String> {
     if slot.replace(value).is_some() {
-        return Err(format!("gooir compile accepts {flag} exactly once"));
+        return Err(format!("gooir {command} accepts {flag} exactly once"));
     }
     Ok(())
 }
 
 fn required<T>(value: Option<T>, flag: &str) -> Result<T, String> {
-    value.ok_or_else(|| format!("gooir compile requires {flag}"))
+    required_for(value, "compile", flag)
+}
+
+fn required_for<T>(value: Option<T>, command: &str, flag: &str) -> Result<T, String> {
+    value.ok_or_else(|| format!("gooir {command} requires {flag}"))
 }
 
 fn ensure_path_slot(current: usize, limit: usize, resource: &str) -> Result<(), String> {
+    ensure_path_slot_for(current, limit, "compile", resource)
+}
+
+fn ensure_path_slot_for(
+    current: usize,
+    limit: usize,
+    command: &str,
+    resource: &str,
+) -> Result<(), String> {
     if current >= limit {
-        return Err(format!("gooir compile {resource} exceed limit {limit}"));
+        return Err(format!("gooir {command} {resource} exceed limit {limit}"));
     }
     Ok(())
 }
@@ -488,20 +750,26 @@ fn print_answer(target: &FactType, given: &LegacyAnswer) {
 
 struct DocumentBudget {
     limits: CompileInputLimits,
+    command: &'static str,
     documents: usize,
     bytes: u64,
 }
 
 impl DocumentBudget {
     fn new(limits: CompileInputLimits) -> Result<Self, String> {
+        Self::for_command(limits, "compile")
+    }
+
+    fn for_command(limits: CompileInputLimits, command: &'static str) -> Result<Self, String> {
         if limits.max_documents == 0
             || limits.max_document_bytes == 0
             || limits.max_total_document_bytes == 0
         {
-            return Err("gooir compile document limits must be positive".to_owned());
+            return Err(format!("gooir {command} document limits must be positive"));
         }
         Ok(Self {
             limits,
+            command,
             documents: 0,
             bytes: 0,
         })
@@ -527,8 +795,9 @@ impl DocumentBudget {
             .map_err(|error| format!("{}: document metadata failed: {error}", path.display()))?;
         if !metadata.is_file() {
             return Err(format!(
-                "{}: compile input must be a regular file",
-                path.display()
+                "{}: {} input must be a regular file",
+                path.display(),
+                self.command
             ));
         }
         let size = metadata.len();
@@ -543,7 +812,7 @@ impl DocumentBudget {
             .limits
             .max_total_document_bytes
             .checked_sub(self.bytes)
-            .ok_or_else(|| "gooir compile aggregate document bytes overflowed".to_owned())?;
+            .ok_or_else(|| format!("gooir {} aggregate document bytes overflowed", self.command))?;
         if size > aggregate_remaining {
             return Err(format!(
                 "{}: document size {size} exceeds remaining aggregate limit {aggregate_remaining}",
@@ -579,7 +848,7 @@ impl DocumentBudget {
         self.bytes = self
             .bytes
             .checked_add(actual)
-            .ok_or_else(|| "gooir compile aggregate document bytes overflowed".to_owned())?;
+            .ok_or_else(|| format!("gooir {} aggregate document bytes overflowed", self.command))?;
         Ok(bytes)
     }
 }
@@ -590,6 +859,236 @@ fn read_compile_document<T: DeserializeOwned>(
 ) -> Result<T, String> {
     let bytes = budget.read(path)?;
     strict_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+fn raw_file_evidence_kind() -> EvidenceKindId {
+    EvidenceKindId::new(
+        RAW_FILE_EVIDENCE_PACKAGE,
+        RAW_FILE_EVIDENCE_NAME,
+        RAW_FILE_EVIDENCE_VERSION,
+    )
+}
+
+fn raw_evidence_digest(bytes: &[u8]) -> EvidenceDigest {
+    EvidenceDigest::parse(format!("sha256:{:x}", Sha256::digest(bytes)))
+        .expect("SHA-256 output is an exact evidence digest")
+}
+
+fn source_content_observation(
+    source_root: &Path,
+    paths: &[PathBuf],
+    authority: ObservationAuthority,
+    budget: &mut DocumentBudget,
+) -> Result<SourceObservation, String> {
+    authority
+        .validate()
+        .map_err(|error| format!("source authority is invalid: {error}"))?;
+    if authority.value_kind != content_set_contract() {
+        return Err(format!(
+            "source authority value kind must be {}, found {}",
+            content_set_contract(),
+            authority.value_kind
+        ));
+    }
+    let evidence_kind = raw_file_evidence_kind();
+    if authority.evidence_kind != evidence_kind {
+        return Err(format!(
+            "source authority evidence kind must be {evidence_kind}, found {}",
+            authority.evidence_kind
+        ));
+    }
+    if !authority.extensions.is_empty() {
+        return Err("source authority contains unsupported extensions".to_owned());
+    }
+
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path_text = path
+            .to_str()
+            .ok_or_else(|| format!("{}: source path is not UTF-8", path.display()))?;
+        ContentPath::parse(path_text).map_err(|error| format!("{}: {error}", path.display()))?;
+        let content = budget.read(&source_root.join(path))?;
+        files.push(
+            ContentFile::new(path_text, content)
+                .map_err(|error| format!("{}: {error}", path.display()))?,
+        );
+    }
+    let content = ContentSet::new(files).map_err(|error| error.to_string())?;
+    let mut evidence = content
+        .files
+        .iter()
+        .map(|file| {
+            EvidenceRef::new(
+                evidence_kind.clone(),
+                raw_evidence_digest(&file.content),
+                file.path.as_str(),
+                Default::default(),
+            )
+            .map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter();
+    let primary_evidence = evidence
+        .next()
+        .ok_or_else(|| "gooir build requires at least one source file".to_owned())?;
+    let fact = Fact::new(
+        content_set_contract(),
+        serde_json::to_value(content).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    SourceObservation::new(
+        fact,
+        authority,
+        primary_evidence,
+        evidence.collect(),
+        Default::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn preflight_content_set_target(
+    registry: &PackageRegistry,
+    target: &RouteOutputRef,
+) -> Result<(), String> {
+    let specification = registry
+        .capabilities()
+        .find_map(|(_package, specification)| {
+            (specification.id == target.capability).then_some(specification)
+        })
+        .ok_or_else(|| {
+            format!(
+                "build target capability {} is not installed",
+                target.capability
+            )
+        })?;
+    let output = specification
+        .output_ports
+        .iter()
+        .find(|output| output.name == target.output_port)
+        .ok_or_else(|| {
+            format!(
+                "build target capability {} has no output port {}",
+                target.capability, target.output_port
+            )
+        })?;
+    let expected = content_set_contract();
+    if output.value_kind != expected {
+        return Err(format!(
+            "build target {}/{} produces {}, not {expected}",
+            target.capability, target.output_port, output.value_kind
+        ));
+    }
+    Ok(())
+}
+
+fn print_publication_receipt(receipt: &PublicationReceipt) {
+    println!("published admitted ContentSet {}", receipt.source.fact_id);
+    println!("  authority {}", receipt.source.authority_record_id);
+    println!("  output {}", receipt.output_id);
+    println!("  destination {}", receipt.destination);
+    println!("  manifest {}", receipt.manifest_id);
+    println!("  outcome {:?}", receipt.outcome);
+    println!("  synchronization {:?}", receipt.sync);
+    println!("  cleanup {:?}", receipt.cleanup);
+    println!("\n-> use the managed files and retain the publication receipt");
+}
+
+fn render_committed_receipt(receipt: &PublicationReceipt, json: bool) {
+    if !json {
+        print_publication_receipt(receipt);
+        return;
+    }
+    match receipt.to_canonical_json() {
+        Ok(bytes) => println!("{}", String::from_utf8_lossy(&bytes)),
+        Err(error) => {
+            // Publication has already committed. A receipt-rendering invariant
+            // cannot safely be presented as a retryable build failure.
+            eprintln!(
+                "warning: publication committed, but canonical receipt rendering failed: {error}"
+            );
+            print_publication_receipt(receipt);
+        }
+    }
+}
+
+fn run_build(build: BuildArguments) -> Result<(), String> {
+    let installed = InstalledToolchain::load(&build.toolchain, ToolchainLimits::default())
+        .map_err(|error| format!("{}: {error}", build.toolchain.display()))?;
+    preflight_content_set_target(installed.registry(), &build.target)?;
+
+    let mut budget = DocumentBudget::for_command(build.input_limits, "build")?;
+    let policy = read_compile_document::<AdmissionPolicy>(&build.policy, &mut budget)?;
+    let source_authority =
+        read_compile_document::<ObservationAuthority>(&build.source_authority, &mut budget)?;
+    let source = source_content_observation(
+        Path::new("."),
+        &build.sources,
+        source_authority,
+        &mut budget,
+    )?;
+    let mut observations = Vec::with_capacity(build.observations.len().saturating_add(1));
+    observations.push(source);
+    for path in &build.observations {
+        observations.push(read_compile_document::<SourceObservation>(
+            path,
+            &mut budget,
+        )?);
+    }
+
+    let host = LocalStdioHost::new(
+        installed.registry(),
+        installed.local_attester_bindings().iter().cloned(),
+        build.stdio_limits,
+    )
+    .map_err(|error| error.to_string())?;
+    let authorities = host.authorities().cloned().collect::<Vec<_>>();
+    let mut driver = CompilerDriver::new(
+        installed.registry(),
+        policy,
+        authorities,
+        host,
+        derivation_limits(),
+    )
+    .map_err(|error| error.to_string())?;
+    let answer = driver.compile_output(build.target, observations);
+    let produced = match answer {
+        CompileAnswer::Produced(produced) => produced,
+        other => {
+            if build.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&other).map_err(|error| error.to_string())?
+                );
+            } else {
+                print_compile_answer(&other);
+            }
+            process::exit(match other {
+                CompileAnswer::Blocked(_) => 3,
+                CompileAnswer::Produced(_) => unreachable!("handled above"),
+                CompileAnswer::Unreachable(_)
+                | CompileAnswer::Refused(_)
+                | CompileAnswer::Failed(_) => 1,
+            });
+        }
+    };
+    let admitted = Admitted::<ContentSet>::resolve(driver.ledger(), &produced.target).map_err(
+        |error| {
+            format!(
+                "admitted build target {} under authority {} is not a publishable ContentSet: {error}",
+                produced.target.fact_id, produced.target.authority_record_id
+            )
+        },
+    )?;
+    let receipt = LocalPublisher::default()
+        .publish(&admitted, &build.output)
+        .map_err(|error| {
+            format!(
+                "admitted ContentSet {} under authority {} was not published: {error}",
+                produced.target.fact_id, produced.target.authority_record_id
+            )
+        })?;
+    render_committed_receipt(&receipt, build.json);
+    Ok(())
 }
 
 fn print_compile_answer(answer: &CompileAnswer) {
@@ -614,7 +1113,14 @@ fn print_compile_answer(answer: &CompileAnswer) {
             }
         }
         CompileAnswer::Unreachable(unreachable) => {
-            println!("unreachable target {}", unreachable.target);
+            if let Some(target) = &unreachable.target_output {
+                println!(
+                    "unreachable target {}/{}",
+                    target.capability, target.output_port
+                );
+            } else {
+                println!("unreachable target {}", unreachable.target);
+            }
         }
         CompileAnswer::Refused(refusal) => match refusal.as_ref() {
             Refusal::InvalidRequest { detail }
@@ -710,6 +1216,7 @@ fn run() -> Result<(), String> {
                 | CompileAnswer::Failed(_) => process::exit(1),
             }
         }
+        Some("build") => run_build(BuildArguments::parse(&args, compile_input_limits())?),
         Some("capabilities") => {
             reject_flags(
                 &args,
@@ -900,6 +1407,8 @@ fn run() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gooir_capability::authority::ObservationSourceId;
+    use gooir_capability::protocol::{ArtifactDigest, ImplementationId};
     use gooir_capability::{FactCoverage, FactType};
     use nix::sys::stat::Mode as NixMode;
     use nix::unistd::mkfifo;
@@ -937,6 +1446,10 @@ mod tests {
     #[test]
     fn help_separates_package_planning_from_legacy_execution() {
         assert!(USAGE.contains("Compiler driver (GOOIR 0.1)"));
+        assert!(USAGE.contains("Managed admitted artifact build"));
+        assert!(USAGE.contains("gooir build <capability> <output-port>"));
+        assert!(USAGE.contains("org.gooi.cli.evidence/raw-file-sha256@1.0.0"));
+        assert!(USAGE.contains("caller-supplied untrusted claim"));
         assert!(USAGE.contains("exact copied package"));
         assert!(USAGE.contains("N must be\npositive"));
         assert!(USAGE.contains("not a new stable compile receipt protocol"));
@@ -1012,6 +1525,50 @@ mod tests {
         .to_vec()
     }
 
+    fn build_args() -> Vec<String> {
+        [
+            "build",
+            "test.generator/rust@1.0.0",
+            "files",
+            "--toolchain",
+            "toolchain",
+            "--source",
+            "specs/api.bin",
+            "--source-authority",
+            "source-authority.json",
+            "--policy",
+            "policy.json",
+            "--observation",
+            "context.json",
+            "--output",
+            "generated",
+            "--output-id",
+            "test.generated@1.0.0",
+            "--stdin-bytes",
+            "1024",
+            "--stdout-bytes",
+            "2048",
+            "--stderr-bytes",
+            "512",
+            "--timeout-ms",
+            "1000",
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    }
+
+    fn observation_authority() -> ObservationAuthority {
+        ObservationAuthority::new(
+            ObservationSourceId::new("test.source", "files", "1.0.0"),
+            ImplementationId::new("test.observer", "files", "1.0.0"),
+            ArtifactDigest::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            content_set_contract(),
+            raw_file_evidence_kind(),
+            Default::default(),
+        )
+        .unwrap()
+    }
+
     fn test_input_limits(
         max_document_bytes: u64,
         max_total_document_bytes: u64,
@@ -1080,6 +1637,185 @@ mod tests {
                 .unwrap_err()
                 .contains("--timeout-ms must be positive")
         );
+    }
+
+    #[test]
+    fn build_grammar_names_one_exact_output_and_closes_every_host_input() {
+        let parsed = BuildArguments::parse(&build_args(), compile_input_limits()).unwrap();
+        assert_eq!(
+            parsed.target.capability,
+            CapabilityId::new("test.generator", "rust", "1.0.0")
+        );
+        assert_eq!(parsed.target.output_port, PortName::parse("files").unwrap());
+        assert_eq!(parsed.toolchain, PathBuf::from("toolchain"));
+        assert_eq!(parsed.sources, [PathBuf::from("specs/api.bin")]);
+        assert_eq!(parsed.observations, [PathBuf::from("context.json")]);
+        assert_eq!(parsed.output.id().as_str(), "test.generated@1.0.0");
+        assert_eq!(parsed.output.destination(), Path::new("generated"));
+        assert_eq!(parsed.stdio_limits.max_stdin_bytes.get(), 1024);
+        assert_eq!(parsed.stdio_limits.max_stdout_bytes.get(), 2048);
+        assert_eq!(parsed.stdio_limits.max_stderr_bytes.get(), 512);
+        assert_eq!(parsed.stdio_limits.timeout_milliseconds.get(), 1000);
+
+        let mut slash_port = build_args();
+        slash_port[2] = "generated/files".to_owned();
+        assert_eq!(
+            BuildArguments::parse(&slash_port, compile_input_limits())
+                .unwrap()
+                .target
+                .output_port,
+            PortName::parse("generated/files").unwrap()
+        );
+
+        for removed in [
+            "--toolchain",
+            "--source",
+            "--source-authority",
+            "--policy",
+            "--output",
+            "--output-id",
+            "--stdin-bytes",
+            "--stdout-bytes",
+            "--stderr-bytes",
+            "--timeout-ms",
+        ] {
+            let mut missing = build_args();
+            let position = missing.iter().position(|value| value == removed).unwrap();
+            missing.drain(position..=position + 1);
+            let error = BuildArguments::parse(&missing, compile_input_limits()).unwrap_err();
+            assert!(
+                error.contains(if removed == "--source" {
+                    "at least one --source"
+                } else {
+                    removed
+                }),
+                "{removed}: {error}"
+            );
+        }
+
+        let mut duplicate = build_args();
+        duplicate.extend(["--output".to_owned(), "elsewhere".to_owned()]);
+        assert!(
+            BuildArguments::parse(&duplicate, compile_input_limits())
+                .unwrap_err()
+                .contains("accepts --output exactly once")
+        );
+        let mut unknown = build_args();
+        unknown.push("--package".to_owned());
+        assert!(
+            BuildArguments::parse(&unknown, compile_input_limits())
+                .unwrap_err()
+                .contains("unknown gooir build flag `--package`")
+        );
+        let mut positional = build_args();
+        positional.push("extra".to_owned());
+        assert!(
+            BuildArguments::parse(&positional, compile_input_limits())
+                .unwrap_err()
+                .contains("unexpected extra gooir build argument")
+        );
+    }
+
+    #[test]
+    fn build_source_framing_is_binary_safe_canonical_and_authority_exact() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("specs")).unwrap();
+        fs::write(directory.path().join("specs/z.bin"), [0, 255, 4]).unwrap();
+        fs::write(directory.path().join("specs/a.bin"), b"alpha").unwrap();
+        let paths = [PathBuf::from("specs/z.bin"), PathBuf::from("specs/a.bin")];
+        let mut budget =
+            DocumentBudget::for_command(test_input_limits(1024, 4096), "build").unwrap();
+
+        let observation = source_content_observation(
+            directory.path(),
+            &paths,
+            observation_authority(),
+            &mut budget,
+        )
+        .unwrap();
+
+        assert_eq!(observation.fact.value_kind, content_set_contract());
+        let content: ContentSet = serde_json::from_value(observation.fact.payload.clone()).unwrap();
+        assert_eq!(
+            content
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            ["specs/a.bin", "specs/z.bin"]
+        );
+        assert_eq!(content.files[0].content, b"alpha");
+        assert_eq!(content.files[1].content, [0, 255, 4]);
+        assert_eq!(observation.primary_evidence.locator, "specs/a.bin");
+        assert_eq!(
+            observation.primary_evidence.digest,
+            raw_evidence_digest(b"alpha")
+        );
+        assert_eq!(observation.additional_evidence.len(), 1);
+        assert_eq!(observation.additional_evidence[0].locator, "specs/z.bin");
+
+        let mut wrong_kind = observation_authority();
+        wrong_kind.value_kind = FactType::new("test.wrong", "kind", "1.0.0");
+        let error = source_content_observation(
+            directory.path(),
+            &paths,
+            wrong_kind,
+            &mut DocumentBudget::for_command(test_input_limits(1024, 4096), "build").unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.contains("value kind must be"), "{error}");
+
+        let mut wrong_evidence = observation_authority();
+        wrong_evidence.evidence_kind = EvidenceKindId::new("test.evidence", "other", "1.0.0");
+        let error = source_content_observation(
+            directory.path(),
+            &paths,
+            wrong_evidence,
+            &mut DocumentBudget::for_command(test_input_limits(1024, 4096), "build").unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.contains("evidence kind must be"), "{error}");
+
+        let mut extended = observation_authority();
+        extended
+            .extensions
+            .insert("test.future/meaning".to_owned(), serde_json::json!(true));
+        assert!(
+            source_content_observation(
+                directory.path(),
+                &paths,
+                extended,
+                &mut DocumentBudget::for_command(test_input_limits(1024, 4096), "build").unwrap(),
+            )
+            .unwrap_err()
+            .contains("unsupported extensions")
+        );
+    }
+
+    #[test]
+    fn build_source_reads_refuse_nonportable_and_nonregular_inputs_before_observation() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("regular"), b"value").unwrap();
+        symlink("regular", directory.path().join("link")).unwrap();
+        fs::create_dir(directory.path().join("nested")).unwrap();
+        let fifo = directory.path().join("fifo");
+        mkfifo(&fifo, NixMode::S_IRUSR | NixMode::S_IWUSR).unwrap();
+
+        for (path, expected) in [
+            ("../regular", "not a portable relative content path"),
+            ("link", "document open failed"),
+            ("nested", "build input must be a regular file"),
+            ("fifo", "build input must be a regular file"),
+        ] {
+            let error = source_content_observation(
+                directory.path(),
+                &[PathBuf::from(path)],
+                observation_authority(),
+                &mut DocumentBudget::for_command(test_input_limits(1024, 4096), "build").unwrap(),
+            )
+            .unwrap_err();
+            assert!(error.contains(expected), "{path}: {error}");
+        }
     }
 
     #[test]
