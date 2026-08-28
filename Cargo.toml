@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/gooir-artifact-sdk",
     "crates/gooir-capability",
     "crates/gooir-cli",
     "crates/gooir-doctor",
@@ -21,6 +22,9 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
+base64 = "0.22"
+getrandom = "0.4.3"
+gooir-artifact-sdk = { path = "crates/gooir-artifact-sdk" }
 gooir-capability = { path = "crates/gooir-capability" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-doctor = { path = "crates/gooir-doctor" }

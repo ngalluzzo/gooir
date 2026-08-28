@@ -156,6 +156,33 @@ the complete image. Create-only publication returns an explicit committed
 report, including uncertain parent-directory synchronization after the atomic
 commit rather than a retryable-looking error.
 
+## Admitted artifact publication boundary
+
+`gooir-artifact-sdk` is optional host support after semantic derivation and
+admission. It defines one offer-free portable content-set contract so unrelated
+external generators can converge on paths and bytes without moving target
+meaning into GOOIR. A private-constructor `Admitted<T>` resolves only an exact
+fact-and-authority pair through `AdmissionLedger`; an unadmitted candidate has
+no publication path.
+
+The local publisher owns filesystem policy, not semantics. It operates on one
+dedicated managed directory, with an owner-fenced canonical manifest and
+read-only check/diff. Missing output may be created. Changed output may be
+replaced only when the existing complete tree still matches its manifest.
+Unmanaged, wrong-owner, drifted, ambiguous, unsupported-extension, and symlink
+states fail closed.
+
+macOS and Linux publication uses a cooperative lock on the caller-controlled
+immediate parent plus atomic no-replace rename or directory exchange. This
+coordinates SDK publishers; it does not defend a parent controlled by a
+malicious non-cooperating process. After an atomic commit, sync and retired-tree
+cleanup uncertainty are returned as receipt data rather than ordinary errors.
+The SDK makes no cross-filesystem or universal power-loss durability claim.
+
+This boundary adds no `Backend`, `Materialize`, lowering/lifting, or lens edge.
+Generation remains an ordinary capability. Concrete target contracts and
+providers remain external packages.
+
 ## Extension direction
 
 ```text
@@ -206,9 +233,11 @@ The data-model ecosystem proves deterministic lifting/lowering, independent
 conformance, exact package installation, recoverable external execution, and
 the neutral provider SDK in its authored-data-model provider. Its remaining
 legacy providers stay on the compatibility helper. The native HTTP/Axum
-ecosystem proves named three-input lowering followed by artifact generation,
-offer-free package planning, typed inability, and exact neutral provider
-document handling; its binaries expose the SDK's stdio entry point.
+ecosystem proves named three-input lowering, a separate final content-set
+generator backend, exact admission, and repeated managed materialization with
+drift refusal and stale-file removal. Its three-hop plan retains offer-free
+package planning, typed inability, exact neutral provider documents, and
+independent attestation at every step.
 The Fleetd direct-conversation ecosystem proves a stateful capability with two
 independent clients, a credential-free child command boundary, an independent
 attester, owner-fenced attempts, crash recovery, and deterministic terminal

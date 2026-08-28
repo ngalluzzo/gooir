@@ -28,6 +28,9 @@
 - A host-owned toolchain-image SDK for measuring final external provider and
   attester resources, deriving exact offers and bindings, atomically staging a
   create-only image, and independently reloading its package inventory.
+- An optional admitted-artifact SDK with an offer-free portable content-set
+  contract, exact ledger gate, read-only check/diff, owner-fenced create or
+  atomic clean replacement, canonical manifest, and uncertainty-aware receipt.
 
 ## Current boundary
 
@@ -56,6 +59,14 @@ External backend repositories remain independently governed. GOOIR supplies
 their neutral provider/attester authoring seams and the shared host machinery
 for building an exact installed toolchain image; it does not ship their target
 profiles, lowerings, generators, conventions, or artifact semantics.
+
+Those repositories may converge on `ContentSet` as their final admitted bytes
+and reuse the managed local publisher. This is host machinery after admission,
+not backend discovery or a new semantic edge. The first publisher is scoped to
+dedicated directories on supported macOS/Linux local filesystems. It uses
+cooperative parent locking, refuses unmanaged or drifted state, and reports
+post-commit synchronization and cleanup uncertainty without implying a
+portable durability guarantee.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative
