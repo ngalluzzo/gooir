@@ -115,7 +115,10 @@ façade. It stages source-observation admission and uses conservative complete
 selection so downstream hosts do not reconstruct plans, offers, named input
 bindings, invocations, or authority records. `compile_output` names a semantic
 terminal without fixing its provider or dependency route. It adds no
-serialized compile protocol.
+serialized compile protocol. A reusable driver may instead admit source
+observations once, answer several derivation requests from the retained exact
+references, and recover any named admitted output of a multi-output
+invocation. This is an in-memory host session, not a multi-goal graph.
 
 ## Execution boundary
 

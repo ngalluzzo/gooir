@@ -10,7 +10,8 @@
 //!
 //! Lifting, lowering, generation, and analysis all use this one surface. Those
 //! words describe ecosystem meaning; they are not different execution
-//! mechanisms.
+//! mechanisms. [`ProviderApp`] lets one executable serve several exact
+//! capability implementations without adding discovery or another protocol.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -26,12 +27,160 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+fn invoke_json_document<F>(input: &str, dispatch: F) -> Result<String, ProviderError>
+where
+    F: FnOnce(&CapabilityInvocation) -> Result<CapabilityResult, ProviderError>,
+{
+    let invocation = serde_json::from_str(input)
+        .map_err(|error| ProviderError::InvocationJson(error.to_string()))?;
+    let result = dispatch(&invocation)?;
+    serde_json::to_string(&result).map_err(|error| ProviderError::ResultJson(error.to_string()))
+}
+
+fn serve_once_document<R, W, F>(
+    mut input: R,
+    mut output: W,
+    dispatch: F,
+) -> Result<(), ProviderError>
+where
+    R: Read,
+    W: Write,
+    F: FnOnce(&CapabilityInvocation) -> Result<CapabilityResult, ProviderError>,
+{
+    let mut document = String::new();
+    input
+        .read_to_string(&mut document)
+        .map_err(|error| ProviderError::Io(error.to_string()))?;
+    let result = invoke_json_document(&document, dispatch)?;
+    output
+        .write_all(result.as_bytes())
+        .and_then(|()| output.flush())
+        .map_err(|error| ProviderError::Io(error.to_string()))
+}
+
 /// One exact neutral provider implementation.
 #[derive(Clone, Debug)]
 pub struct Provider {
     specification: CapabilitySpec,
     specification_digest: String,
     implementation: ImplementationId,
+}
+
+type Handler =
+    dyn for<'invocation> Fn(&Context<'invocation>) -> Result<Outcome, ProviderError> + 'static;
+
+struct RegisteredProvider {
+    provider: Provider,
+    handler: Box<Handler>,
+}
+
+/// Several exact neutral providers served by one executable.
+///
+/// Dispatch is only by the invocation's exact capability and implementation
+/// identities. The selected [`Provider`] then validates the complete
+/// capability specification before its handler runs, so a matching identity
+/// with a drifted declaration is still refused. This is executable
+/// multiplexing, not provider discovery or implementation selection.
+#[derive(Default)]
+pub struct ProviderApp {
+    providers: BTreeMap<(CapabilityId, ImplementationId), RegisteredProvider>,
+}
+
+impl ProviderApp {
+    /// Creates an empty provider executable.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            providers: BTreeMap::new(),
+        }
+    }
+
+    /// Registers one exact capability implementation and its typed handler.
+    ///
+    /// Registering the same capability and implementation pair twice is
+    /// refused rather than creating order-dependent dispatch.
+    pub fn register<F>(
+        &mut self,
+        specification: CapabilitySpec,
+        implementation: ImplementationId,
+        handler: F,
+    ) -> Result<(), ProviderError>
+    where
+        F: for<'invocation> Fn(&Context<'invocation>) -> Result<Outcome, ProviderError> + 'static,
+    {
+        let provider = Provider::new(specification, implementation)?;
+        let key = (
+            provider.specification().id.clone(),
+            provider.implementation().clone(),
+        );
+        if self.providers.contains_key(&key) {
+            return Err(ProviderError::DuplicateRegistration {
+                capability: Box::new(key.0),
+                implementation: Box::new(key.1),
+            });
+        }
+        self.providers.insert(
+            key,
+            RegisteredProvider {
+                provider,
+                handler: Box::new(handler),
+            },
+        );
+        Ok(())
+    }
+
+    /// Validates, dispatches, and evaluates one complete neutral invocation.
+    ///
+    /// Unknown pairs are refused. A registered pair is passed back through
+    /// [`Provider::invoke`], which prevents same-identity specification drift
+    /// from reaching the registered handler.
+    pub fn invoke(
+        &self,
+        invocation: &CapabilityInvocation,
+    ) -> Result<CapabilityResult, ProviderError> {
+        invocation.validate().map_err(ProviderError::Protocol)?;
+        let key = (
+            invocation.specification.id.clone(),
+            invocation.selection.offer.implementation.clone(),
+        );
+        let registered =
+            self.providers
+                .get(&key)
+                .ok_or_else(|| ProviderError::UnregisteredProvider {
+                    capability: Box::new(key.0),
+                    implementation: Box::new(key.1),
+                })?;
+        registered
+            .provider
+            .invoke(invocation, |context| (registered.handler)(context))
+    }
+
+    /// Parses one invocation document and returns one result document.
+    pub fn invoke_json(&self, input: &str) -> Result<String, ProviderError> {
+        invoke_json_document(input, |invocation| self.invoke(invocation))
+    }
+
+    /// Serves one complete invocation over caller-supplied streams.
+    pub fn serve_once<R, W>(&self, mut input: R, mut output: W) -> Result<(), ProviderError>
+    where
+        R: Read,
+        W: Write,
+    {
+        serve_once_document(&mut input, &mut output, |invocation| {
+            self.invoke(invocation)
+        })
+    }
+
+    /// Serves one complete invocation over stdin/stdout.
+    ///
+    /// Process lifecycle, limits, and launch authority remain external-host
+    /// concerns. This helper uses the same credential-free document framing as
+    /// [`Provider::serve_stdio`].
+    pub fn serve_stdio(&self) -> Result<(), ProviderError> {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        self.serve_once(stdin.lock(), stdout.lock())
+    }
 }
 
 impl Provider {
@@ -126,10 +275,7 @@ impl Provider {
     where
         F: FnOnce(&Context<'_>) -> Result<Outcome, ProviderError>,
     {
-        let invocation = serde_json::from_str(input)
-            .map_err(|error| ProviderError::InvocationJson(error.to_string()))?;
-        let result = self.invoke(&invocation, handler)?;
-        serde_json::to_string(&result).map_err(|error| ProviderError::ResultJson(error.to_string()))
+        invoke_json_document(input, |invocation| self.invoke(invocation, handler))
     }
 
     /// Serves one complete invocation over caller-supplied streams.
@@ -144,15 +290,9 @@ impl Provider {
         W: Write,
         F: FnOnce(&Context<'_>) -> Result<Outcome, ProviderError>,
     {
-        let mut document = String::new();
-        input
-            .read_to_string(&mut document)
-            .map_err(|error| ProviderError::Io(error.to_string()))?;
-        let result = self.invoke_json(&document, handler)?;
-        output
-            .write_all(result.as_bytes())
-            .and_then(|()| output.flush())
-            .map_err(|error| ProviderError::Io(error.to_string()))
+        serve_once_document(&mut input, &mut output, |invocation| {
+            self.invoke(invocation, handler)
+        })
     }
 
     /// Serves one complete invocation over stdin/stdout.
@@ -428,6 +568,14 @@ pub enum ProviderError {
         expected: Box<ImplementationId>,
         actual: Box<ImplementationId>,
     },
+    DuplicateRegistration {
+        capability: Box<CapabilityId>,
+        implementation: Box<ImplementationId>,
+    },
+    UnregisteredProvider {
+        capability: Box<CapabilityId>,
+        implementation: Box<ImplementationId>,
+    },
     UnknownInputPort(String),
     UnsupportedInputExtensions {
         port: PortName,
@@ -480,6 +628,20 @@ impl fmt::Display for ProviderError {
             Self::ImplementationMismatch { expected, actual } => write!(
                 formatter,
                 "invocation implementation `{actual}` does not match provider `{expected}`"
+            ),
+            Self::DuplicateRegistration {
+                capability,
+                implementation,
+            } => write!(
+                formatter,
+                "provider `{implementation}` is already registered for capability `{capability}`"
+            ),
+            Self::UnregisteredProvider {
+                capability,
+                implementation,
+            } => write!(
+                formatter,
+                "no provider `{implementation}` is registered for capability `{capability}`"
             ),
             Self::UnknownInputPort(port) => write!(formatter, "unknown input port `{port}`"),
             Self::UnsupportedInputExtensions { port, keys } => write!(
@@ -545,6 +707,7 @@ impl ProviderError {
 mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
+    use std::rc::Rc;
 
     use gooir_capability::protocol::{
         AdmittedFactRef, ArtifactDigest, AuthorityRecordId, CapabilityInvocation, CapabilityOffer,
@@ -556,7 +719,7 @@ mod tests {
     };
     use serde_json::json;
 
-    use super::{Provider, ProviderError};
+    use super::{Provider, ProviderApp, ProviderError};
 
     fn port(name: &str) -> PortName {
         PortName::parse(name).expect("test port is valid")
@@ -989,5 +1152,200 @@ mod tests {
         result
             .validate_against(&invocation)
             .expect("stream result remains exact");
+    }
+
+    #[test]
+    fn provider_app_dispatches_only_to_the_exact_registered_pair() {
+        let first_calls = Rc::new(Cell::new(0));
+        let second_calls = Rc::new(Cell::new(0));
+        let mut app = ProviderApp::new();
+
+        let calls = Rc::clone(&first_calls);
+        app.register(
+            specification(),
+            implementation("combine_rust"),
+            move |context| {
+                calls.set(calls.get() + 1);
+                context
+                    .produced()
+                    .output("sum", 13)?
+                    .output("product", 42)?
+                    .finish()
+            },
+        )
+        .expect("first provider registers");
+
+        let calls = Rc::clone(&second_calls);
+        app.register(
+            specification(),
+            implementation("combine_portable"),
+            move |context| {
+                calls.set(calls.get() + 1);
+                context
+                    .produced()
+                    .output("sum", 113)?
+                    .output("product", 142)?
+                    .finish()
+            },
+        )
+        .expect("second provider registers");
+
+        let selected = Provider::new(specification(), implementation("combine_portable"))
+            .expect("selected provider is valid");
+        let result = app
+            .invoke(&invocation(&selected))
+            .expect("exact provider is dispatched");
+
+        let CapabilityOutcome::Produced { outputs, .. } = result.outcome else {
+            panic!("provider should produce outputs")
+        };
+        assert_eq!(outputs[0].fact.payload, json!(113));
+        assert_eq!(first_calls.get(), 0);
+        assert_eq!(second_calls.get(), 1);
+    }
+
+    #[test]
+    fn duplicate_provider_app_registration_is_refused() {
+        let mut app = ProviderApp::new();
+        app.register(specification(), implementation("combine_rust"), |context| {
+            context
+                .produced()
+                .output("sum", 13)?
+                .output("product", 42)?
+                .finish()
+        })
+        .expect("first registration succeeds");
+
+        let error = app
+            .register(specification(), implementation("combine_rust"), |_| {
+                unreachable!("duplicate handler cannot be registered")
+            })
+            .expect_err("duplicate exact pair must be refused");
+
+        assert!(matches!(
+            error,
+            ProviderError::DuplicateRegistration {
+                capability,
+                implementation: found,
+            } if *capability == specification().id
+                && *found == implementation("combine_rust")
+        ));
+    }
+
+    #[test]
+    fn unknown_provider_app_pairs_never_call_another_handler() {
+        let calls = Rc::new(Cell::new(0));
+        let mut app = ProviderApp::new();
+        let handler_calls = Rc::clone(&calls);
+        app.register(specification(), implementation("combine_rust"), move |_| {
+            handler_calls.set(handler_calls.get() + 1);
+            unreachable!("an unknown implementation must not fall back")
+        })
+        .expect("known provider registers");
+
+        let unknown_implementation =
+            Provider::new(specification(), implementation("not_installed"))
+                .expect("unknown provider declaration is structurally valid");
+        let implementation_error = app
+            .invoke(&invocation(&unknown_implementation))
+            .expect_err("unknown implementation must be refused");
+        assert!(matches!(
+            implementation_error,
+            ProviderError::UnregisteredProvider { .. }
+        ));
+
+        let mut unknown_specification = specification();
+        unknown_specification.id = CapabilityId::new("org.example.other", "combine", "1.0.0");
+        let unknown_capability =
+            Provider::new(unknown_specification, implementation("combine_rust"))
+                .expect("unknown capability declaration is structurally valid");
+        let capability_error = app
+            .invoke(&invocation(&unknown_capability))
+            .expect_err("unknown capability must be refused");
+
+        assert!(matches!(
+            capability_error,
+            ProviderError::UnregisteredProvider { .. }
+        ));
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn substituted_invocation_never_reaches_the_substituted_handler() {
+        let calls = Rc::new(Cell::new(0));
+        let mut app = ProviderApp::new();
+        let handler_calls = Rc::clone(&calls);
+        app.register(
+            specification(),
+            implementation("combine_portable"),
+            move |_| {
+                handler_calls.set(handler_calls.get() + 1);
+                unreachable!("content-ID-invalid substitution must not dispatch")
+            },
+        )
+        .expect("substitution target registers");
+
+        let original = Provider::new(specification(), implementation("combine_rust"))
+            .expect("original provider is valid");
+        let mut substituted = invocation(&original);
+        substituted.selection.offer.implementation = implementation("combine_portable");
+
+        let error = app
+            .invoke(&substituted)
+            .expect_err("mutated invocation identity must be refused");
+        assert!(matches!(error, ProviderError::Protocol(_)));
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn provider_app_rechecks_the_complete_specification_before_dispatch() {
+        let calls = Rc::new(Cell::new(0));
+        let mut app = ProviderApp::new();
+        let handler_calls = Rc::clone(&calls);
+        app.register(specification(), implementation("combine_rust"), move |_| {
+            handler_calls.set(handler_calls.get() + 1);
+            unreachable!("same-identity specification drift must not dispatch")
+        })
+        .expect("provider registers");
+
+        let mut drifted = specification();
+        drifted.output_ports.swap(0, 1);
+        let drifted_provider = Provider::new(drifted, implementation("combine_rust"))
+            .expect("drifted declaration remains structurally valid");
+        let error = app
+            .invoke(&invocation(&drifted_provider))
+            .expect_err("same-identity specification drift must be refused");
+
+        assert!(matches!(error, ProviderError::SpecificationMismatch { .. }));
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn provider_app_stream_framing_is_the_existing_neutral_protocol() {
+        let mut app = ProviderApp::new();
+        app.register(specification(), implementation("combine_rust"), |context| {
+            let left: u64 = context.input("left")?;
+            let right: u64 = context.input("right")?;
+            context
+                .produced()
+                .output("sum", left + right)?
+                .output("product", left * right)?
+                .finish()
+        })
+        .expect("provider registers");
+        let selected = Provider::new(specification(), implementation("combine_rust"))
+            .expect("selected provider is valid");
+        let invocation = invocation(&selected);
+        let input = serde_json::to_vec(&invocation).expect("invocation encodes");
+        let mut output = Vec::new();
+
+        app.serve_once(input.as_slice(), &mut output)
+            .expect("stream invocation succeeds");
+        let result: CapabilityResult =
+            serde_json::from_slice(&output).expect("stream result decodes");
+
+        result
+            .validate_against(&invocation)
+            .expect("app result remains an exact neutral result");
     }
 }

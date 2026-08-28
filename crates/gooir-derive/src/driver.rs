@@ -14,11 +14,12 @@ use gooir_capability::authority::{
     AdmissionLedger, AdmissionOutcome, AdmissionPolicy, AuthorityError, ConformanceAuthority,
     SourceObservation,
 };
+use gooir_capability::protocol::AdmittedFactRef;
 use gooir_package::PackageRegistry;
 use gooir_planning::RouteOutputRef;
 
 use crate::{
-    Answer, AttesterInventory, DerivationFacade, DerivationGoal, DerivationHost, DerivationLimits,
+    Answer, AttesterInventory, DerivationFacade, DerivationHost, DerivationLimits,
     DerivationRequest, FacadeError, Refusal,
 };
 
@@ -86,7 +87,11 @@ where
         target: ValueKindId,
         observations: impl IntoIterator<Item = SourceObservation>,
     ) -> Answer {
-        self.compile_goal(DerivationGoal::ValueKind(target), observations)
+        let inputs = match self.admit_sources(observations) {
+            Ok(inputs) => inputs,
+            Err(refusal) => return Answer::Refused(refusal),
+        };
+        self.derive_request(&DerivationRequest::unique_only(target, inputs))
     }
 
     /// Admits the exact source observations and derives one named capability
@@ -99,14 +104,28 @@ where
         target: RouteOutputRef,
         observations: impl IntoIterator<Item = SourceObservation>,
     ) -> Answer {
-        self.compile_goal(DerivationGoal::CapabilityOutput(target), observations)
+        let inputs = match self.admit_sources(observations) {
+            Ok(inputs) => inputs,
+            Err(refusal) => return Answer::Refused(refusal),
+        };
+        self.derive_output(target, &inputs)
     }
 
-    fn compile_goal(
+    /// Atomically admits source observations into this reusable driver and
+    /// returns their exact contextual references.
+    ///
+    /// No derivation is selected or executed. Invalid, withheld, or excessive
+    /// observations leave the ledger unchanged, so callers may admit one
+    /// source bundle once and use its references for several later requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns a product-facing refusal when an observation is invalid,
+    /// withheld by policy, or exceeds the configured input bound.
+    pub fn admit_sources(
         &mut self,
-        target: DerivationGoal,
         observations: impl IntoIterator<Item = SourceObservation>,
-    ) -> Answer {
+    ) -> Result<Vec<AdmittedFactRef>, Box<Refusal>> {
         let mut observations = observations.into_iter();
         let mut staged = self.ledger.clone();
         let mut inputs = Vec::new();
@@ -115,7 +134,7 @@ where
                 break;
             };
             if index == self.max_inputs.get() {
-                return Answer::Refused(Box::new(Refusal::InvalidRequest {
+                return Err(Box::new(Refusal::InvalidRequest {
                     detail: format!(
                         "source observation count exceeds configured input limit {}",
                         self.max_inputs
@@ -125,7 +144,7 @@ where
             let outcome = match staged.admit_observation(&self.policy, &observation) {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    return Answer::Refused(Box::new(Refusal::InvalidRequest {
+                    return Err(Box::new(Refusal::InvalidRequest {
                         detail: format!("source observation is invalid: {error}"),
                     }));
                 }
@@ -133,13 +152,13 @@ where
             match outcome {
                 AdmissionOutcome::Admitted { links, .. } => {
                     let [link] = links.as_slice() else {
-                        return Answer::Refused(Box::new(Refusal::InvalidRequest {
+                        return Err(Box::new(Refusal::InvalidRequest {
                             detail: "source admission did not return one exact fact reference"
                                 .to_owned(),
                         }));
                     };
                     if link.port.is_some() {
-                        return Answer::Refused(Box::new(Refusal::InvalidRequest {
+                        return Err(Box::new(Refusal::InvalidRequest {
                             detail: "source admission unexpectedly returned an output port"
                                 .to_owned(),
                         }));
@@ -147,7 +166,7 @@ where
                     inputs.push(link.reference.clone());
                 }
                 AdmissionOutcome::Withheld { decision } => {
-                    return Answer::Refused(Box::new(Refusal::AdmissionPolicy {
+                    return Err(Box::new(Refusal::AdmissionPolicy {
                         decision: Some(Box::new(decision)),
                         detail: "a source observation was withheld by the admission policy"
                             .to_owned(),
@@ -155,22 +174,28 @@ where
                 }
             }
         }
+        self.ledger = staged;
+        Ok(inputs)
+    }
 
-        let request = match target {
-            DerivationGoal::ValueKind(target) => DerivationRequest::unique_only(target, inputs),
-            DerivationGoal::CapabilityOutput(target) => {
-                DerivationRequest::unique_output(target, inputs)
-            }
-        };
-        let answer = self.facade.answer(
-            &mut staged,
+    /// Answers one request using already-admitted references and retains every
+    /// newly admitted derived output for later requests.
+    pub fn derive_request(&mut self, request: &DerivationRequest) -> Answer {
+        self.facade.answer(
+            &mut self.ledger,
             &self.policy,
             &self.attesters,
             &mut self.host,
-            &request,
-        );
-        self.ledger = staged;
-        answer
+            request,
+        )
+    }
+
+    /// Derives one exact named output from already-admitted references.
+    pub fn derive_output(&mut self, target: RouteOutputRef, inputs: &[AdmittedFactRef]) -> Answer {
+        self.derive_request(&DerivationRequest::unique_output(
+            target,
+            inputs.iter().cloned(),
+        ))
     }
 
     /// Current contextual admission state, including admitted sources and
