@@ -32,10 +32,18 @@ the exact `org.gooi.artifact.file_tree/tree@1.0.0` value kind, decodes and
 validates the payload through borrowed, bounded deserialization, and requires
 equality between the resolved fact and the fact bound into the authority.
 Per-file Base64 length plus file-count and aggregate decoded-byte limits are
-enforced while decoding rather than after an unbounded clone. Because this
-materializer has no extension semantics, it rejects every extension in the
-selected reference, complete authority chain, fact, tree, and file instead of
-silently ignoring one.
+enforced while decoding rather than after an unbounded clone. Because the
+standalone materializer has no extension semantics, its default path rejects
+every extension in the selected reference, complete authority chain, fact,
+tree, and file instead of silently ignoring one.
+
+The default public resolution path remains reject-all. A later composing host
+may provide an explicit validator for exact authority-extension scope, key, and
+value. That validator assumes responsibility for those semantics; unhandled or
+invalid values still fail closed, and FileTree fact/tree/file extensions are
+never delegated. This preserves conservative standalone behavior while
+allowing an authority-aware product host to consume semantics it actually
+implements.
 
 The first `LocalFileTreeMaterializer` requires all of the following before its
 first filesystem mutation:

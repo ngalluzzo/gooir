@@ -37,6 +37,7 @@ The repository also contains narrow, optional support:
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-file-tree-v1` | portable content-addressed virtual-file artifact dialect; no filesystem effects |
 | `gooir-file-tree-materializer` | admitted-authority gate and bounded atomic no-replace local publication host |
+| `gooir-file-tree-build` | product-host composition from admitted FileTree derivation to physical receipt |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -170,6 +171,15 @@ FileTree plus every existing destination, checks mandatory host limits and Unix
 modes, stages through retained no-follow directory descriptors, and atomically
 publishes the complete tree. Its receipt is local effect evidence, not another
 semantic fact or a claim that later actors cannot change the files.
+
+`gooir-file-tree-build` is the optional product composition over that bridge.
+It fixes the compiler target to FileTree, retains `Blocked`, `Unreachable`,
+`Refused`, and `Failed` without touching the filesystem, and refines only an
+admitted `Produced` answer into `Materialized { produced, receipt }`. The build
+host explicitly validates the compiler's complete-selection authority
+extension; every other unknown authority semantic and every FileTree extension
+still fails closed. Host failures retain the exact admitted product but do not
+become a serialized semantic outcome.
 
 ## Qualify
 

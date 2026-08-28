@@ -161,6 +161,11 @@ substitute a publicly assembled `ResolvedFact`. It revalidates the complete
 authority and FileTree payload and refuses unknown extensions anywhere in the
 reference, authority chain, fact, tree, or file rather than assuming they are
 irrelevant.
+The default gate rejects every authority extension. A composing host may
+supply an explicit validator for exact authority-extension scope, key, and
+value; doing so is an assertion that the host implements those semantics, not
+an inference by the materializer. FileTree fact, tree, and file extensions are
+never delegated to that validator.
 Mandatory host limits bound files, directories, per-file bytes, and total
 bytes. Mandatory policy fixes ordinary Unix file and directory modes and, in
 this first version, supports only atomic refusal of every existing destination.
@@ -174,6 +179,19 @@ does not retry under the false assumption that no effect occurred. The receipt
 is non-constructible in-process host evidence, not a stable semantic protocol.
 Crashes may still leave a private staging directory or a published tree without
 a returned receipt; durable reconciliation belongs to a later product host.
+
+`gooir-file-tree-build` is the optional in-process product host that composes
+`CompilerDriver` with a selected `FileTreeMaterializer`. It owns both, fixes the
+semantic target to the exact FileTree value kind, and resolves `Produced.target`
+through the same ledger the compiler just mutated. It understands exactly the
+compiler's complete-selection extension at implementation-selection scope and
+requires its value to equal `Produced.selection_id`; every other extension is
+refused. `Blocked`, `Unreachable`, `Refused`, and `Failed` bypass the
+materializer unchanged. Physical success retains both the admitted
+`ProducedAnswer` and materializer receipt. Artifact-gate and materializer
+failures stay host-local errors and retain the admitted product for diagnosis.
+This composition adds no build dialect, capability edge, serialized receipt,
+retry policy, or durable journal.
 
 ## Extension direction
 
@@ -216,9 +234,9 @@ a generic effect model. Target-specific artifact dialects may remain richer;
 an explicit capability can project one into the generic file-tree kind when
 its information is sufficient.
 
-The matching local materializer is also optional support. Neither
-`CompilerDriver` nor the semantic planner depends on it. A product build driver
-may compose them by explicitly resolving the produced authority and then
+The matching local materializer and build driver are also optional support.
+Neither `CompilerDriver` nor the semantic planner depends on them. The build
+driver composes them by explicitly resolving the produced authority and then
 calling the host-side `FileTreeMaterializer` seam.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic

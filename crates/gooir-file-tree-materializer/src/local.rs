@@ -1003,6 +1003,24 @@ mod tests {
         }
     }
 
+    struct ExpectedObservationAuthorityExtension;
+
+    impl crate::AuthorityExtensionValidator for ExpectedObservationAuthorityExtension {
+        fn validate(
+            &mut self,
+            extension: crate::AuthorityExtension<'_>,
+        ) -> Result<(), crate::AuthorityExtensionError> {
+            if extension.scope == crate::AuthorityExtensionScope::ObservationAuthority
+                && extension.key == "org.example/authority-meaning"
+                && extension.value == &json!(true)
+            {
+                Ok(())
+            } else {
+                Err(crate::AuthorityExtensionError::Unhandled)
+            }
+        }
+    }
+
     #[test]
     fn admitted_gate_requires_the_exact_file_tree_kind() {
         let wrong = Fact::new(
@@ -1080,6 +1098,14 @@ mod tests {
                 if scope == "observation authority"
                     && key == "org.example/authority-meaning"
         ));
+        assert!(
+            AdmittedFileTree::resolve_with_authority_extensions(
+                &ledger,
+                &reference,
+                &mut ExpectedObservationAuthorityExtension,
+            )
+            .is_ok()
+        );
 
         let fact = Fact::new(
             file_tree_value_kind(),
@@ -1612,7 +1638,11 @@ mod tests {
             authority: &authority,
         };
         assert!(matches!(
-            AdmittedFileTree::from_resolved(&AdmissionLedger::new(), forged),
+            AdmittedFileTree::from_resolved(
+                &AdmissionLedger::new(),
+                forged,
+                &mut crate::RejectAllAuthorityExtensions,
+            ),
             Err(AdmittedFileTreeError::InvalidAuthority(_))
         ));
     }

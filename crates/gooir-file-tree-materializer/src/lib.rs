@@ -32,6 +32,142 @@ pub use local::{
     MaterializedFile,
 };
 
+/// Exact authority-document location of one preserved extension.
+///
+/// A host may understand the same extension key at one scope and reject it at
+/// another. `FileTree` fact, tree, and file extensions are deliberately outside
+/// this enum and remain unconditionally rejected by this materializer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum AuthorityExtensionScope {
+    AdmittedFactReference,
+    AuthorityRecord,
+    SourceAuthorityBasis,
+    DerivedAuthorityBasis,
+    SourceObservation,
+    ObservationAuthority,
+    EvidenceReference,
+    AdmissionPolicy,
+    ConformanceAuthority,
+    ConformanceAttester,
+    AdmissionDecision,
+    ObservationAdmissionSubject,
+    CandidateAdmissionSubject,
+    AdmissionDecisionOutput,
+    AdmitVerdict,
+    WithholdVerdict,
+    CapabilityInvocation,
+    CapabilitySpecification,
+    ImplementationSelection,
+    CapabilityOffer,
+    LinkedInput,
+    LinkedInputAdmittedReference,
+    CapabilityInputPort,
+    CapabilityOutputPort,
+    CapabilityCandidate,
+    CapabilityResult,
+    ProducedOutcome,
+    UnableOutcome,
+    CapabilityFailure,
+    NamedOutput,
+    ConformanceAssessment,
+    ConformanceCheck,
+}
+
+impl AuthorityExtensionScope {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AdmittedFactReference => "admitted fact reference",
+            Self::AuthorityRecord => "authority record",
+            Self::SourceAuthorityBasis => "source authority basis",
+            Self::DerivedAuthorityBasis => "derived authority basis",
+            Self::SourceObservation => "source observation",
+            Self::ObservationAuthority => "observation authority",
+            Self::EvidenceReference => "evidence reference",
+            Self::AdmissionPolicy => "admission policy",
+            Self::ConformanceAuthority => "conformance authority",
+            Self::ConformanceAttester => "conformance attester",
+            Self::AdmissionDecision => "admission decision",
+            Self::ObservationAdmissionSubject => "observation admission subject",
+            Self::CandidateAdmissionSubject => "candidate admission subject",
+            Self::AdmissionDecisionOutput => "admission decision output",
+            Self::AdmitVerdict => "admit verdict",
+            Self::WithholdVerdict => "withhold verdict",
+            Self::CapabilityInvocation => "capability invocation",
+            Self::CapabilitySpecification => "capability specification",
+            Self::ImplementationSelection => "implementation selection",
+            Self::CapabilityOffer => "capability offer",
+            Self::LinkedInput => "linked input",
+            Self::LinkedInputAdmittedReference => "linked input admitted reference",
+            Self::CapabilityInputPort => "capability input port",
+            Self::CapabilityOutputPort => "capability output port",
+            Self::CapabilityCandidate => "capability candidate",
+            Self::CapabilityResult => "capability result",
+            Self::ProducedOutcome => "produced outcome",
+            Self::UnableOutcome => "unable outcome",
+            Self::CapabilityFailure => "capability failure",
+            Self::NamedOutput => "named output",
+            Self::ConformanceAssessment => "conformance assessment",
+            Self::ConformanceCheck => "conformance check",
+        }
+    }
+}
+
+impl fmt::Display for AuthorityExtensionScope {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// One exact extension offered to a host-supplied semantic validator.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AuthorityExtension<'value> {
+    pub scope: AuthorityExtensionScope,
+    pub key: &'value str,
+    pub value: &'value serde_json::Value,
+}
+
+/// Conservative outcome from a host's authority-extension validator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuthorityExtensionError {
+    Unhandled,
+    Invalid(String),
+}
+
+/// Explicit host understanding of authority-chain extension semantics.
+///
+/// Returning `Ok(())` asserts that the exact scope, key, and value were
+/// understood and validated. The materializer still validates the enclosing
+/// content identities and complete reachable authority chain. Implementations
+/// must be deterministic and effect-free; they inspect already ledger-resolved
+/// authority data and do not grant filesystem authority themselves.
+pub trait AuthorityExtensionValidator {
+    /// Validates one exact preserved authority extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Unhandled` when the validator does not implement these
+    /// semantics or `Invalid` when it understands but refuses the exact value.
+    fn validate(
+        &mut self,
+        extension: AuthorityExtension<'_>,
+    ) -> Result<(), AuthorityExtensionError>;
+}
+
+/// Default-deny validator used by [`AdmittedFileTree::resolve`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RejectAllAuthorityExtensions;
+
+impl AuthorityExtensionValidator for RejectAllAuthorityExtensions {
+    fn validate(
+        &mut self,
+        _extension: AuthorityExtension<'_>,
+    ) -> Result<(), AuthorityExtensionError> {
+        Err(AuthorityExtensionError::Unhandled)
+    }
+}
+
 /// A validated `FileTree` paired with the exact admitted authority selected by
 /// an [`gooir_capability::authority::AdmissionLedger`].
 ///
@@ -63,11 +199,37 @@ impl AdmittedFileTree {
         ledger: &AdmissionLedger,
         reference: &AdmittedFactRef,
     ) -> Result<Self, AdmittedFileTreeError> {
-        reject_extensions("admitted fact reference", &reference.extensions)?;
+        Self::resolve_with_authority_extensions(
+            ledger,
+            reference,
+            &mut RejectAllAuthorityExtensions,
+        )
+    }
+
+    /// Resolves and validates a `FileTree` while delegating only preserved
+    /// authority-extension meaning to an explicit host validator.
+    ///
+    /// `FileTree` fact, tree, and file extensions are never delegated and remain
+    /// rejected. Returning `Ok(())` from the validator is an authority claim by
+    /// the caller; the validator must check the exact scope, key, and value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for ledger, authority, value, or extension failure.
+    pub fn resolve_with_authority_extensions(
+        ledger: &AdmissionLedger,
+        reference: &AdmittedFactRef,
+        validator: &mut dyn AuthorityExtensionValidator,
+    ) -> Result<Self, AdmittedFileTreeError> {
         let resolved = ledger
             .resolve(reference)
             .map_err(|error| AdmittedFileTreeError::Resolution(error.to_string()))?;
-        Self::from_resolved(ledger, resolved)
+        validate_authority_extensions(
+            AuthorityExtensionScope::AdmittedFactReference,
+            &reference.extensions,
+            validator,
+        )?;
+        Self::from_resolved(ledger, resolved, validator)
     }
 
     /// Returns the exact authority selected for materialization.
@@ -91,6 +253,7 @@ impl AdmittedFileTree {
     fn from_resolved(
         ledger: &AdmissionLedger,
         resolved: ResolvedFact<'_>,
+        validator: &mut dyn AuthorityExtensionValidator,
     ) -> Result<Self, AdmittedFileTreeError> {
         if &resolved.authority.fact != resolved.fact {
             return Err(AdmittedFileTreeError::FactAuthorityMismatch);
@@ -105,7 +268,7 @@ impl AdmittedFileTree {
         if let Some(key) = resolved.fact.extensions.keys().next() {
             return Err(AdmittedFileTreeError::UnhandledFactExtension(key.clone()));
         }
-        reject_authority_extensions(ledger, resolved.authority, &mut BTreeSet::new())?;
+        reject_authority_extensions(ledger, resolved.authority, &mut BTreeSet::new(), validator)?;
 
         reject_unhandled_raw_extensions(&resolved.fact.payload)?;
         let tree = FileTree::deserialize(&resolved.fact.payload)
@@ -136,6 +299,7 @@ fn reject_authority_extensions(
     ledger: &AdmissionLedger,
     record: &AuthorityRecord,
     visited: &mut BTreeSet<AuthorityRecordId>,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
     record
         .validate()
@@ -143,7 +307,11 @@ fn reject_authority_extensions(
     if !visited.insert(record.authority_record_id.clone()) {
         return Ok(());
     }
-    reject_extensions("authority record", &record.extensions)?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::AuthorityRecord,
+        &record.extensions,
+        validator,
+    )?;
     reject_fact_extensions("authority-record fact", &record.fact)?;
     match &record.basis {
         AuthorityBasis::Source {
@@ -152,10 +320,14 @@ fn reject_authority_extensions(
             decision,
             extensions,
         } => {
-            reject_extensions("source authority basis", extensions)?;
-            reject_observation_extensions(observation)?;
-            reject_policy_extensions(policy)?;
-            reject_decision_extensions(decision)
+            validate_authority_extensions(
+                AuthorityExtensionScope::SourceAuthorityBasis,
+                extensions,
+                validator,
+            )?;
+            reject_observation_extensions(observation, validator)?;
+            reject_policy_extensions(policy, validator)?;
+            reject_decision_extensions(decision, validator)
         }
         AuthorityBasis::Derived {
             invocation,
@@ -167,13 +339,17 @@ fn reject_authority_extensions(
             extensions,
             ..
         } => {
-            reject_extensions("derived authority basis", extensions)?;
-            reject_invocation_extensions(invocation)?;
-            reject_result_extensions(result)?;
-            reject_candidate_extensions(candidate)?;
-            reject_assessment_extensions(assessment)?;
-            reject_policy_extensions(policy)?;
-            reject_decision_extensions(decision)?;
+            validate_authority_extensions(
+                AuthorityExtensionScope::DerivedAuthorityBasis,
+                extensions,
+                validator,
+            )?;
+            reject_invocation_extensions(invocation, validator)?;
+            reject_result_extensions(result, validator)?;
+            reject_candidate_extensions(candidate, validator)?;
+            reject_assessment_extensions(assessment, validator)?;
+            reject_policy_extensions(policy, validator)?;
+            reject_decision_extensions(decision, validator)?;
             for input in &invocation.inputs {
                 let resolved = ledger.resolve(&input.admitted).map_err(|error| {
                     AdmittedFileTreeError::Resolution(format!(
@@ -184,7 +360,7 @@ fn reject_authority_extensions(
                 if resolved.fact != &input.fact {
                     return Err(AdmittedFileTreeError::FactAuthorityMismatch);
                 }
-                reject_authority_extensions(ledger, resolved.authority, visited)?;
+                reject_authority_extensions(ledger, resolved.authority, visited, validator)?;
             }
             Ok(())
         }
@@ -193,102 +369,192 @@ fn reject_authority_extensions(
 
 fn reject_observation_extensions(
     observation: &SourceObservation,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("source observation", &observation.extensions)?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::SourceObservation,
+        &observation.extensions,
+        validator,
+    )?;
     reject_fact_extensions("source-observation fact", &observation.fact)?;
-    reject_observation_authority_extensions(&observation.authority)?;
-    reject_evidence_extensions(&observation.primary_evidence)?;
+    reject_observation_authority_extensions(&observation.authority, validator)?;
+    reject_evidence_extensions(&observation.primary_evidence, validator)?;
     for evidence in &observation.additional_evidence {
-        reject_evidence_extensions(evidence)?;
+        reject_evidence_extensions(evidence, validator)?;
     }
     Ok(())
 }
 
-fn reject_policy_extensions(policy: &AdmissionPolicy) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("admission policy", &policy.extensions)?;
+fn reject_policy_extensions(
+    policy: &AdmissionPolicy,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    validate_authority_extensions(
+        AuthorityExtensionScope::AdmissionPolicy,
+        &policy.extensions,
+        validator,
+    )?;
     for authority in &policy.accepted_conformance {
-        reject_conformance_authority_extensions(authority)?;
+        reject_conformance_authority_extensions(authority, validator)?;
     }
     for authority in &policy.accepted_observations {
-        reject_observation_authority_extensions(authority)?;
+        reject_observation_authority_extensions(authority, validator)?;
     }
     Ok(())
 }
 
-fn reject_decision_extensions(decision: &AdmissionDecision) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("admission decision", &decision.extensions)?;
+fn reject_decision_extensions(
+    decision: &AdmissionDecision,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    validate_authority_extensions(
+        AuthorityExtensionScope::AdmissionDecision,
+        &decision.extensions,
+        validator,
+    )?;
     match &decision.subject {
         AdmissionSubject::Observation { extensions, .. } => {
-            reject_extensions("observation admission subject", extensions)?;
+            validate_authority_extensions(
+                AuthorityExtensionScope::ObservationAdmissionSubject,
+                extensions,
+                validator,
+            )?;
         }
         AdmissionSubject::Candidate {
             outputs,
             extensions,
             ..
         } => {
-            reject_extensions("candidate admission subject", extensions)?;
+            validate_authority_extensions(
+                AuthorityExtensionScope::CandidateAdmissionSubject,
+                extensions,
+                validator,
+            )?;
             for output in outputs {
-                reject_extensions("admission decision output", &output.extensions)?;
+                validate_authority_extensions(
+                    AuthorityExtensionScope::AdmissionDecisionOutput,
+                    &output.extensions,
+                    validator,
+                )?;
             }
         }
     }
     match &decision.verdict {
-        AdmissionVerdict::Admit { extensions } => reject_extensions("admit verdict", extensions),
-        AdmissionVerdict::Withhold { extensions, .. } => {
-            reject_extensions("withhold verdict", extensions)
-        }
+        AdmissionVerdict::Admit { extensions } => validate_authority_extensions(
+            AuthorityExtensionScope::AdmitVerdict,
+            extensions,
+            validator,
+        ),
+        AdmissionVerdict::Withhold { extensions, .. } => validate_authority_extensions(
+            AuthorityExtensionScope::WithholdVerdict,
+            extensions,
+            validator,
+        ),
     }
 }
 
 fn reject_invocation_extensions(
     invocation: &CapabilityInvocation,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("capability invocation", &invocation.extensions)?;
-    reject_spec_extensions(&invocation.specification)?;
-    reject_extensions("implementation selection", &invocation.selection.extensions)?;
-    reject_extensions("capability offer", &invocation.selection.offer.extensions)?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::CapabilityInvocation,
+        &invocation.extensions,
+        validator,
+    )?;
+    reject_spec_extensions(&invocation.specification, validator)?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::ImplementationSelection,
+        &invocation.selection.extensions,
+        validator,
+    )?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::CapabilityOffer,
+        &invocation.selection.offer.extensions,
+        validator,
+    )?;
     for input in &invocation.inputs {
-        reject_extensions("linked input", &input.extensions)?;
-        reject_extensions(
-            "linked input admitted reference",
+        validate_authority_extensions(
+            AuthorityExtensionScope::LinkedInput,
+            &input.extensions,
+            validator,
+        )?;
+        validate_authority_extensions(
+            AuthorityExtensionScope::LinkedInputAdmittedReference,
             &input.admitted.extensions,
+            validator,
         )?;
         reject_fact_extensions("linked input fact", &input.fact)?;
     }
     Ok(())
 }
 
-fn reject_spec_extensions(specification: &CapabilitySpec) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("capability specification", &specification.extensions)?;
+fn reject_spec_extensions(
+    specification: &CapabilitySpec,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    validate_authority_extensions(
+        AuthorityExtensionScope::CapabilitySpecification,
+        &specification.extensions,
+        validator,
+    )?;
     for input in &specification.input_ports {
-        reject_extensions("capability input port", &input.extensions)?;
+        validate_authority_extensions(
+            AuthorityExtensionScope::CapabilityInputPort,
+            &input.extensions,
+            validator,
+        )?;
     }
     for output in &specification.output_ports {
-        reject_extensions("capability output port", &output.extensions)?;
+        validate_authority_extensions(
+            AuthorityExtensionScope::CapabilityOutputPort,
+            &output.extensions,
+            validator,
+        )?;
     }
     Ok(())
 }
 
 fn reject_candidate_extensions(
     candidate: &CapabilityCandidate,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("capability candidate", &candidate.extensions)?;
-    reject_result_extensions(&candidate.result)
+    validate_authority_extensions(
+        AuthorityExtensionScope::CapabilityCandidate,
+        &candidate.extensions,
+        validator,
+    )?;
+    reject_result_extensions(&candidate.result, validator)
 }
 
-fn reject_result_extensions(result: &CapabilityResult) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("capability result", &result.extensions)?;
+fn reject_result_extensions(
+    result: &CapabilityResult,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    validate_authority_extensions(
+        AuthorityExtensionScope::CapabilityResult,
+        &result.extensions,
+        validator,
+    )?;
     for evidence in &result.evidence {
-        reject_evidence_extensions(evidence)?;
+        reject_evidence_extensions(evidence, validator)?;
     }
     match &result.outcome {
         CapabilityOutcome::Produced {
             outputs,
             extensions,
         } => {
-            reject_extensions("produced outcome", extensions)?;
+            validate_authority_extensions(
+                AuthorityExtensionScope::ProducedOutcome,
+                extensions,
+                validator,
+            )?;
             for output in outputs {
-                reject_extensions("named output", &output.extensions)?;
+                validate_authority_extensions(
+                    AuthorityExtensionScope::NamedOutput,
+                    &output.extensions,
+                    validator,
+                )?;
                 reject_fact_extensions("named output fact", &output.fact)?;
             }
             Ok(())
@@ -297,55 +563,86 @@ fn reject_result_extensions(result: &CapabilityResult) -> Result<(), AdmittedFil
             failure,
             extensions,
         } => {
-            reject_extensions("unable outcome", extensions)?;
-            reject_extensions("capability failure", &failure.extensions)
+            validate_authority_extensions(
+                AuthorityExtensionScope::UnableOutcome,
+                extensions,
+                validator,
+            )?;
+            validate_authority_extensions(
+                AuthorityExtensionScope::CapabilityFailure,
+                &failure.extensions,
+                validator,
+            )
         }
     }
 }
 
 fn reject_assessment_extensions(
     assessment: &ConformanceAssessment,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("conformance assessment", &assessment.extensions)?;
-    reject_conformance_authority_extensions(&assessment.authority)?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::ConformanceAssessment,
+        &assessment.extensions,
+        validator,
+    )?;
+    reject_conformance_authority_extensions(&assessment.authority, validator)?;
     for check in assessment.checks.values() {
-        reject_extensions("conformance check", &check.extensions)?;
+        validate_authority_extensions(
+            AuthorityExtensionScope::ConformanceCheck,
+            &check.extensions,
+            validator,
+        )?;
         for evidence in &check.evidence {
-            reject_evidence_extensions(evidence)?;
+            reject_evidence_extensions(evidence, validator)?;
         }
     }
     for evidence in &assessment.evidence {
-        reject_evidence_extensions(evidence)?;
+        reject_evidence_extensions(evidence, validator)?;
     }
     Ok(())
 }
 
 fn reject_conformance_authority_extensions(
     authority: &ConformanceAuthority,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("conformance authority", &authority.extensions)?;
-    reject_extensions("conformance attester", &authority.attester.extensions)
+    validate_authority_extensions(
+        AuthorityExtensionScope::ConformanceAuthority,
+        &authority.extensions,
+        validator,
+    )?;
+    validate_authority_extensions(
+        AuthorityExtensionScope::ConformanceAttester,
+        &authority.attester.extensions,
+        validator,
+    )
 }
 
 fn reject_observation_authority_extensions(
     authority: &ObservationAuthority,
+    validator: &mut dyn AuthorityExtensionValidator,
 ) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("observation authority", &authority.extensions)
+    validate_authority_extensions(
+        AuthorityExtensionScope::ObservationAuthority,
+        &authority.extensions,
+        validator,
+    )
 }
 
-fn reject_evidence_extensions(evidence: &EvidenceRef) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions("evidence reference", &evidence.extensions)
+fn reject_evidence_extensions(
+    evidence: &EvidenceRef,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    validate_authority_extensions(
+        AuthorityExtensionScope::EvidenceReference,
+        &evidence.extensions,
+        validator,
+    )
 }
 
 fn reject_fact_extensions(scope: &'static str, fact: &Fact) -> Result<(), AdmittedFileTreeError> {
-    reject_extensions(scope, &fact.extensions)
-}
-
-fn reject_extensions(
-    scope: &'static str,
-    extensions: &BTreeMap<String, serde_json::Value>,
-) -> Result<(), AdmittedFileTreeError> {
-    if let Some(key) = extensions.keys().next() {
+    if let Some(key) = fact.extensions.keys().next() {
         Err(AdmittedFileTreeError::UnhandledAuthorityExtension {
             scope,
             key: key.clone(),
@@ -353,6 +650,32 @@ fn reject_extensions(
     } else {
         Ok(())
     }
+}
+
+fn validate_authority_extensions(
+    scope: AuthorityExtensionScope,
+    extensions: &BTreeMap<String, serde_json::Value>,
+    validator: &mut dyn AuthorityExtensionValidator,
+) -> Result<(), AdmittedFileTreeError> {
+    for (key, value) in extensions {
+        match validator.validate(AuthorityExtension { scope, key, value }) {
+            Ok(()) => {}
+            Err(AuthorityExtensionError::Unhandled) => {
+                return Err(AdmittedFileTreeError::UnhandledAuthorityExtension {
+                    scope: scope.as_str(),
+                    key: key.clone(),
+                });
+            }
+            Err(AuthorityExtensionError::Invalid(detail)) => {
+                return Err(AdmittedFileTreeError::InvalidAuthorityExtension {
+                    scope: scope.as_str(),
+                    key: key.clone(),
+                    detail,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn reject_unhandled_raw_extensions(
@@ -398,13 +721,27 @@ pub enum AdmittedFileTreeError {
     Resolution(String),
     InvalidAuthority(String),
     FactAuthorityMismatch,
-    WrongValueKind { expected: String, actual: String },
+    WrongValueKind {
+        expected: String,
+        actual: String,
+    },
     UnhandledFactExtension(String),
     InvalidPayload(String),
     InvalidTree(FileTreeError),
     UnhandledTreeExtension(String),
-    UnhandledFileExtension { path: String, key: String },
-    UnhandledAuthorityExtension { scope: &'static str, key: String },
+    UnhandledFileExtension {
+        path: String,
+        key: String,
+    },
+    UnhandledAuthorityExtension {
+        scope: &'static str,
+        key: String,
+    },
+    InvalidAuthorityExtension {
+        scope: &'static str,
+        key: String,
+        detail: String,
+    },
 }
 
 impl fmt::Display for AdmittedFileTreeError {
@@ -449,6 +786,11 @@ impl fmt::Display for AdmittedFileTreeError {
             Self::UnhandledAuthorityExtension { scope, key } => write!(
                 formatter,
                 "{scope} has unhandled semantic extension `{}`",
+                key.escape_debug()
+            ),
+            Self::InvalidAuthorityExtension { scope, key, detail } => write!(
+                formatter,
+                "{scope} has invalid semantic extension `{}`: {detail}",
                 key.escape_debug()
             ),
         }
