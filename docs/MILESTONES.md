@@ -27,6 +27,8 @@
   authored-data-model provider and the native HTTP-to-Axum-to-Rust ecosystem.
 - A foundational v0 module dialect for target-independent composition of
   heterogeneous, content-identified operations with exact local symbols.
+- Target-independent module legality planning over the existing capability
+  graph, with exact occurrence binding and conservative full-coverage checks.
 
 ## Current boundary
 
@@ -52,10 +54,12 @@ receive no arguments or environment. Durable execution, credentials, retries,
 deployment, and sandboxing remain external-host concerns.
 
 The optional module dialect establishes the whole-unit semantic input needed
-by downstream code-generation consumers. It does not yet standardize a module
-pass manager, legality algorithm, target materializer, or serialized compiler
-request. Those remain consumer-driven follow-up work over the established
-capability and authority substrate.
+by downstream code-generation consumers. Its separate planning adapter now
+standardizes exact target legality, candidate semantic planning, and binding a
+selected route back to contained operation occurrences. It does not yet link
+contained inputs to authority, execute the route, rewrite the module, or
+materialize target files. Those remain consumer-driven follow-up work over the
+established capability and authority substrate.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative

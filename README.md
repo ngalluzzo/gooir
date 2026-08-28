@@ -37,6 +37,7 @@ The repository also contains narrow, optional support:
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `gooir-module-v0` | foundational heterogeneous module dialect; structural composition, not a kernel concept |
+| `gooir-module-planning` | target legality and exact occurrence binding over the existing capability graph |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
 Nothing domain-specific is installed by default. The CLI receives exact
@@ -85,6 +86,16 @@ facts from any explicitly declared dialect. Operations may declare local
 symbols and carry named, exactly typed references to other operations. The
 module adds no target, pass pipeline, implementation choice, execution, or
 domain meaning; those remain compiler request, capability, and host concerns.
+
+`gooir-module-planning` supplies the corresponding compiler-request layer. A
+target names one required result and the exact operation kinds legal in the
+final module. Candidate planning presents the unique contained kind set to the
+ordinary semantic planner; route binding then maps named capability input uses
+back to exact operation occurrences and refuses to legalize a module unless
+every illegal occurrence is covered. Legal operations remain outside that
+coverage. These content-identified documents perform no provider execution, invocation
+linking, admission, rewriting, or target materialization, and a contained fact
+never becomes independently admitted merely because its module was admitted.
 
 ## Writing a provider
 
