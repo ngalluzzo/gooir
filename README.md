@@ -58,6 +58,13 @@ exact copied offer artifact over local stdio, independently assesses it with an
 exact copied attester resource, and admits the result before linking a later
 step. Run `gooir --help` for the complete invocation.
 
+The in-memory compiler driver also accepts an exact capability/output-port
+goal. That form is required for product generation when an input bundle and
+multiple independent generators all use the same portable `ContentSet` kind:
+the kind describes the carrier, while the capability output names what the
+caller asked to run. Conservative route, offer, input, and attester selection
+still occurs beneath that named terminal.
+
 An attester-binding document is local host configuration, not a package offer:
 
 ```json

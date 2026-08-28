@@ -1,5 +1,9 @@
 # 0034 — A v1 derivation façade over the finite substrate
 
+> Decision 0043 supersedes the value-kind-only target statements below. A v1
+> request may now name either a value-kind query or an exact capability output;
+> the remaining selection, authority, outcome, and host boundaries still apply.
+
 Status: accepted
 
 ## Context

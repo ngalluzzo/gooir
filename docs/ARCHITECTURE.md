@@ -84,10 +84,13 @@ authority belongs to a host.
 ## Product façade
 
 `gooir-derive` is the 0.1 composition door over that finite substrate. A
-request names an exact target, admitted fact-authority references, and either
-an explicit complete selection or the conservative `UniqueOnly` policy. Route,
-offer, named-input, suite, and independent-attester choices are fixed before
-the first host effect.
+request names either a value-kind query or one exact capability output,
+admitted fact-authority references, and either an explicit complete selection
+or the conservative `UniqueOnly` policy. An exact output remains the graph
+root even when its value kind is already available initially; this prevents a
+portable artifact carrier such as `ContentSet` from erasing generator intent.
+Route, offer, named-input, suite, and independent-attester choices are fixed
+before the first host effect.
 
 Every accepted request ends in one remedy-preserving answer:
 
@@ -107,8 +110,9 @@ or move launch, transport, retry, or recovery policy into the semantic graph.
 `gooir-derive::CompilerDriver` is the ergonomic in-memory entry over that same
 façade. It stages source-observation admission and uses conservative complete
 selection so downstream hosts do not reconstruct plans, offers, named input
-bindings, invocations, or authority records. It adds no serialized compile
-protocol.
+bindings, invocations, or authority records. `compile_output` names a semantic
+terminal without fixing its provider or dependency route. It adds no
+serialized compile protocol.
 
 ## Execution boundary
 

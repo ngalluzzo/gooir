@@ -15,9 +15,10 @@ use gooir_capability::authority::{
     SourceObservation,
 };
 use gooir_package::PackageRegistry;
+use gooir_planning::RouteOutputRef;
 
 use crate::{
-    Answer, AttesterInventory, DerivationFacade, DerivationHost, DerivationLimits,
+    Answer, AttesterInventory, DerivationFacade, DerivationGoal, DerivationHost, DerivationLimits,
     DerivationRequest, FacadeError, Refusal,
 };
 
@@ -84,6 +85,27 @@ where
         target: ValueKindId,
         observations: impl IntoIterator<Item = SourceObservation>,
     ) -> Answer {
+        self.compile_goal(DerivationGoal::ValueKind(target), observations)
+    }
+
+    /// Admits the exact source observations and derives one named capability
+    /// output using conservative unique-only selection beneath that terminal.
+    ///
+    /// This is the product path for independently installed generators that
+    /// share a portable output kind such as `ContentSet`.
+    pub fn compile_output(
+        &mut self,
+        target: RouteOutputRef,
+        observations: impl IntoIterator<Item = SourceObservation>,
+    ) -> Answer {
+        self.compile_goal(DerivationGoal::CapabilityOutput(target), observations)
+    }
+
+    fn compile_goal(
+        &mut self,
+        target: DerivationGoal,
+        observations: impl IntoIterator<Item = SourceObservation>,
+    ) -> Answer {
         let mut observations = observations.into_iter();
         let mut staged = self.ledger.clone();
         let mut inputs = Vec::new();
@@ -133,7 +155,12 @@ where
             }
         }
 
-        let request = DerivationRequest::unique_only(target, inputs);
+        let request = match target {
+            DerivationGoal::ValueKind(target) => DerivationRequest::unique_only(target, inputs),
+            DerivationGoal::CapabilityOutput(target) => {
+                DerivationRequest::unique_output(target, inputs)
+            }
+        };
         let answer = self.facade.answer(
             &mut staged,
             &self.policy,

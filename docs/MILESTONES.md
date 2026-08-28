@@ -8,6 +8,8 @@
   roles and conservative extension preservation.
 - Content-bound package dependencies, resources, offers, exports, installed
   locks, and provider-neutral planning.
+- Exact capability/output planning and derivation goals, including generators
+  whose initial and terminal values share one portable artifact kind.
 - Explicit implementation linking and substitution-resistant invocation
   identity.
 - Independent conformance separated from contextual host admission.

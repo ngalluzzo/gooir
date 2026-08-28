@@ -499,7 +499,7 @@ mod tests {
         LoadLimits, PackageId, PackageManifest, PackageRegistry, PackageResource, ResourceDigest,
         ResourceName, ValueKindDeclaration, load_local_package, write_manifest,
     };
-    use gooir_planning::{PlanLimits, RouteId, RouteSelection, SemanticPlanner};
+    use gooir_planning::{PlanLimits, RouteId, RouteOutputRef, RouteSelection, SemanticPlanner};
     use serde_json::json;
 
     use super::*;
@@ -881,7 +881,7 @@ mod tests {
             with_offer,
         );
         let request = DerivationRequest {
-            target: fixture.output.value_kind.clone(),
+            target: DerivationGoal::ValueKind(fixture.output.value_kind.clone()),
             inputs: vec![fixture.invocation.inputs[0].admitted.clone()],
             selection: DerivationSelection::UniqueOnly {
                 extensions: BTreeMap::new(),
@@ -1149,7 +1149,10 @@ mod tests {
         );
         assert!(!produced.admitted.is_empty());
         let resolved = fixture.ledger.resolve(&produced.target).unwrap();
-        assert_eq!(resolved.fact.value_kind, fixture.request.target);
+        assert_eq!(
+            DerivationGoal::ValueKind(resolved.fact.value_kind.clone()),
+            fixture.request.target
+        );
         assert!(
             produced
                 .admitted
@@ -1161,13 +1164,15 @@ mod tests {
     #[test]
     fn facade_returns_an_already_admitted_target_without_host_effects() {
         let mut fixture = facade_fixture(true, true);
-        fixture.request.target = fixture
-            .ledger
-            .resolve(&fixture.request.inputs[0])
-            .unwrap()
-            .fact
-            .value_kind
-            .clone();
+        fixture.request.target = DerivationGoal::ValueKind(
+            fixture
+                .ledger
+                .resolve(&fixture.request.inputs[0])
+                .unwrap()
+                .fact
+                .value_kind
+                .clone(),
+        );
 
         let answer = fixture.facade.answer(
             &mut fixture.ledger,
@@ -1235,7 +1240,7 @@ mod tests {
     #[test]
     fn facade_reports_semantic_unreachability_without_host_effects() {
         let mut fixture = facade_fixture(true, true);
-        fixture.request.target = value_kind("unreachable");
+        fixture.request.target = DerivationGoal::ValueKind(value_kind("unreachable"));
 
         let answer = fixture.facade.answer(
             &mut fixture.ledger,
@@ -1246,6 +1251,34 @@ mod tests {
         );
 
         assert!(matches!(answer, Answer::Unreachable(_)));
+        assert_eq!(fixture.host.invocations, 0);
+        assert_eq!(fixture.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_unreachability_retains_the_exact_requested_output() {
+        let mut fixture = facade_fixture(true, true);
+        let target = RouteOutputRef {
+            capability: CapabilityId::new("test.capability", "transform", VERSION),
+            output_port: port("result"),
+            extensions: BTreeMap::new(),
+        };
+        fixture.request.target = DerivationGoal::CapabilityOutput(target.clone());
+        fixture.request.inputs.clear();
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        let Answer::Unreachable(unreachable) = answer else {
+            panic!("expected exact-output unreachability")
+        };
+        assert_eq!(unreachable.target_output, Some(target));
+        assert_eq!(unreachable.target, value_kind("result"));
         assert_eq!(fixture.host.invocations, 0);
         assert_eq!(fixture.host.assessments, 0);
     }
@@ -1434,7 +1467,7 @@ mod tests {
             extensions: BTreeMap::new(),
         };
         let request = DerivationRequest {
-            target: fixture.output.value_kind.clone(),
+            target: DerivationGoal::ValueKind(fixture.output.value_kind.clone()),
             inputs: vec![fixture.invocation.inputs[0].admitted.clone()],
             selection: DerivationSelection::Explicit {
                 selection: Box::new(ExplicitSelection {
