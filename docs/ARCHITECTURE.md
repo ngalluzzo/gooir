@@ -67,9 +67,11 @@ select an implementation.
 
 ### Admission
 
-The evidence plane that distinguishes proposed output, independent
-conformance, and local policy. A provider cannot attest itself into truth, and
-a passing suite does not bypass the admitting host's policy.
+The evidence plane that distinguishes proposed output, exact provider
+authority, independent conformance, and local policy. A host may explicitly
+authorize one complete measured provider offer, or require an independently
+produced assessment. A provider cannot grant itself either authority, and a
+passing suite does not bypass the admitting host's policy.
 
 ## Packages
 
@@ -89,15 +91,16 @@ admitted fact-authority references, and either an explicit complete selection
 or the conservative `UniqueOnly` policy. An exact output remains the graph
 root even when its value kind is already available initially; this prevents a
 portable artifact carrier such as `ContentSet` from erasing generator intent.
-Route, offer, named-input, suite, and independent-attester choices are fixed
-before the first host effect.
+Route, offer, named-input, and authority-basis choices are fixed before the
+first host effect. Every offer not directly authorized by the local policy
+also fixes a suite and independent attester.
 
 Every accepted request ends in one remedy-preserving answer:
 
 - `Produced`: the target and every materialized output are admitted authority
   records, never bare provider claims;
-- `Blocked`: semantic routes exist but lack an implementation or available
-  independent attester;
+- `Blocked`: semantic routes exist but lack an implementation or, for an offer
+  without direct provider authority, an available independent attester;
 - `Unreachable`: no declared semantic route reaches the target;
 - `Refused`: the request, selection, ambiguity, or local policy forbids the
   attempt; or
@@ -122,6 +125,13 @@ The substrate may emit and validate neutral documents such as:
 - a candidate;
 - an independent conformance assessment; and
 - an admission decision and authority record.
+
+Independent assessment is one admission basis, not a universal second
+implementation. An exact `CapabilityOffer` explicitly listed in the host's
+default-deny policy may instead be admitted through provider authority. This
+still validates exact inputs, invocation/result/candidate correlation, named
+outputs, content identities, and atomic admission. Installation, package
+ownership, or a provider's own claim never populates that policy list.
 
 An external host owns:
 
@@ -200,6 +210,10 @@ InstalledToolchain
   -> LocalPublisher
 ```
 
+`CompilerDriver` chooses the authority basis fixed by policy. Directly
+accepted exact offers require no attester resource. Every other selected offer
+still requires an available independent attester accepted by the same policy.
+
 Raw source paths enter only as one caller-authorized `ContentSet` observation.
 The CLI preserves their portable paths and binary bytes, records a documented
 raw-file SHA-256 evidence kind, and requires a complete explicit observation
@@ -259,15 +273,14 @@ machinery from those external ecosystems.
 
 ## Proven consumers
 
-The data-model ecosystem proves deterministic lifting/lowering, independent
-conformance, exact package installation, recoverable external execution, and
-the neutral provider SDK in its authored-data-model provider. Its remaining
-legacy providers stay on the compatibility helper. The native HTTP/Axum
-ecosystem proves named three-input lowering, a separate final content-set
-generator backend, exact admission, and repeated managed materialization with
-drift refusal and stale-file removal. Its three-hop plan retains offer-free
-package planning, typed inability, exact neutral provider documents, and
-independent attestation at every step.
+The data-model ecosystem proves deterministic lifting/lowering, exact package
+installation, recoverable external execution, and the neutral provider SDK in
+its authored-data-model provider. The native HTTP/Axum ecosystem proves named
+three-input lowering through a Rust-source-tree endpoint. It does not yet
+prove `ContentSet` generation or managed materialization. Those deterministic
+compiler paths may use explicit exact provider authority rather than
+handwritten shadow attesters. Independent assessment remains available when
+their host does not directly authorize an offer.
 The Fleetd direct-conversation ecosystem proves a stateful capability with two
 independent clients, a credential-free child command boundary, an independent
 attester, owner-fenced attempts, crash recovery, and deterministic terminal

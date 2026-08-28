@@ -2,9 +2,9 @@
 //!
 //! The driver accepts source observations rather than caller-authored
 //! authority records, stages their contextual admission, and delegates route,
-//! offer, input, attester, linking, execution, conformance, and derived
-//! admission decisions to [`DerivationFacade`]. It adds no serialized compile
-//! protocol and no execution transport.
+//! offer, input, authority-basis, linking, execution, and derived admission
+//! decisions to [`DerivationFacade`]. It adds no serialized compile protocol
+//! and no execution transport.
 
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -28,7 +28,7 @@ use crate::{
 /// A caller supplies semantic source observations and a target. The driver
 /// creates no offers, selections, invocations, or authority records directly;
 /// those remain products of the installed registry, façade linker, external
-/// host, independent assessment, and admission ledger respectively.
+/// host, exact policy, optional independent assessment, and admission ledger.
 #[derive(Debug)]
 pub struct CompilerDriver<H> {
     facade: DerivationFacade,
@@ -79,7 +79,8 @@ where
     /// Source admission is staged: an invalid or withheld observation leaves
     /// the driver's ledger unchanged. Once every source is admitted, the
     /// existing façade performs conservative complete selection, explicit
-    /// linking, host invocation, independent assessment, and admission.
+    /// linking, host invocation, direct-provider authorization or independent
+    /// assessment, and admission.
     pub fn compile(
         &mut self,
         target: ValueKindId,

@@ -299,6 +299,43 @@ impl Fixture {
         )
         .unwrap()
     }
+
+    fn provider_authorized_driver(&self) -> CompilerDriver<RecordingHost> {
+        let policy = self
+            .policy
+            .clone()
+            .with_accepted_provider_offers(self.registry.offers().cloned())
+            .unwrap();
+        CompilerDriver::new(
+            &self.registry,
+            policy,
+            [],
+            RecordingHost::producing(),
+            limits(),
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn compiler_driver_runs_exact_provider_authorized_hops_without_attesters() {
+    let fixture = Fixture::new(false);
+    let mut driver = fixture.provider_authorized_driver();
+
+    let answer = driver.compile(value_kind("target"), [fixture.source.clone()]);
+
+    let Answer::Produced(produced) = answer else {
+        panic!("expected exact provider-authorized production: {answer:?}")
+    };
+    assert_eq!(produced.admitted.len(), 2);
+    assert_eq!(driver.host().invocations.len(), 2);
+    assert_eq!(driver.host().assessments, 0);
+    assert!(
+        produced
+            .admitted
+            .iter()
+            .all(|record| matches!(record.basis, AuthorityBasis::ProviderAuthorized { .. }))
+    );
 }
 
 #[test]
@@ -325,14 +362,15 @@ fn multi_hop_compile_uses_installed_offers_linking_host_assessment_and_admission
     let answer = driver.compile(value_kind("target"), [fixture.source.clone()]);
 
     let Answer::Produced(produced) = answer else {
-        panic!("expected an admitted multi-hop target")
+        panic!("expected an admitted multi-hop target: {answer:?}")
     };
     assert_eq!(produced.admitted.len(), 2);
     let invocations = produced
         .admitted
         .iter()
         .map(|authority| match &authority.basis {
-            AuthorityBasis::Derived { invocation, .. } => invocation.as_ref(),
+            AuthorityBasis::Derived { invocation, .. }
+            | AuthorityBasis::ProviderAuthorized { invocation, .. } => invocation.as_ref(),
             AuthorityBasis::Source { .. } => panic!("produced outputs must have derived authority"),
         })
         .collect::<Vec<_>>();
@@ -413,7 +451,10 @@ fn compiler_driver_accepts_an_exact_capability_output_goal() {
             .admitted
             .last()
             .and_then(|authority| match &authority.basis {
-                AuthorityBasis::Derived { invocation, .. } => Some(&invocation.specification.id),
+                AuthorityBasis::Derived { invocation, .. }
+                | AuthorityBasis::ProviderAuthorized { invocation, .. } => {
+                    Some(&invocation.specification.id)
+                }
                 AuthorityBasis::Source { .. } => None,
             }),
         Some(&target.capability)

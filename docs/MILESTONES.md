@@ -12,11 +12,13 @@
   whose initial and terminal values share one portable artifact kind.
 - Explicit implementation linking and substitution-resistant invocation
   identity.
-- Independent conformance separated from contextual host admission.
+- Exact provider authority and independent conformance as disjoint,
+  default-deny contextual admission bases.
 - One bounded 0.1 derivation façade with exact complete selection and five
   remedy-preserving terminal answers.
 - One thin compiler driver that admits source observations and delegates the
-  complete multi-hop plan/link/invoke/assess/admit spine to that façade.
+  complete multi-hop plan/link/invoke/authorize-or-assess/admit spine to that
+  façade.
 - One bounded local stdio host over exact copied offer and attester resources,
   with explicit byte/deadline bounds and kill-plus-reap timeout behavior.
 - A neutral v1 attester assessment-request and authoring seam.
@@ -34,8 +36,9 @@
   contract, exact ledger gate, read-only check/diff, owner-fenced create or
   atomic clean replacement, canonical manifest, and uncertainty-aware receipt.
 - One generic managed-build CLI and public SDK composition from explicit raw
-  source paths through an exact installed capability output, independent
-  conformance and admission, to repeated `ContentSet` publication.
+  source paths through an exact installed capability output, exact provider
+  authority or independent conformance, admission, and repeated `ContentSet`
+  publication.
 
 ## Current boundary
 
@@ -49,8 +52,11 @@ The established 0.1 provider-authoring surface reduces neutral v1 providers to
 one typed function over named inputs and outputs while retaining exact binding,
 conservative extension handling, and protocol framing. The data-model and
 native HTTP/Axum ecosystems exercise materially different provider shapes.
-Artifact measurement, execution policy, conformance, and admission remain host
-concerns and are not implied by SDK stability.
+Artifact measurement, execution policy, provider qualification, conformance,
+and admission remain host concerns and are not implied by SDK stability. An
+installed offer becomes direct authority only when the host's default-deny
+policy explicitly names that complete measured offer; all other offers still
+require accepted independent conformance.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,

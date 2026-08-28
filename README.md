@@ -51,19 +51,20 @@ cargo run -q --bin gooir -- plan org.example/result@1.0.0 --package /path/to/pac
 
 `gooir compile` is the default executable composition over that inventory. It
 accepts only explicitly named package directories, source-observation JSON,
-one admission-policy JSON document, attester-binding JSON, a target, and
+one admission-policy JSON document, zero or more attester-binding documents, a target, and
 mandatory positive stdin/stdout/stderr/time bounds. It admits the observations,
 uses conservative complete selection, explicitly links each step, runs the
-exact copied offer artifact over local stdio, independently assesses it with an
-exact copied attester resource, and admits the result before linking a later
-step. Run `gooir --help` for the complete invocation.
+exact copied offer artifact over local stdio, and admits it through the
+authority basis fixed by policy before linking a later step. An exact offer
+explicitly accepted by policy needs no attester; every other offer requires an
+accepted independent assessment. Run `gooir --help` for the complete invocation.
 
 The in-memory compiler driver also accepts an exact capability/output-port
 goal. That form is required for product generation when an input bundle and
 multiple independent generators all use the same portable `ContentSet` kind:
 the kind describes the carrier, while the capability output names what the
-caller asked to run. Conservative route, offer, input, and attester selection
-still occurs beneath that named terminal.
+caller asked to run. Conservative route, offer, input, and authority-basis
+selection still occurs beneath that named terminal.
 
 An attester-binding document is local host configuration, not a package offer:
 
@@ -75,8 +76,11 @@ An attester-binding document is local host configuration, not a package offer:
 }
 ```
 
-The complete authority must be accepted by the policy, and its artifact digest
-must equal the copied installed resource bytes.
+When assessment is required, the complete attester authority must be accepted
+by policy, and its artifact digest must equal the copied installed resource
+bytes. Direct provider authority likewise matches the complete installed
+`CapabilityOffer`, including its measured artifact digest. Installation alone
+does not add that offer to policy.
 
 `gooir build` is the reference composition from raw portable files to a
 managed admitted artifact. It takes an installed toolchain, an exact capability
@@ -119,15 +123,16 @@ if let Answer::Produced(produced) = compiler.compile_output(exact_output, observ
 ```
 
 The CLI is only this reference host. Backend repositories ship independently
-versioned provider and attester packages that can be assembled into a
+versioned provider packages and, when their threat model requires
+per-candidate assessment, attester packages that can be assembled into a
 toolchain image; they do not need per-dialect CLIs. Other hosts can use the
 same Rust SDKs with their own execution and policy boundary.
 
 External ecosystems do not need to recreate the deployment assembly.
 `gooir-toolchain` accepts exact offer-free package manifests plus explicitly
-named final provider and attester resources, measures their bytes, derives
-ordinary provider offers, retains attesters only as host bindings, publishes a
-create-only toolchain image, and independently reloads it into a package
+named final provider resources and any required attester resources, measures
+their bytes, derives ordinary provider offers, retains attesters only as host
+bindings, publishes a create-only toolchain image, and independently reloads it into a package
 registry and attester inventory. It never discovers or builds executables,
 chooses a provider, or imports target meaning into GOOIR.
 
@@ -211,8 +216,9 @@ Three downstream repositories prove real consumer boundaries:
 - [`../gooir-datamodel`](../gooir-datamodel) is the data-model contract,
   provider pack, transformations, fixtures, and package/host proofs.
 - [`../gooir-http`](../gooir-http) is the independently expressive native HTTP,
-  Axum implementation, and Rust-source ecosystem with a three-hop neutral
-  provider plan ending in an admitted `ContentSet` and managed materialization.
+  Axum implementation, and Rust-source ecosystem. Its current plan ends at a
+  `RustSourceTree`; it does not yet prove `ContentSet` publication or managed
+  materialization.
 - [`../gooir-fleetd-direct-conversation`](../gooir-fleetd-direct-conversation)
   is the stateful Fleetd contract, two independent providers, attester,
   package proof, and crash-recoverable external host proof.

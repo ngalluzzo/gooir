@@ -14,13 +14,15 @@ use serde_json::Value;
 use crate::protocol::{
     ArtifactDigest, AuthorityRecordId, CandidateId, CapabilityCandidate, CapabilityInvocation,
     CapabilityOutcome, CapabilityResult, ConformanceSuiteId, EvidenceKindId, EvidenceRef,
-    ImplementationId, InvocationId, ProtocolError, ResultId,
+    ImplementationId, InvocationId, OfferId, ProtocolError, ResultId,
 };
 use crate::{Fact, FactId, PortName, ValueKindId, canonical_digest};
 
 pub const ASSESSMENT_PROTOCOL: &str = "org.gooi.authority.conformance-assessment/v1";
 pub const SOURCE_OBSERVATION_PROTOCOL: &str = "org.gooi.authority.source-observation/v1";
 pub const ADMISSION_POLICY_PROTOCOL: &str = "org.gooi.authority.admission-policy/v1";
+pub const PROVIDER_AUTHORITY_ADMISSION_POLICY_PROTOCOL: &str =
+    "org.gooi.authority.admission-policy/v2";
 pub const ADMISSION_DECISION_PROTOCOL: &str = "org.gooi.authority.admission-decision/v1";
 pub const AUTHORITY_RECORD_PROTOCOL: &str = "org.gooi.authority.record/v1";
 pub const ADMISSION_SNAPSHOT_PROTOCOL: &str = "org.gooi.authority.snapshot/v1";
@@ -452,8 +454,8 @@ impl ConformanceAssessment {
     }
 }
 
-/// A content-identified local allow-list of exact observation and conformance
-/// authorities.
+/// A content-identified local allow-list of exact observation, provider, and
+/// conformance authorities.
 ///
 /// An empty list is the default-deny policy. No authority is inferred from a
 /// suite name, an implementation name, or candidate-supplied evidence.
@@ -462,6 +464,10 @@ pub struct AdmissionPolicy {
     pub policy_id: AdmissionPolicyId,
     pub protocol: String,
     pub decision_authority: AdmissionAuthorityId,
+    /// Exact offers whose candidates this host accepts without a per-candidate
+    /// independent assessment. Installation alone never populates this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepted_provider_offers: Vec<crate::protocol::CapabilityOffer>,
     pub accepted_conformance: Vec<ConformanceAuthority>,
     pub accepted_observations: Vec<ObservationAuthority>,
     #[serde(default, flatten)]
@@ -486,6 +492,7 @@ impl AdmissionPolicy {
             policy_id: placeholder::<AdmissionPolicyId>(),
             protocol: ADMISSION_POLICY_PROTOCOL.to_owned(),
             decision_authority,
+            accepted_provider_offers: Vec::new(),
             accepted_conformance,
             accepted_observations,
             extensions,
@@ -493,6 +500,25 @@ impl AdmissionPolicy {
         policy.validate_structure()?;
         policy.policy_id = AdmissionPolicyId::parse(document_digest(&policy, "policy_id")?)?;
         Ok(policy)
+    }
+
+    /// Returns this policy with a replacement allow-list of exact provider
+    /// offers, recomputing its content identity.
+    pub fn with_accepted_provider_offers(
+        mut self,
+        offers: impl IntoIterator<Item = crate::protocol::CapabilityOffer>,
+    ) -> Result<Self, AuthorityError> {
+        self.accepted_provider_offers = offers.into_iter().collect();
+        self.protocol = if self.accepted_provider_offers.is_empty() {
+            ADMISSION_POLICY_PROTOCOL
+        } else {
+            PROVIDER_AUTHORITY_ADMISSION_POLICY_PROTOCOL
+        }
+        .to_owned();
+        self.policy_id = placeholder::<AdmissionPolicyId>();
+        self.validate_structure()?;
+        self.policy_id = AdmissionPolicyId::parse(document_digest(&self, "policy_id")?)?;
+        Ok(self)
     }
 
     pub fn validate(&self) -> Result<(), AuthorityError> {
@@ -510,6 +536,17 @@ impl AdmissionPolicy {
             .any(|accepted| accepted == authority)
     }
 
+    /// Whether this policy directly authorizes candidates from one complete,
+    /// exact provider offer.
+    #[must_use]
+    pub fn accepts_provider_offer(&self, offer: &crate::protocol::CapabilityOffer) -> bool {
+        self.protocol == PROVIDER_AUTHORITY_ADMISSION_POLICY_PROTOCOL
+            && self
+                .accepted_provider_offers
+                .iter()
+                .any(|accepted| accepted == offer)
+    }
+
     fn accepts_observation(&self, authority: &ObservationAuthority) -> bool {
         self.accepted_observations
             .iter()
@@ -517,9 +554,29 @@ impl AdmissionPolicy {
     }
 
     fn validate_structure(&self) -> Result<(), AuthorityError> {
-        validate_protocol(ADMISSION_POLICY_PROTOCOL, &self.protocol)?;
+        match self.protocol.as_str() {
+            ADMISSION_POLICY_PROTOCOL if self.accepted_provider_offers.is_empty() => {}
+            ADMISSION_POLICY_PROTOCOL => {
+                return Err(AuthorityError::ProviderAuthorityRequiresPolicyV2);
+            }
+            PROVIDER_AUTHORITY_ADMISSION_POLICY_PROTOCOL => {}
+            _ => {
+                return Err(AuthorityError::ProtocolMismatch {
+                    expected: "org.gooi.authority.admission-policy/v1 or org.gooi.authority.admission-policy/v2",
+                    actual: self.protocol.clone(),
+                });
+            }
+        }
         validate_exact_id("admission decision authority", &self.decision_authority)?;
         let mut seen = BTreeSet::new();
+        for offer in &self.accepted_provider_offers {
+            offer.validate()?;
+            let bytes = canonical_bytes(offer)?;
+            if !seen.insert(bytes) {
+                return Err(AuthorityError::DuplicateAcceptedAuthority);
+            }
+        }
+        seen.clear();
         for authority in &self.accepted_conformance {
             authority.validate()?;
             let bytes = canonical_bytes(authority)?;
@@ -542,6 +599,7 @@ impl AdmissionPolicy {
                 "policy_id",
                 "protocol",
                 "decision_authority",
+                "accepted_provider_offers",
                 "accepted_conformance",
                 "accepted_observations",
             ],
@@ -631,6 +689,13 @@ pub enum AdmissionSubject {
         #[serde(default, flatten)]
         extensions: BTreeMap<String, Value>,
     },
+    ProviderCandidate {
+        offer_id: OfferId,
+        candidate_id: CandidateId,
+        outputs: Vec<DecisionOutput>,
+        #[serde(default, flatten)]
+        extensions: BTreeMap<String, Value>,
+    },
 }
 
 impl AdmissionSubject {
@@ -657,15 +722,25 @@ impl AdmissionSubject {
                 outputs,
                 extensions,
                 ..
+            }
+            | Self::ProviderCandidate {
+                outputs,
+                extensions,
+                ..
             } => {
                 for output in outputs {
                     output.validate()?;
                 }
-                validate_extensions(
-                    "candidate admission subject",
-                    extensions,
-                    &["subject", "assessment_id", "candidate_id", "outputs"],
-                )
+                let reserved = match self {
+                    Self::Candidate { .. } => {
+                        &["subject", "assessment_id", "candidate_id", "outputs"][..]
+                    }
+                    Self::ProviderCandidate { .. } => {
+                        &["subject", "offer_id", "candidate_id", "outputs"][..]
+                    }
+                    Self::Observation { .. } => unreachable!(),
+                };
+                validate_extensions("candidate admission subject", extensions, reserved)
             }
         }
     }
@@ -721,6 +796,27 @@ impl AdmissionDecision {
         )
     }
 
+    pub fn validate_provider_candidate(
+        &self,
+        policy: &AdmissionPolicy,
+        invocation: &CapabilityInvocation,
+        result: &CapabilityResult,
+        candidate: &CapabilityCandidate,
+    ) -> Result<(), AuthorityError> {
+        invocation.validate()?;
+        result.validate_against(invocation)?;
+        candidate.validate_against(invocation)?;
+        if candidate.result != *result {
+            return Err(AuthorityError::ResultCandidateMismatch);
+        }
+        self.validate_provider_candidate_structure(policy, invocation, candidate)?;
+        validate_content_id(
+            "admission decision",
+            self.decision_id.as_str(),
+            &document_digest(self, "decision_id")?,
+        )
+    }
+
     fn derive_candidate(
         policy: &AdmissionPolicy,
         assessment: &ConformanceAssessment,
@@ -761,6 +857,27 @@ impl AdmissionDecision {
             extensions: BTreeMap::new(),
         };
         decision.validate_observation_structure(policy, observation)?;
+        decision.decision_id =
+            AdmissionDecisionId::parse(document_digest(&decision, "decision_id")?)?;
+        Ok(decision)
+    }
+
+    fn derive_provider_candidate(
+        policy: &AdmissionPolicy,
+        invocation: &CapabilityInvocation,
+        candidate: &CapabilityCandidate,
+    ) -> Result<Self, AuthorityError> {
+        let subject = provider_candidate_subject(invocation, candidate)?;
+        let verdict = expected_provider_candidate_verdict(policy, invocation);
+        let mut decision = Self {
+            decision_id: placeholder::<AdmissionDecisionId>(),
+            protocol: ADMISSION_DECISION_PROTOCOL.to_owned(),
+            policy_id: policy.policy_id.clone(),
+            subject,
+            verdict,
+            extensions: BTreeMap::new(),
+        };
+        decision.validate_provider_candidate_structure(policy, invocation, candidate)?;
         decision.decision_id =
             AdmissionDecisionId::parse(document_digest(&decision, "decision_id")?)?;
         Ok(decision)
@@ -815,6 +932,31 @@ impl AdmissionDecision {
         self.validate_envelope()
     }
 
+    fn validate_provider_candidate_structure(
+        &self,
+        policy: &AdmissionPolicy,
+        invocation: &CapabilityInvocation,
+        candidate: &CapabilityCandidate,
+    ) -> Result<(), AuthorityError> {
+        validate_protocol(ADMISSION_DECISION_PROTOCOL, &self.protocol)?;
+        policy.validate()?;
+        if self.policy_id != policy.policy_id {
+            return Err(AuthorityError::DecisionCorrelationMismatch);
+        }
+        if !provider_candidate_subject_matches(&self.subject, invocation, candidate)? {
+            return Err(AuthorityError::DecisionOutputMismatch);
+        }
+        self.subject.validate()?;
+        self.verdict.validate()?;
+        if !same_verdict_kind(
+            &self.verdict,
+            &expected_provider_candidate_verdict(policy, invocation),
+        ) {
+            return Err(AuthorityError::DecisionVerdictMismatch);
+        }
+        self.validate_envelope()
+    }
+
     fn validate_envelope(&self) -> Result<(), AuthorityError> {
         validate_extensions(
             "admission decision",
@@ -858,6 +1000,16 @@ pub enum AuthorityBasis {
         #[serde(default, flatten)]
         extensions: BTreeMap<String, Value>,
     },
+    ProviderAuthorized {
+        output_port: PortName,
+        invocation: Box<CapabilityInvocation>,
+        result: Box<CapabilityResult>,
+        candidate: Box<CapabilityCandidate>,
+        policy: Box<AdmissionPolicy>,
+        decision: Box<AdmissionDecision>,
+        #[serde(default, flatten)]
+        extensions: BTreeMap<String, Value>,
+    },
 }
 
 impl AuthorityRecord {
@@ -871,16 +1023,17 @@ impl AuthorityRecord {
 
     fn decision(&self) -> &AdmissionDecision {
         match &self.basis {
-            AuthorityBasis::Source { decision, .. } | AuthorityBasis::Derived { decision, .. } => {
-                decision.as_ref()
-            }
+            AuthorityBasis::Source { decision, .. }
+            | AuthorityBasis::Derived { decision, .. }
+            | AuthorityBasis::ProviderAuthorized { decision, .. } => decision.as_ref(),
         }
     }
 
     fn invocation(&self) -> Option<&CapabilityInvocation> {
         match &self.basis {
             AuthorityBasis::Source { .. } => None,
-            AuthorityBasis::Derived { invocation, .. } => Some(invocation.as_ref()),
+            AuthorityBasis::Derived { invocation, .. }
+            | AuthorityBasis::ProviderAuthorized { invocation, .. } => Some(invocation.as_ref()),
         }
     }
 
@@ -938,6 +1091,38 @@ impl AuthorityRecord {
                 result: Box::new(result),
                 candidate: Box::new(candidate),
                 assessment: Box::new(assessment),
+                policy: Box::new(policy),
+                decision: Box::new(decision),
+                extensions: BTreeMap::new(),
+            },
+            extensions: BTreeMap::new(),
+        };
+        record.validate_structure()?;
+        record.authority_record_id =
+            AuthorityRecordId::parse(document_digest(&record, "authority_record_id")?)
+                .map_err(|error| AuthorityError::InvalidDigest(error.0))?;
+        Ok(record)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_provider_authorized(
+        output_port: PortName,
+        fact: Fact,
+        invocation: CapabilityInvocation,
+        result: CapabilityResult,
+        candidate: CapabilityCandidate,
+        policy: AdmissionPolicy,
+        decision: AdmissionDecision,
+    ) -> Result<Self, AuthorityError> {
+        let mut record = Self {
+            authority_record_id: placeholder_authority_record_id(),
+            protocol: AUTHORITY_RECORD_PROTOCOL.to_owned(),
+            fact,
+            basis: AuthorityBasis::ProviderAuthorized {
+                output_port,
+                invocation: Box::new(invocation),
+                result: Box::new(result),
+                candidate: Box::new(candidate),
                 policy: Box::new(policy),
                 decision: Box::new(decision),
                 extensions: BTreeMap::new(),
@@ -1025,6 +1210,47 @@ impl AuthorityRecord {
                         "result",
                         "candidate",
                         "assessment",
+                        "policy",
+                        "decision",
+                    ],
+                )
+            }
+            AuthorityBasis::ProviderAuthorized {
+                output_port,
+                invocation,
+                result,
+                candidate,
+                policy,
+                decision,
+                extensions,
+            } => {
+                invocation.validate()?;
+                result.validate_against(invocation)?;
+                candidate.validate_against(invocation)?;
+                if candidate.result != **result {
+                    return Err(AuthorityError::ResultCandidateMismatch);
+                }
+                policy.validate()?;
+                decision.validate_provider_candidate(policy, invocation, result, candidate)?;
+                if !decision.verdict.is_admit() {
+                    return Err(AuthorityError::WithheldRecord);
+                }
+                let matching = candidate_outputs(candidate)?
+                    .iter()
+                    .filter(|output| output.port == *output_port && output.fact == self.fact)
+                    .count();
+                if matching != 1 {
+                    return Err(AuthorityError::AuthorityOutputMismatch);
+                }
+                validate_extensions(
+                    "provider-authorized authority basis",
+                    extensions,
+                    &[
+                        "kind",
+                        "output_port",
+                        "invocation",
+                        "result",
+                        "candidate",
                         "policy",
                         "decision",
                     ],
@@ -1222,6 +1448,72 @@ impl AdmissionLedger {
         self.commit_admission(decision, records, links)
     }
 
+    /// Validate and atomically admit every output of a candidate produced by
+    /// an exact provider offer that the local policy directly accepts.
+    #[allow(clippy::too_many_lines)]
+    pub fn admit_provider_candidate(
+        &mut self,
+        policy: &AdmissionPolicy,
+        invocation: &CapabilityInvocation,
+        result: &CapabilityResult,
+        candidate: &CapabilityCandidate,
+    ) -> Result<AdmissionOutcome, AuthorityError> {
+        policy.validate()?;
+        invocation.validate()?;
+        result.validate_against(invocation)?;
+        candidate.validate_against(invocation)?;
+        if candidate.result != *result {
+            return Err(AuthorityError::ResultCandidateMismatch);
+        }
+
+        for input in &invocation.inputs {
+            let resolved = self.resolve(&input.admitted)?;
+            if resolved.fact != &input.fact {
+                return Err(AuthorityError::LinkedInputMismatch(input.port.clone()));
+            }
+        }
+
+        let decision = AdmissionDecision::derive_provider_candidate(policy, invocation, candidate)?;
+        decision.validate_provider_candidate(policy, invocation, result, candidate)?;
+        if !decision.verdict.is_admit() {
+            return Ok(AdmissionOutcome::Withheld { decision });
+        }
+
+        let outputs = candidate_outputs(candidate)?;
+        let mut records = Vec::with_capacity(outputs.len());
+        let mut links = Vec::with_capacity(outputs.len());
+
+        for output in outputs {
+            output
+                .fact
+                .validate()
+                .map_err(|error| AuthorityError::InvalidDocument {
+                    document: "candidate output fact",
+                    detail: error.to_string(),
+                })?;
+            let record = AuthorityRecord::new_provider_authorized(
+                output.port.clone(),
+                output.fact.clone(),
+                invocation.clone(),
+                result.clone(),
+                candidate.clone(),
+                policy.clone(),
+                decision.clone(),
+            )?;
+            links.push(AdmittedLink {
+                port: Some(output.port.clone()),
+                reference: crate::protocol::AdmittedFactRef {
+                    fact_id: output.fact.id.clone(),
+                    authority_record_id: record.authority_record_id().clone(),
+                    extensions: BTreeMap::new(),
+                },
+            });
+            records.push(record);
+        }
+
+        self.commit_admission(decision, records, links)
+    }
+
     fn commit_admission(
         &mut self,
         decision: AdmissionDecision,
@@ -1241,7 +1533,8 @@ impl AdmissionLedger {
             }
             let expected_port = match &record.basis {
                 AuthorityBasis::Source { .. } => None,
-                AuthorityBasis::Derived { output_port, .. } => Some(output_port),
+                AuthorityBasis::Derived { output_port, .. }
+                | AuthorityBasis::ProviderAuthorized { output_port, .. } => Some(output_port),
             };
             if link.port.as_ref() != expected_port {
                 return Err(AuthorityError::StagedAdmissionMismatch);
@@ -1510,6 +1803,8 @@ pub enum AuthorityError {
     ConformanceSuiteMismatch,
     AttesterNotIndependent,
     DuplicateAcceptedAuthority,
+    ProviderAuthorityRequiresPolicyV2,
+    ProviderOfferNotAccepted(OfferId),
     ResultCandidateMismatch,
     DecisionCorrelationMismatch,
     DecisionOutputMismatch,
@@ -1568,6 +1863,22 @@ fn expected_candidate_verdict(
     }
 }
 
+fn expected_provider_candidate_verdict(
+    policy: &AdmissionPolicy,
+    invocation: &CapabilityInvocation,
+) -> AdmissionVerdict {
+    if policy.accepts_provider_offer(&invocation.selection.offer) {
+        AdmissionVerdict::Admit {
+            extensions: BTreeMap::new(),
+        }
+    } else {
+        AdmissionVerdict::Withhold {
+            reason: AdmissionDenial::AuthorityNotAccepted,
+            extensions: BTreeMap::new(),
+        }
+    }
+}
+
 fn expected_observation_verdict(
     policy: &AdmissionPolicy,
     observation: &SourceObservation,
@@ -1616,6 +1927,25 @@ fn candidate_subject(
     })
 }
 
+fn provider_candidate_subject(
+    invocation: &CapabilityInvocation,
+    candidate: &CapabilityCandidate,
+) -> Result<AdmissionSubject, AuthorityError> {
+    Ok(AdmissionSubject::ProviderCandidate {
+        offer_id: invocation.selection.offer.offer_id.clone(),
+        candidate_id: candidate.candidate_id.clone(),
+        outputs: candidate_outputs(candidate)?
+            .iter()
+            .map(|output| DecisionOutput {
+                port: output.port.clone(),
+                fact_id: output.fact.id.clone(),
+                extensions: BTreeMap::new(),
+            })
+            .collect(),
+        extensions: BTreeMap::new(),
+    })
+}
+
 fn candidate_subject_matches(
     subject: &AdmissionSubject,
     assessment: &ConformanceAssessment,
@@ -1631,6 +1961,30 @@ fn candidate_subject_matches(
         return Ok(false);
     };
     if assessment_id != &assessment.assessment_id || candidate_id != &candidate.candidate_id {
+        return Ok(false);
+    }
+    let expected = candidate_outputs(candidate)?;
+    Ok(outputs.len() == expected.len()
+        && outputs.iter().zip(expected).all(|(actual, expected)| {
+            actual.port == expected.port && actual.fact_id == expected.fact.id
+        }))
+}
+
+fn provider_candidate_subject_matches(
+    subject: &AdmissionSubject,
+    invocation: &CapabilityInvocation,
+    candidate: &CapabilityCandidate,
+) -> Result<bool, AuthorityError> {
+    let AdmissionSubject::ProviderCandidate {
+        offer_id,
+        candidate_id,
+        outputs,
+        ..
+    } = subject
+    else {
+        return Ok(false);
+    };
+    if offer_id != &invocation.selection.offer.offer_id || candidate_id != &candidate.candidate_id {
         return Ok(false);
     }
     let expected = candidate_outputs(candidate)?;
@@ -2053,6 +2407,13 @@ mod tests {
         .unwrap()
     }
 
+    fn provider_policy(invocation: &CapabilityInvocation, name: &str) -> AdmissionPolicy {
+        AdmissionPolicy::deny_all(admission_authority(name), BTreeMap::new())
+            .unwrap()
+            .with_accepted_provider_offers([invocation.selection.offer.clone()])
+            .unwrap()
+    }
+
     fn admitted_links(outcome: AdmissionOutcome) -> Vec<AdmittedLink> {
         let AdmissionOutcome::Admitted { links, .. } = outcome else {
             panic!("fixture must admit")
@@ -2246,6 +2607,122 @@ mod tests {
             ),
             (3, 2, 3)
         );
+    }
+
+    #[test]
+    fn empty_provider_authority_preserves_the_existing_policy_shape() {
+        let policy =
+            AdmissionPolicy::deny_all(admission_authority("stable"), BTreeMap::new()).unwrap();
+        let encoded = serde_json::to_value(&policy).unwrap();
+        assert!(encoded.get("accepted_provider_offers").is_none());
+        let decoded: AdmissionPolicy = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, policy);
+        assert!(decoded.accepted_provider_offers.is_empty());
+    }
+
+    #[test]
+    fn legacy_v1_extension_cannot_be_reinterpreted_as_provider_authority() {
+        let fact = source_fact(1);
+        let observed = observation(fact.clone(), "workspace", '1');
+        let mut ledger = AdmissionLedger::new();
+        let source_ref = admit_source(&mut ledger, &observed, "source");
+        let invocation = invocation(source_ref, fact, 1);
+        let mut legacy = serde_json::to_value(
+            AdmissionPolicy::deny_all(admission_authority("legacy"), BTreeMap::new()).unwrap(),
+        )
+        .unwrap();
+        legacy["accepted_provider_offers"] =
+            serde_json::to_value([invocation.selection.offer.clone()]).unwrap();
+        let mut decoded: AdmissionPolicy = serde_json::from_value(legacy).unwrap();
+        decoded.policy_id = placeholder::<AdmissionPolicyId>();
+        decoded.policy_id =
+            AdmissionPolicyId::parse(document_digest(&decoded, "policy_id").unwrap()).unwrap();
+
+        assert_eq!(decoded.protocol, ADMISSION_POLICY_PROTOCOL);
+        assert!(!decoded.accepts_provider_offer(&invocation.selection.offer));
+        assert!(matches!(
+            decoded.validate(),
+            Err(AuthorityError::ProviderAuthorityRequiresPolicyV2)
+        ));
+    }
+
+    #[test]
+    fn exact_provider_offer_admits_without_an_assessment() {
+        let fact = source_fact(1);
+        let observed = observation(fact.clone(), "workspace", '1');
+        let mut ledger = AdmissionLedger::new();
+        let source_ref = admit_source(&mut ledger, &observed, "source");
+        let invocation = invocation(source_ref, fact, 2);
+        let (result, candidate) = produced_chain(&invocation, &[10, 20]);
+        let policy = provider_policy(&invocation, "provider");
+
+        let links = admitted_links(
+            ledger
+                .admit_provider_candidate(&policy, &invocation, &result, &candidate)
+                .unwrap(),
+        );
+        assert_eq!(links.len(), 2);
+        for link in &links {
+            let resolved = ledger.resolve(&link.reference).unwrap();
+            assert!(matches!(
+                resolved.authority.basis,
+                AuthorityBasis::ProviderAuthorized { .. }
+            ));
+        }
+
+        let snapshot = ledger.export().unwrap();
+        let rebuilt = AdmissionLedger::rebuild(&snapshot).unwrap();
+        assert!(rebuilt.resolve(&links[0].reference).is_ok());
+    }
+
+    #[test]
+    fn provider_admission_is_exact_and_default_deny() {
+        let fact = source_fact(1);
+        let observed = observation(fact.clone(), "workspace", '1');
+        let mut ledger = AdmissionLedger::new();
+        let source_ref = admit_source(&mut ledger, &observed, "source");
+        let invocation = invocation(source_ref, fact, 1);
+        let (result, candidate) = produced_chain(&invocation, &[10]);
+        let denied =
+            AdmissionPolicy::deny_all(admission_authority("deny-provider"), BTreeMap::new())
+                .unwrap();
+
+        let before = ledger.clone();
+        assert!(matches!(
+            ledger
+                .admit_provider_candidate(&denied, &invocation, &result, &candidate)
+                .unwrap(),
+            AdmissionOutcome::Withheld { .. }
+        ));
+        assert_eq!(ledger, before);
+
+        let wrong_artifact = crate::protocol::CapabilityOffer::new(
+            invocation.selection.offer.implementation.clone(),
+            ArtifactDigest::parse(sha('f')).unwrap(),
+            invocation.specification.id.clone(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let wrong_policy = denied
+            .clone()
+            .with_accepted_provider_offers([wrong_artifact])
+            .unwrap();
+        assert!(matches!(
+            ledger
+                .admit_provider_candidate(&wrong_policy, &invocation, &result, &candidate)
+                .unwrap(),
+            AdmissionOutcome::Withheld { .. }
+        ));
+        assert_eq!(ledger, before);
+
+        let duplicate = denied.with_accepted_provider_offers([
+            invocation.selection.offer.clone(),
+            invocation.selection.offer.clone(),
+        ]);
+        assert!(matches!(
+            duplicate,
+            Err(AuthorityError::DuplicateAcceptedAuthority)
+        ));
     }
 
     #[test]

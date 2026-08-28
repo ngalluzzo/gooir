@@ -1,5 +1,10 @@
 # Decision 0012: candidates require independent conformance
 
+> Decision 0045 narrows this universal requirement to candidates whose exact
+> provider offer is not directly authorized by the admitting host's policy.
+> The independent-conformance rule below remains unchanged for untrusted and
+> agent-produced output.
+
 ## Context
 
 GOOIR can bind a missing typed capability to exact input facts, and Fleetd can
