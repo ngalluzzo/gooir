@@ -23,7 +23,7 @@ use gooir_capability::{
 use gooir_cli::{known_value_kinds, resolve_value_kind};
 use gooir_derive::{
     Answer as CompileAnswer, CompilerDriver, DerivationLimits, LocalAttesterBinding,
-    LocalStdioHost, LocalStdioLimits, Refusal,
+    LocalProviderEnvironmentBinding, LocalStdioHost, LocalStdioLimits, Refusal,
 };
 use gooir_file_tree_build::{FileTreeBuildAnswer, FileTreeBuildDriver};
 use gooir_file_tree_materializer::{
@@ -47,12 +47,14 @@ gooir — compile and build over an explicitly installed capability graph
 
 Compiler driver (GOOIR 0.1):
   gooir compile <target> --package DIR --policy JSON [--observation JSON]
-      [--attester JSON] --stdin-bytes N --stdout-bytes N --stderr-bytes N
+      [--attester JSON] [--provider-environment JSON]
+      --stdin-bytes N --stdout-bytes N --stderr-bytes N
       --timeout-ms N [--json]
 
 Physical FileTree build host:
   gooir build <destination> --package DIR --policy JSON [--observation JSON]
-      [--attester JSON] --stdin-bytes N --stdout-bytes N --stderr-bytes N
+      [--attester JSON] [--provider-environment JSON]
+      --stdin-bytes N --stdout-bytes N --stderr-bytes N
       --timeout-ms N --max-files N --max-directories N --max-file-bytes N
       --max-total-bytes N --directory-mode OCTAL --file-mode OCTAL
 
@@ -61,13 +63,16 @@ one complete route/offer/attester selection, invokes exact copied package
 artifacts over bounded local stdio, independently assesses every candidate,
 and admits each step before linking the next. Provider artifacts come only
 from installed offers. Each attester binding names a complete authority plus
-an exact installed package resource with the same copied digest. N must be
-positive for every bound. Nothing is scanned, resolved through PATH, or
+an exact installed package resource with the same copied digest. A provider
+environment document binds explicit string values to one exact installed
+offer; unbound providers and every attester still receive an empty environment.
+Supplying PATH or another ambient locator explicitly grants that discovery
+authority. N must be positive for every bound. Nothing is scanned or
 materialized to a target-specific file. JSON output is the existing derivation
-Answer shape, not a new stable compile receipt protocol.
-Policy, observation, and attester inputs must be regular files: no symlinks,
-FIFOs, or directories. Each is bounded to 16 MiB and their aggregate to
-64 MiB before JSON decoding.
+Answer shape, not a new stable compile receipt protocol. Policy, observation,
+attester, and provider-environment inputs must be regular files: no symlinks,
+FIFOs, or directories. Each is bounded to 16 MiB and their aggregate to 64 MiB
+before JSON decoding.
 
 The build command fixes the semantic target to the FileTree dialect, applies
 the same compiler and admission path, then atomically publishes to one absent
@@ -140,6 +145,7 @@ struct CompileInputLimits {
     max_packages: usize,
     max_observations: usize,
     max_attesters: usize,
+    max_provider_environments: usize,
     max_documents: usize,
     max_document_bytes: u64,
     max_total_document_bytes: u64,
@@ -151,10 +157,12 @@ fn compile_input_limits() -> CompileInputLimits {
         max_packages: MAX_COMPILE_PACKAGES,
         max_observations: derivation.max_inputs.get(),
         max_attesters: derivation.max_attesters.get(),
+        max_provider_environments: derivation.max_inputs.get(),
         max_documents: derivation
             .max_inputs
             .get()
             .saturating_add(derivation.max_attesters.get())
+            .saturating_add(derivation.max_inputs.get())
             .saturating_add(1),
         max_document_bytes: MAX_COMPILE_DOCUMENT_BYTES,
         max_total_document_bytes: MAX_COMPILE_TOTAL_DOCUMENT_BYTES,
@@ -181,6 +189,7 @@ struct LocalExecutionArguments {
     policy: PathBuf,
     observations: Vec<PathBuf>,
     attesters: Vec<PathBuf>,
+    provider_environments: Vec<PathBuf>,
     stdio_limits: LocalStdioLimits,
     input_limits: CompileInputLimits,
 }
@@ -191,6 +200,7 @@ struct LocalExecutionArgumentSlots {
     policy: Option<PathBuf>,
     observations: Vec<PathBuf>,
     attesters: Vec<PathBuf>,
+    provider_environments: Vec<PathBuf>,
     stdin_bytes: Option<NonZeroUsize>,
     stdout_bytes: Option<NonZeroUsize>,
     stderr_bytes: Option<NonZeroUsize>,
@@ -373,7 +383,13 @@ impl LocalExecutionArgumentSlots {
                 "--policy",
             )?,
             "--observation" => {
-                ensure_document_slot(&self.observations, &self.attesters, input_limits, command)?;
+                ensure_document_slot(
+                    &self.observations,
+                    &self.attesters,
+                    &self.provider_environments,
+                    input_limits,
+                    command,
+                )?;
                 ensure_path_slot(
                     self.observations.len(),
                     input_limits.max_observations,
@@ -384,7 +400,13 @@ impl LocalExecutionArgumentSlots {
                     .push(flag_path(args, index, command, "--observation")?);
             }
             "--attester" => {
-                ensure_document_slot(&self.observations, &self.attesters, input_limits, command)?;
+                ensure_document_slot(
+                    &self.observations,
+                    &self.attesters,
+                    &self.provider_environments,
+                    input_limits,
+                    command,
+                )?;
                 ensure_path_slot(
                     self.attesters.len(),
                     input_limits.max_attesters,
@@ -393,6 +415,27 @@ impl LocalExecutionArgumentSlots {
                 )?;
                 self.attesters
                     .push(flag_path(args, index, command, "--attester")?);
+            }
+            "--provider-environment" => {
+                ensure_document_slot(
+                    &self.observations,
+                    &self.attesters,
+                    &self.provider_environments,
+                    input_limits,
+                    command,
+                )?;
+                ensure_path_slot(
+                    self.provider_environments.len(),
+                    input_limits.max_provider_environments,
+                    command,
+                    "provider environment documents",
+                )?;
+                self.provider_environments.push(flag_path(
+                    args,
+                    index,
+                    command,
+                    "--provider-environment",
+                )?);
             }
             "--stdin-bytes" => set_once(
                 &mut self.stdin_bytes,
@@ -445,6 +488,7 @@ impl LocalExecutionArgumentSlots {
             policy: required(self.policy, command, "--policy")?,
             observations: self.observations,
             attesters: self.attesters,
+            provider_environments: self.provider_environments,
             stdio_limits: LocalStdioLimits {
                 max_stdin_bytes: required(self.stdin_bytes, command, "--stdin-bytes")?,
                 max_stdout_bytes: required(self.stdout_bytes, command, "--stdout-bytes")?,
@@ -461,6 +505,7 @@ impl CompileInputLimits {
         if self.max_packages == 0
             || self.max_observations == 0
             || self.max_attesters == 0
+            || self.max_provider_environments == 0
             || self.max_documents == 0
             || self.max_document_bytes == 0
             || self.max_total_document_bytes == 0
@@ -520,12 +565,14 @@ fn ensure_path_slot(
 fn ensure_document_slot(
     observations: &[PathBuf],
     attesters: &[PathBuf],
+    provider_environments: &[PathBuf],
     limits: CompileInputLimits,
     command: &str,
 ) -> Result<(), String> {
     let current = observations
         .len()
         .checked_add(attesters.len())
+        .and_then(|count| count.checked_add(provider_environments.len()))
         .and_then(|count| count.checked_add(1))
         .ok_or_else(|| format!("gooir {command} document count overflowed"))?;
     if current >= limits.max_documents {
@@ -567,6 +614,7 @@ struct LoadedLocalExecution {
     policy: AdmissionPolicy,
     observations: Vec<SourceObservation>,
     bindings: Vec<LocalAttesterBinding>,
+    provider_environments: Vec<LocalProviderEnvironmentBinding>,
     stdio_limits: LocalStdioLimits,
 }
 
@@ -589,11 +637,19 @@ impl LoadedLocalExecution {
                 &mut budget,
             )?);
         }
+        let mut provider_environments = Vec::with_capacity(arguments.provider_environments.len());
+        for path in &arguments.provider_environments {
+            provider_environments.push(read_execution_document::<LocalProviderEnvironmentBinding>(
+                path,
+                &mut budget,
+            )?);
+        }
         Ok(Self {
             registry,
             policy,
             observations,
             bindings,
+            provider_environments,
             stdio_limits: arguments.stdio_limits,
         })
     }
@@ -601,8 +657,13 @@ impl LoadedLocalExecution {
     fn into_compiler(
         self,
     ) -> Result<(CompilerDriver<LocalStdioHost>, Vec<SourceObservation>), String> {
-        let host = LocalStdioHost::new(&self.registry, self.bindings, self.stdio_limits)
-            .map_err(|error| error.to_string())?;
+        let host = LocalStdioHost::new_with_provider_environments(
+            &self.registry,
+            self.bindings,
+            self.provider_environments,
+            self.stdio_limits,
+        )
+        .map_err(|error| error.to_string())?;
         let authorities = host.authorities().cloned().collect::<Vec<_>>();
         let driver = CompilerDriver::new(
             &self.registry,
@@ -1262,7 +1323,9 @@ mod tests {
     fn help_separates_package_planning_from_legacy_execution() {
         assert!(USAGE.contains("Compiler driver (GOOIR 0.1)"));
         assert!(USAGE.contains("exact copied package"));
-        assert!(USAGE.contains("N must be\npositive"));
+        assert!(USAGE.contains("N must be positive"));
+        assert!(USAGE.contains("--provider-environment JSON"));
+        assert!(USAGE.contains("unbound providers and every attester"));
         assert!(USAGE.contains("not a new stable compile receipt protocol"));
         assert!(USAGE.contains("Physical FileTree build host"));
         assert!(USAGE.contains("gooir build <destination>"));
@@ -1326,6 +1389,8 @@ mod tests {
             "observation.json",
             "--attester",
             "attester.json",
+            "--provider-environment",
+            "provider-environment.json",
             "--stdin-bytes",
             "1024",
             "--stdout-bytes",
@@ -1351,6 +1416,8 @@ mod tests {
             "observation.json",
             "--attester",
             "attester.json",
+            "--provider-environment",
+            "provider-environment.json",
             "--stdin-bytes",
             "1024",
             "--stdout-bytes",
@@ -1384,7 +1451,8 @@ mod tests {
             max_packages: 4,
             max_observations: 4,
             max_attesters: 4,
-            max_documents: 9,
+            max_provider_environments: 4,
+            max_documents: 13,
             max_document_bytes,
             max_total_document_bytes,
         }
@@ -1399,6 +1467,10 @@ mod tests {
             [PathBuf::from("observation.json")]
         );
         assert_eq!(parsed.execution.attesters, [PathBuf::from("attester.json")]);
+        assert_eq!(
+            parsed.execution.provider_environments,
+            [PathBuf::from("provider-environment.json")]
+        );
         assert_eq!(parsed.execution.stdio_limits.max_stdin_bytes.get(), 1024);
         assert_eq!(parsed.execution.stdio_limits.max_stdout_bytes.get(), 2048);
         assert_eq!(parsed.execution.stdio_limits.max_stderr_bytes.get(), 512);
@@ -1546,13 +1618,13 @@ mod tests {
         );
 
         let mut aggregate_limited = compile_input_limits();
-        aggregate_limited.max_documents = 3;
+        aggregate_limited.max_documents = 4;
         let mut documents = compile_args();
         documents.extend(["--attester".to_owned(), "second.json".to_owned()]);
         assert!(
             CompileArguments::parse(&documents, aggregate_limited)
                 .unwrap_err()
-                .contains("aggregate count limit 3")
+                .contains("aggregate count limit 4")
         );
     }
 
@@ -1562,6 +1634,7 @@ mod tests {
         let policy = directory.path().join("policy.json");
         let observation = directory.path().join("observation.json");
         let attester = directory.path().join("attester.json");
+        let provider_environment = directory.path().join("provider-environment.json");
         fs::write(
             &policy,
             br#"{"accepted_conformance":[{"extensions":{"same":1,"same":2}}]}"#,
@@ -1571,6 +1644,14 @@ mod tests {
         fs::write(
             &attester,
             br#"{"authority":{"extensions":{"same":1,"same":2}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            &provider_environment,
+            format!(
+                r#"{{"offer":"sha256:{}","variables":{{"same":"1","same":"2"}}}}"#,
+                "a".repeat(64)
+            ),
         )
         .unwrap();
 
@@ -1587,6 +1668,11 @@ mod tests {
             .unwrap_err(),
             read_execution_document::<LocalAttesterBinding>(
                 &attester,
+                &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
+            )
+            .unwrap_err(),
+            read_execution_document::<LocalProviderEnvironmentBinding>(
+                &provider_environment,
                 &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
             )
             .unwrap_err(),

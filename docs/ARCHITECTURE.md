@@ -139,10 +139,15 @@ universal runtime. It dispatches provider artifacts only by exact installed
 `OfferId` to `PackageRegistry::offer_artifact` copied bytes. Attesters are
 explicit complete `ConformanceAuthority` bindings to copied package resources
 with the same digest. Artifacts run from private temporary paths with no
-arguments, environment, or `PATH` lookup under mandatory positive byte and
-deadline bounds; timeout kills and reaps the child. The child retains the
-caller's ordinary OS authority, so this is not a sandbox, credential boundary,
-daemon lifecycle, or durable host.
+arguments and an empty environment by default under mandatory positive byte
+and deadline bounds; timeout kills and reaps the child. A local host may bind
+bounded string environment values to one exact installed `OfferId`. This is
+explicit launch authority, not a semantic fact or package-discovered grant;
+unbound providers and every attester remain environment-free. Supplying
+`PATH`, credentials, or tool handles deliberately grants those ambient powers
+to that exact artifact. The child retains the caller's ordinary OS authority,
+so this is not a sandbox, credential boundary, daemon lifecycle, or durable
+host.
 
 `gooir-file-tree-v1` is an optional artifact dialect on the semantic side of
 this boundary. A `FileTree` fact describes bounded, content-addressed virtual
