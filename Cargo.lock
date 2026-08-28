@@ -617,6 +617,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-file-tree-materializer"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "gooir-capability",
+ "gooir-file-tree-v1",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "gooir-file-tree-v1"
 version = "0.1.0"
 dependencies = [

@@ -16,6 +16,7 @@ use gooir_identity::{DialectId, ValueKindId};
 use gooir_package::{
     DialectDeclaration, PackageId, PackageManifest, ValueKindDeclaration, read_manifest,
 };
+use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -49,6 +50,8 @@ pub const MAX_FILE_BYTES: usize = 64 * 1_024 * 1_024;
 
 /// Maximum aggregate content size of one tree: 256 MiB.
 pub const MAX_TREE_BYTES: usize = 256 * 1_024 * 1_024;
+
+const MAX_BASE64_FILE_BYTES: usize = MAX_FILE_BYTES.div_ceil(3) * 4;
 
 /// Checked-in package declaration for this dialect.
 pub const PACKAGE_MANIFEST_JSON: &str = include_str!("../gooir-package.json");
@@ -250,6 +253,7 @@ impl FileEntry {
 /// collisions before any host is allowed to consider materialization.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FileTree {
+    #[serde(deserialize_with = "deserialize_file_entries")]
     pub files: Vec<FileEntry>,
     #[serde(default, flatten)]
     pub extensions: BTreeMap<String, Value>,
@@ -604,17 +608,106 @@ mod base64_bytes {
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
-        let encoded = String::deserialize(deserializer)?;
+        deserializer.deserialize_str(Base64Visitor)
+    }
+
+    struct Base64Visitor;
+
+    impl<'de> Visitor<'de> for Base64Visitor {
+        type Value = Vec<u8>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                formatter,
+                "at most {MAX_BASE64_FILE_BYTES} bytes of canonical padded Base64"
+            )
+        }
+
+        fn visit_borrowed_str<E: serde::de::Error>(
+            self,
+            encoded: &'de str,
+        ) -> Result<Self::Value, E> {
+            decode(encoded)
+        }
+
+        fn visit_str<E: serde::de::Error>(self, encoded: &str) -> Result<Self::Value, E> {
+            decode(encoded)
+        }
+
+        fn visit_string<E: serde::de::Error>(self, encoded: String) -> Result<Self::Value, E> {
+            decode(&encoded)
+        }
+    }
+
+    fn decode<E: serde::de::Error>(encoded: &str) -> Result<Vec<u8>, E> {
+        validate_encoded_length(encoded.len()).map_err(E::custom)?;
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(&encoded)
-            .map_err(serde::de::Error::custom)?;
+            .decode(encoded)
+            .map_err(E::custom)?;
         if base64::engine::general_purpose::STANDARD.encode(&bytes) != encoded {
-            return Err(serde::de::Error::custom(
-                "file content must use canonical padded Base64",
-            ));
+            return Err(E::custom("file content must use canonical padded Base64"));
         }
         Ok(bytes)
     }
+
+    pub(super) fn validate_encoded_length(length: usize) -> Result<(), &'static str> {
+        if length > MAX_BASE64_FILE_BYTES {
+            Err("encoded file content exceeds the dialect byte limit")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn deserialize_file_entries<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<FileEntry>, D::Error> {
+    struct FileEntriesVisitor;
+
+    impl<'de> Visitor<'de> for FileEntriesVisitor {
+        type Value = Vec<FileEntry>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("a bounded sequence of file entries")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut sequence: A) -> Result<Self::Value, A::Error> {
+            let size_hint = sequence.size_hint().unwrap_or(0);
+            if size_hint > MAX_FILES {
+                return Err(serde::de::Error::custom(
+                    "decoded file count exceeds the dialect limit",
+                ));
+            }
+            let mut files = Vec::with_capacity(size_hint);
+            let mut total = 0usize;
+            while let Some(file) = sequence.next_element::<FileEntry>()? {
+                validate_decoded_entry_bounds(files.len(), total, file.content.len())
+                    .map_err(serde::de::Error::custom)?;
+                total += file.content.len();
+                files.push(file);
+            }
+            Ok(files)
+        }
+    }
+
+    deserializer.deserialize_seq(FileEntriesVisitor)
+}
+
+fn validate_decoded_entry_bounds(
+    current_files: usize,
+    current_bytes: usize,
+    next_bytes: usize,
+) -> Result<(), &'static str> {
+    if current_files >= MAX_FILES {
+        return Err("decoded file count exceeds the dialect limit");
+    }
+    let total = current_bytes
+        .checked_add(next_bytes)
+        .ok_or("decoded file content size overflow")?;
+    if total > MAX_TREE_BYTES {
+        return Err("decoded file content exceeds the aggregate dialect limit");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -804,6 +897,17 @@ mod tests {
         value["content"] = json!("AB==");
 
         assert!(serde_json::from_value::<FileEntry>(value).is_err());
+    }
+
+    #[test]
+    fn decoder_bounds_before_allocating_or_retaining_excess_content() {
+        assert!(base64_bytes::validate_encoded_length(MAX_BASE64_FILE_BYTES + 1).is_err());
+        assert!(validate_decoded_entry_bounds(MAX_FILES, 0, 0).is_err());
+        assert!(validate_decoded_entry_bounds(0, MAX_TREE_BYTES, 1).is_err());
+
+        let entry = serde_json::to_value(file("empty.bin", &[])).unwrap();
+        let oversized = json!({"files": vec![entry; MAX_FILES + 1]});
+        assert!(serde_json::from_value::<FileTree>(oversized).is_err());
     }
 
     #[test]

@@ -154,6 +154,27 @@ conformance and admission path. A product host may materialize only an exact
 admitted fact under its own explicit local policy. That host operation is not
 a semantic capability, and the compiler driver does not perform it.
 
+`gooir-file-tree-materializer` is one optional local implementation of that
+host operation. Its public authority gate accepts an `AdmissionLedger` plus one
+exact `AdmittedFactRef` and performs resolution internally; a caller cannot
+substitute a publicly assembled `ResolvedFact`. It revalidates the complete
+authority and FileTree payload and refuses unknown extensions anywhere in the
+reference, authority chain, fact, tree, or file rather than assuming they are
+irrelevant.
+Mandatory host limits bound files, directories, per-file bytes, and total
+bytes. Mandatory policy fixes ordinary Unix file and directory modes and, in
+this first version, supports only atomic refusal of every existing destination.
+
+The local implementation creates a private random staging directory beside the
+destination, traverses it only through retained no-follow descriptors, writes
+and synchronizes exact files, then publishes the complete tree with atomic
+no-replace rename. After that commit point it returns a receipt even if syncing
+the parent directory fails; the receipt marks durability uncertain so a caller
+does not retry under the false assumption that no effect occurred. The receipt
+is non-constructible in-process host evidence, not a stable semantic protocol.
+Crashes may still leave a private staging directory or a published tree without
+a returned receipt; durable reconciliation belongs to a later product host.
+
 ## Extension direction
 
 ```text
@@ -194,6 +215,11 @@ The file-tree contract is narrow optional support, not a new kernel concept or
 a generic effect model. Target-specific artifact dialects may remain richer;
 an explicit capability can project one into the generic file-tree kind when
 its information is sufficient.
+
+The matching local materializer is also optional support. Neither
+`CompilerDriver` nor the semantic planner depends on it. A product build driver
+may compose them by explicitly resolving the produced authority and then
+calling the host-side `FileTreeMaterializer` seam.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.

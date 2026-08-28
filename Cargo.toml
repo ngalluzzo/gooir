@@ -4,6 +4,7 @@ members = [
     "crates/gooir-cli",
     "crates/gooir-doctor",
     "crates/gooir-derive",
+    "crates/gooir-file-tree-materializer",
     "crates/gooir-file-tree-v1",
     "crates/gooir-identity",
     "crates/gooir-package",
@@ -25,6 +26,7 @@ gooir-capability = { path = "crates/gooir-capability" }
 gooir-cli = { path = "crates/gooir-cli" }
 gooir-doctor = { path = "crates/gooir-doctor" }
 gooir-derive = { path = "crates/gooir-derive" }
+gooir-file-tree-materializer = { path = "crates/gooir-file-tree-materializer" }
 gooir-file-tree-v1 = { path = "crates/gooir-file-tree-v1" }
 gooir-identity = { path = "crates/gooir-identity" }
 gooir-package = { path = "crates/gooir-package" }
@@ -35,6 +37,7 @@ gooir-wasip1-command-runtime = { path = "crates/gooir-wasip1-command-runtime" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 
 base64 = "0.22"
+getrandom = "0.4"
 nix = { version = "=0.31.3", features = ["fs"] }
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 serde = { version = "1", features = ["derive"] }

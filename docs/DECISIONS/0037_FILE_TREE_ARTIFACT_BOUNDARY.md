@@ -65,8 +65,8 @@ candidate or unvalidated payload.
 This does not standardize a generic effect dialect, an effect system, a build
 receipt, or host policy. It also does not automatically replace richer
 artifact dialects: information absent from `FileTree` is intentionally lost by
-projection. The next slice is a host-side materialization protocol and bounded
-local implementation, not a kernel dependency on this dialect.
+projection. Decision 0038 adds the follow-on host-side materialization seam and
+bounded local implementation without making the kernel depend on this dialect.
 
 ## Acceptance evidence
 
