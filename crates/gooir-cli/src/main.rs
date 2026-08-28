@@ -1,9 +1,8 @@
 //! `gooir` — one way in.
 //!
-//! The command inspects installed packages, compiles admitted semantic values,
-//! and can physically build the optional FileTree target. Its temporary
-//! `derive` subcommand remains a visibly separate compatibility bridge for
-//! legacy declaration packs and process plugins.
+//! The command inspects installed packages and emits provider-neutral plans.
+//! Its temporary `derive` subcommand remains a visibly separate compatibility
+//! bridge for legacy declaration packs and process plugins.
 
 use std::{
     collections::BTreeSet,
@@ -23,16 +22,11 @@ use gooir_capability::{
 use gooir_cli::{known_value_kinds, resolve_value_kind};
 use gooir_derive::{
     Answer as CompileAnswer, CompilerDriver, DerivationLimits, LocalAttesterBinding,
-    LocalProviderEnvironmentBinding, LocalStdioHost, LocalStdioLimits, Refusal,
-};
-use gooir_file_tree_build::{FileTreeBuildAnswer, FileTreeBuildDriver};
-use gooir_file_tree_materializer::{
-    ConflictPolicy, Durability, LocalFileTreeMaterializer, LocalMaterializationLimits,
-    LocalMaterializationPolicy,
+    LocalStdioHost, LocalStdioLimits, Refusal,
 };
 use gooir_package::{LoadLimits, PackageRegistry, load_local_package};
 use gooir_planning::{PlanLimits, SemanticPlanner};
-use rustix::fs::{Mode, OFlags, RawMode, open};
+use rustix::fs::{Mode, OFlags, open};
 use serde::de::DeserializeOwned;
 
 fn main() {
@@ -43,43 +37,25 @@ fn main() {
 }
 
 const USAGE: &str = "\
-gooir — compile and build over an explicitly installed capability graph
+gooir — compile over an explicitly installed capability graph
 
 Compiler driver (GOOIR 0.1):
   gooir compile <target> --package DIR --policy JSON [--observation JSON]
-      [--attester JSON] [--provider-environment JSON]
-      --stdin-bytes N --stdout-bytes N --stderr-bytes N
+      [--attester JSON] --stdin-bytes N --stdout-bytes N --stderr-bytes N
       --timeout-ms N [--json]
-
-Physical FileTree build host:
-  gooir build <destination> --package DIR --policy JSON [--observation JSON]
-      [--attester JSON] [--provider-environment JSON]
-      --stdin-bytes N --stdout-bytes N --stderr-bytes N
-      --timeout-ms N --max-files N --max-directories N --max-file-bytes N
-      --max-total-bytes N --directory-mode OCTAL --file-mode OCTAL
 
 The compile command admits explicit source observations, conservatively fixes
 one complete route/offer/attester selection, invokes exact copied package
 artifacts over bounded local stdio, independently assesses every candidate,
 and admits each step before linking the next. Provider artifacts come only
 from installed offers. Each attester binding names a complete authority plus
-an exact installed package resource with the same copied digest. A provider
-environment document binds explicit string values to one exact installed
-offer; unbound providers and every attester still receive an empty environment.
-Supplying PATH or another ambient locator explicitly grants that discovery
-authority. N must be positive for every bound. Nothing is scanned or
+an exact installed package resource with the same copied digest. N must be
+positive for every bound. Nothing is scanned, resolved through PATH, or
 materialized to a target-specific file. JSON output is the existing derivation
-Answer shape, not a new stable compile receipt protocol. Policy, observation,
-attester, and provider-environment inputs must be regular files: no symlinks,
-FIFOs, or directories. Each is bounded to 16 MiB and their aggregate to 64 MiB
-before JSON decoding.
-
-The build command fixes the semantic target to the FileTree dialect, applies
-the same compiler and admission path, then atomically publishes to one absent
-destination with an explicit no-replace policy. Its parent directory must
-already exist. Every process, file-tree, and publication bound is mandatory
-and positive; modes are explicit ordinary Unix permission bits. Success prints
-host-local receipt evidence. It is not a stable serialized build protocol.
+Answer shape, not a new stable compile receipt protocol.
+Policy, observation, and attester inputs must be regular files: no symlinks,
+FIFOs, or directories. Each is bounded to 16 MiB and their aggregate to
+64 MiB before JSON decoding.
 
 Package inspection and planning (GOOIR 0.1):
   gooir facts --package DIR                 every value kind and its producers
@@ -145,7 +121,6 @@ struct CompileInputLimits {
     max_packages: usize,
     max_observations: usize,
     max_attesters: usize,
-    max_provider_environments: usize,
     max_documents: usize,
     max_document_bytes: u64,
     max_total_document_bytes: u64,
@@ -157,12 +132,10 @@ fn compile_input_limits() -> CompileInputLimits {
         max_packages: MAX_COMPILE_PACKAGES,
         max_observations: derivation.max_inputs.get(),
         max_attesters: derivation.max_attesters.get(),
-        max_provider_environments: derivation.max_inputs.get(),
         max_documents: derivation
             .max_inputs
             .get()
             .saturating_add(derivation.max_attesters.get())
-            .saturating_add(derivation.max_inputs.get())
             .saturating_add(1),
         max_document_bytes: MAX_COMPILE_DOCUMENT_BYTES,
         max_total_document_bytes: MAX_COMPILE_TOTAL_DOCUMENT_BYTES,
@@ -172,58 +145,95 @@ fn compile_input_limits() -> CompileInputLimits {
 #[derive(Debug)]
 struct CompileArguments {
     target: String,
-    execution: LocalExecutionArguments,
-    json: bool,
-}
-
-#[derive(Debug)]
-struct FileTreeBuildArguments {
-    destination: PathBuf,
-    execution: LocalExecutionArguments,
-    publication: LocalMaterializationPolicy,
-}
-
-#[derive(Debug)]
-struct LocalExecutionArguments {
     packages: Vec<PathBuf>,
     policy: PathBuf,
     observations: Vec<PathBuf>,
     attesters: Vec<PathBuf>,
-    provider_environments: Vec<PathBuf>,
     stdio_limits: LocalStdioLimits,
     input_limits: CompileInputLimits,
-}
-
-#[derive(Debug, Default)]
-struct LocalExecutionArgumentSlots {
-    packages: Vec<PathBuf>,
-    policy: Option<PathBuf>,
-    observations: Vec<PathBuf>,
-    attesters: Vec<PathBuf>,
-    provider_environments: Vec<PathBuf>,
-    stdin_bytes: Option<NonZeroUsize>,
-    stdout_bytes: Option<NonZeroUsize>,
-    stderr_bytes: Option<NonZeroUsize>,
-    timeout_milliseconds: Option<NonZeroU64>,
+    json: bool,
 }
 
 impl CompileArguments {
     fn parse(args: &[String], input_limits: CompileInputLimits) -> Result<Self, String> {
-        input_limits.validate("compile")?;
+        input_limits.validate()?;
         let target = args
             .get(1)
             .filter(|value| !value.starts_with("--"))
             .ok_or_else(|| "usage: gooir compile <target>".to_owned())?
             .clone();
-        let mut execution = LocalExecutionArgumentSlots::default();
+        let mut packages = Vec::new();
+        let mut policy = None;
+        let mut observations = Vec::new();
+        let mut attesters = Vec::new();
+        let mut stdin_bytes = None;
+        let mut stdout_bytes = None;
+        let mut stderr_bytes = None;
+        let mut timeout_milliseconds = None;
         let mut json = false;
         let mut index = 2;
 
         while let Some(argument) = args.get(index) {
-            if execution.parse_flag(argument, args, &mut index, input_limits, "compile")? {
-                continue;
-            }
             match argument.as_str() {
+                "--package" => {
+                    ensure_path_slot(packages.len(), input_limits.max_packages, "package paths")?;
+                    packages.push(flag_path(args, &mut index, "--package")?);
+                }
+                "--policy" => set_once(
+                    &mut policy,
+                    flag_path(args, &mut index, "--policy")?,
+                    "--policy",
+                )?,
+                "--observation" => {
+                    ensure_document_slot(&observations, &attesters, input_limits)?;
+                    ensure_path_slot(
+                        observations.len(),
+                        input_limits.max_observations,
+                        "observation documents",
+                    )?;
+                    observations.push(flag_path(args, &mut index, "--observation")?);
+                }
+                "--attester" => {
+                    ensure_document_slot(&observations, &attesters, input_limits)?;
+                    ensure_path_slot(
+                        attesters.len(),
+                        input_limits.max_attesters,
+                        "attester documents",
+                    )?;
+                    attesters.push(flag_path(args, &mut index, "--attester")?);
+                }
+                "--stdin-bytes" => set_once(
+                    &mut stdin_bytes,
+                    positive_usize_value(
+                        "--stdin-bytes",
+                        flag_value(args, &mut index, "--stdin-bytes")?,
+                    )?,
+                    "--stdin-bytes",
+                )?,
+                "--stdout-bytes" => set_once(
+                    &mut stdout_bytes,
+                    positive_usize_value(
+                        "--stdout-bytes",
+                        flag_value(args, &mut index, "--stdout-bytes")?,
+                    )?,
+                    "--stdout-bytes",
+                )?,
+                "--stderr-bytes" => set_once(
+                    &mut stderr_bytes,
+                    positive_usize_value(
+                        "--stderr-bytes",
+                        flag_value(args, &mut index, "--stderr-bytes")?,
+                    )?,
+                    "--stderr-bytes",
+                )?,
+                "--timeout-ms" => set_once(
+                    &mut timeout_milliseconds,
+                    positive_u64_value(
+                        "--timeout-ms",
+                        flag_value(args, &mut index, "--timeout-ms")?,
+                    )?,
+                    "--timeout-ms",
+                )?,
                 "--json" if !json => {
                     json = true;
                     index += 1;
@@ -242,275 +252,32 @@ impl CompileArguments {
 
         Ok(Self {
             target,
-            execution: execution.finish(input_limits, "compile")?,
+            packages,
+            policy: required(policy, "--policy")?,
+            observations,
+            attesters,
+            stdio_limits: LocalStdioLimits {
+                max_stdin_bytes: required(stdin_bytes, "--stdin-bytes")?,
+                max_stdout_bytes: required(stdout_bytes, "--stdout-bytes")?,
+                max_stderr_bytes: required(stderr_bytes, "--stderr-bytes")?,
+                timeout_milliseconds: required(timeout_milliseconds, "--timeout-ms")?,
+            },
+            input_limits,
             json,
         })
     }
 }
 
-impl FileTreeBuildArguments {
-    fn parse(args: &[String], input_limits: CompileInputLimits) -> Result<Self, String> {
-        input_limits.validate("build")?;
-        let destination = args
-            .get(1)
-            .filter(|value| !value.starts_with("--"))
-            .ok_or_else(|| "usage: gooir build <destination>".to_owned())?
-            .into();
-        let mut execution = LocalExecutionArgumentSlots::default();
-        let mut max_files = None;
-        let mut max_directories = None;
-        let mut max_file_bytes = None;
-        let mut max_total_bytes = None;
-        let mut directory_mode = None;
-        let mut file_mode = None;
-        let mut index = 2;
-
-        while let Some(argument) = args.get(index) {
-            if execution.parse_flag(argument, args, &mut index, input_limits, "build")? {
-                continue;
-            }
-            match argument.as_str() {
-                "--max-files" => set_once(
-                    &mut max_files,
-                    positive_usize_value(
-                        "--max-files",
-                        flag_value(args, &mut index, "build", "--max-files")?,
-                    )?,
-                    "build",
-                    "--max-files",
-                )?,
-                "--max-directories" => set_once(
-                    &mut max_directories,
-                    positive_usize_value(
-                        "--max-directories",
-                        flag_value(args, &mut index, "build", "--max-directories")?,
-                    )?,
-                    "build",
-                    "--max-directories",
-                )?,
-                "--max-file-bytes" => set_once(
-                    &mut max_file_bytes,
-                    positive_u64_value(
-                        "--max-file-bytes",
-                        flag_value(args, &mut index, "build", "--max-file-bytes")?,
-                    )?,
-                    "build",
-                    "--max-file-bytes",
-                )?,
-                "--max-total-bytes" => set_once(
-                    &mut max_total_bytes,
-                    positive_u64_value(
-                        "--max-total-bytes",
-                        flag_value(args, &mut index, "build", "--max-total-bytes")?,
-                    )?,
-                    "build",
-                    "--max-total-bytes",
-                )?,
-                "--directory-mode" => set_once(
-                    &mut directory_mode,
-                    octal_mode_value(
-                        "--directory-mode",
-                        flag_value(args, &mut index, "build", "--directory-mode")?,
-                    )?,
-                    "build",
-                    "--directory-mode",
-                )?,
-                "--file-mode" => set_once(
-                    &mut file_mode,
-                    octal_mode_value(
-                        "--file-mode",
-                        flag_value(args, &mut index, "build", "--file-mode")?,
-                    )?,
-                    "build",
-                    "--file-mode",
-                )?,
-                unknown if unknown.starts_with("--") => {
-                    return Err(format!("unknown gooir build flag `{unknown}`"));
-                }
-                positional => {
-                    return Err(format!(
-                        "unexpected extra gooir build argument `{positional}`"
-                    ));
-                }
-            }
-        }
-
-        let limits = LocalMaterializationLimits {
-            max_files: required(max_files, "build", "--max-files")?,
-            max_directories: required(max_directories, "build", "--max-directories")?,
-            max_file_bytes: required(max_file_bytes, "build", "--max-file-bytes")?,
-            max_total_bytes: required(max_total_bytes, "build", "--max-total-bytes")?,
-        };
-        let publication = LocalMaterializationPolicy::new(
-            ConflictPolicy::RefuseExisting,
-            required(directory_mode, "build", "--directory-mode")?,
-            required(file_mode, "build", "--file-mode")?,
-            limits,
-        )
-        .map_err(|error| format!("gooir build publication policy is invalid: {error}"))?;
-        Ok(Self {
-            destination,
-            execution: execution.finish(input_limits, "build")?,
-            publication,
-        })
-    }
-}
-
-impl LocalExecutionArgumentSlots {
-    fn parse_flag(
-        &mut self,
-        argument: &str,
-        args: &[String],
-        index: &mut usize,
-        input_limits: CompileInputLimits,
-        command: &'static str,
-    ) -> Result<bool, String> {
-        match argument {
-            "--package" => {
-                ensure_path_slot(
-                    self.packages.len(),
-                    input_limits.max_packages,
-                    command,
-                    "package paths",
-                )?;
-                self.packages
-                    .push(flag_path(args, index, command, "--package")?);
-            }
-            "--policy" => set_once(
-                &mut self.policy,
-                flag_path(args, index, command, "--policy")?,
-                command,
-                "--policy",
-            )?,
-            "--observation" => {
-                ensure_document_slot(
-                    &self.observations,
-                    &self.attesters,
-                    &self.provider_environments,
-                    input_limits,
-                    command,
-                )?;
-                ensure_path_slot(
-                    self.observations.len(),
-                    input_limits.max_observations,
-                    command,
-                    "observation documents",
-                )?;
-                self.observations
-                    .push(flag_path(args, index, command, "--observation")?);
-            }
-            "--attester" => {
-                ensure_document_slot(
-                    &self.observations,
-                    &self.attesters,
-                    &self.provider_environments,
-                    input_limits,
-                    command,
-                )?;
-                ensure_path_slot(
-                    self.attesters.len(),
-                    input_limits.max_attesters,
-                    command,
-                    "attester documents",
-                )?;
-                self.attesters
-                    .push(flag_path(args, index, command, "--attester")?);
-            }
-            "--provider-environment" => {
-                ensure_document_slot(
-                    &self.observations,
-                    &self.attesters,
-                    &self.provider_environments,
-                    input_limits,
-                    command,
-                )?;
-                ensure_path_slot(
-                    self.provider_environments.len(),
-                    input_limits.max_provider_environments,
-                    command,
-                    "provider environment documents",
-                )?;
-                self.provider_environments.push(flag_path(
-                    args,
-                    index,
-                    command,
-                    "--provider-environment",
-                )?);
-            }
-            "--stdin-bytes" => set_once(
-                &mut self.stdin_bytes,
-                positive_usize_value(
-                    "--stdin-bytes",
-                    flag_value(args, index, command, "--stdin-bytes")?,
-                )?,
-                command,
-                "--stdin-bytes",
-            )?,
-            "--stdout-bytes" => set_once(
-                &mut self.stdout_bytes,
-                positive_usize_value(
-                    "--stdout-bytes",
-                    flag_value(args, index, command, "--stdout-bytes")?,
-                )?,
-                command,
-                "--stdout-bytes",
-            )?,
-            "--stderr-bytes" => set_once(
-                &mut self.stderr_bytes,
-                positive_usize_value(
-                    "--stderr-bytes",
-                    flag_value(args, index, command, "--stderr-bytes")?,
-                )?,
-                command,
-                "--stderr-bytes",
-            )?,
-            "--timeout-ms" => set_once(
-                &mut self.timeout_milliseconds,
-                positive_u64_value(
-                    "--timeout-ms",
-                    flag_value(args, index, command, "--timeout-ms")?,
-                )?,
-                command,
-                "--timeout-ms",
-            )?,
-            _ => return Ok(false),
-        }
-        Ok(true)
-    }
-
-    fn finish(
-        self,
-        input_limits: CompileInputLimits,
-        command: &'static str,
-    ) -> Result<LocalExecutionArguments, String> {
-        Ok(LocalExecutionArguments {
-            packages: self.packages,
-            policy: required(self.policy, command, "--policy")?,
-            observations: self.observations,
-            attesters: self.attesters,
-            provider_environments: self.provider_environments,
-            stdio_limits: LocalStdioLimits {
-                max_stdin_bytes: required(self.stdin_bytes, command, "--stdin-bytes")?,
-                max_stdout_bytes: required(self.stdout_bytes, command, "--stdout-bytes")?,
-                max_stderr_bytes: required(self.stderr_bytes, command, "--stderr-bytes")?,
-                timeout_milliseconds: required(self.timeout_milliseconds, command, "--timeout-ms")?,
-            },
-            input_limits,
-        })
-    }
-}
-
 impl CompileInputLimits {
-    fn validate(self, command: &str) -> Result<(), String> {
+    fn validate(self) -> Result<(), String> {
         if self.max_packages == 0
             || self.max_observations == 0
             || self.max_attesters == 0
-            || self.max_provider_environments == 0
             || self.max_documents == 0
             || self.max_document_bytes == 0
             || self.max_total_document_bytes == 0
         {
-            return Err(format!("gooir {command} resource limits must be positive"));
+            return Err("gooir compile resource limits must be positive".to_owned());
         }
         Ok(())
     }
@@ -519,45 +286,34 @@ impl CompileInputLimits {
 fn flag_value<'args>(
     args: &'args [String],
     index: &mut usize,
-    command: &str,
     flag: &str,
 ) -> Result<&'args str, String> {
     let value = args
         .get(index.saturating_add(1))
         .filter(|value| !value.starts_with("--"))
-        .ok_or_else(|| format!("gooir {command} flag {flag} requires a value"))?;
+        .ok_or_else(|| format!("gooir compile flag {flag} requires a value"))?;
     *index += 2;
     Ok(value)
 }
 
-fn flag_path(
-    args: &[String],
-    index: &mut usize,
-    command: &str,
-    flag: &str,
-) -> Result<PathBuf, String> {
-    flag_value(args, index, command, flag).map(PathBuf::from)
+fn flag_path(args: &[String], index: &mut usize, flag: &str) -> Result<PathBuf, String> {
+    flag_value(args, index, flag).map(PathBuf::from)
 }
 
-fn set_once<T>(slot: &mut Option<T>, value: T, command: &str, flag: &str) -> Result<(), String> {
+fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
     if slot.replace(value).is_some() {
-        return Err(format!("gooir {command} accepts {flag} exactly once"));
+        return Err(format!("gooir compile accepts {flag} exactly once"));
     }
     Ok(())
 }
 
-fn required<T>(value: Option<T>, command: &str, flag: &str) -> Result<T, String> {
-    value.ok_or_else(|| format!("gooir {command} requires {flag}"))
+fn required<T>(value: Option<T>, flag: &str) -> Result<T, String> {
+    value.ok_or_else(|| format!("gooir compile requires {flag}"))
 }
 
-fn ensure_path_slot(
-    current: usize,
-    limit: usize,
-    command: &str,
-    resource: &str,
-) -> Result<(), String> {
+fn ensure_path_slot(current: usize, limit: usize, resource: &str) -> Result<(), String> {
     if current >= limit {
-        return Err(format!("gooir {command} {resource} exceed limit {limit}"));
+        return Err(format!("gooir compile {resource} exceed limit {limit}"));
     }
     Ok(())
 }
@@ -565,19 +321,16 @@ fn ensure_path_slot(
 fn ensure_document_slot(
     observations: &[PathBuf],
     attesters: &[PathBuf],
-    provider_environments: &[PathBuf],
     limits: CompileInputLimits,
-    command: &str,
 ) -> Result<(), String> {
     let current = observations
         .len()
         .checked_add(attesters.len())
-        .and_then(|count| count.checked_add(provider_environments.len()))
         .and_then(|count| count.checked_add(1))
-        .ok_or_else(|| format!("gooir {command} document count overflowed"))?;
+        .ok_or_else(|| "gooir compile document count overflowed".to_owned())?;
     if current >= limits.max_documents {
         return Err(format!(
-            "gooir {command} documents exceed aggregate count limit {}",
+            "gooir compile documents exceed aggregate count limit {}",
             limits.max_documents
         ));
     }
@@ -596,85 +349,6 @@ fn positive_u64_value(flag: &str, value: &str) -> Result<NonZeroU64, String> {
         .parse::<u64>()
         .map_err(|_| format!("{flag} must be a positive integer"))?;
     NonZeroU64::new(parsed).ok_or_else(|| format!("{flag} must be positive"))
-}
-
-fn octal_mode_value(flag: &str, value: &str) -> Result<RawMode, String> {
-    let digits = value
-        .strip_prefix("0o")
-        .or_else(|| value.strip_prefix("0O"))
-        .unwrap_or(value);
-    if digits.is_empty() {
-        return Err(format!("{flag} must be an octal Unix mode"));
-    }
-    RawMode::from_str_radix(digits, 8).map_err(|_| format!("{flag} must be an octal Unix mode"))
-}
-
-struct LoadedLocalExecution {
-    registry: PackageRegistry,
-    policy: AdmissionPolicy,
-    observations: Vec<SourceObservation>,
-    bindings: Vec<LocalAttesterBinding>,
-    provider_environments: Vec<LocalProviderEnvironmentBinding>,
-    stdio_limits: LocalStdioLimits,
-}
-
-impl LoadedLocalExecution {
-    fn load(arguments: &LocalExecutionArguments, command: &'static str) -> Result<Self, String> {
-        let registry = installed_packages(&arguments.packages)?;
-        let mut budget = DocumentBudget::new(arguments.input_limits, command)?;
-        let policy = read_execution_document::<AdmissionPolicy>(&arguments.policy, &mut budget)?;
-        let mut observations = Vec::with_capacity(arguments.observations.len());
-        for path in &arguments.observations {
-            observations.push(read_execution_document::<SourceObservation>(
-                path,
-                &mut budget,
-            )?);
-        }
-        let mut bindings = Vec::with_capacity(arguments.attesters.len());
-        for path in &arguments.attesters {
-            bindings.push(read_execution_document::<LocalAttesterBinding>(
-                path,
-                &mut budget,
-            )?);
-        }
-        let mut provider_environments = Vec::with_capacity(arguments.provider_environments.len());
-        for path in &arguments.provider_environments {
-            provider_environments.push(read_execution_document::<LocalProviderEnvironmentBinding>(
-                path,
-                &mut budget,
-            )?);
-        }
-        Ok(Self {
-            registry,
-            policy,
-            observations,
-            bindings,
-            provider_environments,
-            stdio_limits: arguments.stdio_limits,
-        })
-    }
-
-    fn into_compiler(
-        self,
-    ) -> Result<(CompilerDriver<LocalStdioHost>, Vec<SourceObservation>), String> {
-        let host = LocalStdioHost::new_with_provider_environments(
-            &self.registry,
-            self.bindings,
-            self.provider_environments,
-            self.stdio_limits,
-        )
-        .map_err(|error| error.to_string())?;
-        let authorities = host.authorities().cloned().collect::<Vec<_>>();
-        let driver = CompilerDriver::new(
-            &self.registry,
-            self.policy,
-            authorities,
-            host,
-            derivation_limits(),
-        )
-        .map_err(|error| error.to_string())?;
-        Ok((driver, self.observations))
-    }
 }
 
 fn installed_packages(package_directories: &[PathBuf]) -> Result<PackageRegistry, String> {
@@ -814,22 +488,20 @@ fn print_answer(target: &FactType, given: &LegacyAnswer) {
 
 struct DocumentBudget {
     limits: CompileInputLimits,
-    command: &'static str,
     documents: usize,
     bytes: u64,
 }
 
 impl DocumentBudget {
-    fn new(limits: CompileInputLimits, command: &'static str) -> Result<Self, String> {
+    fn new(limits: CompileInputLimits) -> Result<Self, String> {
         if limits.max_documents == 0
             || limits.max_document_bytes == 0
             || limits.max_total_document_bytes == 0
         {
-            return Err(format!("gooir {command} document limits must be positive"));
+            return Err("gooir compile document limits must be positive".to_owned());
         }
         Ok(Self {
             limits,
-            command,
             documents: 0,
             bytes: 0,
         })
@@ -855,9 +527,8 @@ impl DocumentBudget {
             .map_err(|error| format!("{}: document metadata failed: {error}", path.display()))?;
         if !metadata.is_file() {
             return Err(format!(
-                "{}: {} input must be a regular file",
-                path.display(),
-                self.command,
+                "{}: compile input must be a regular file",
+                path.display()
             ));
         }
         let size = metadata.len();
@@ -872,7 +543,7 @@ impl DocumentBudget {
             .limits
             .max_total_document_bytes
             .checked_sub(self.bytes)
-            .ok_or_else(|| format!("gooir {} aggregate document bytes overflowed", self.command))?;
+            .ok_or_else(|| "gooir compile aggregate document bytes overflowed".to_owned())?;
         if size > aggregate_remaining {
             return Err(format!(
                 "{}: document size {size} exceeds remaining aggregate limit {aggregate_remaining}",
@@ -908,12 +579,12 @@ impl DocumentBudget {
         self.bytes = self
             .bytes
             .checked_add(actual)
-            .ok_or_else(|| format!("gooir {} aggregate document bytes overflowed", self.command))?;
+            .ok_or_else(|| "gooir compile aggregate document bytes overflowed".to_owned())?;
         Ok(bytes)
     }
 }
 
-fn read_execution_document<T: DeserializeOwned>(
+fn read_compile_document<T: DeserializeOwned>(
     path: &Path,
     budget: &mut DocumentBudget,
 ) -> Result<T, String> {
@@ -929,85 +600,31 @@ fn print_compile_answer(answer: &CompileAnswer) {
             println!("  admitted {} route output(s)", produced.admitted.len());
         }
         CompileAnswer::Blocked(blocked) => {
-            print_compile_blocked(blocked);
+            println!("blocked plan {}", blocked.plan.plan_id);
+            for node in &blocked.blockage.nodes {
+                if node.missing_offer {
+                    println!("  missing implementation for {}", node.capability);
+                }
+                for need in &node.missing_attesters {
+                    println!(
+                        "  missing independent attester for {} / {}",
+                        need.capability, need.suite
+                    );
+                }
+            }
         }
         CompileAnswer::Unreachable(unreachable) => {
-            print_compile_unreachable(unreachable);
+            println!("unreachable target {}", unreachable.target);
         }
-        CompileAnswer::Refused(refusal) => print_compile_refusal(refusal),
+        CompileAnswer::Refused(refusal) => match refusal.as_ref() {
+            Refusal::InvalidRequest { detail }
+            | Refusal::InvalidSelection { detail }
+            | Refusal::AmbiguousSelection { detail, .. }
+            | Refusal::AdmissionPolicy { detail, .. } => println!("refused: {detail}"),
+        },
         CompileAnswer::Failed(failed) => {
-            print_compile_failed(failed);
+            println!("failed at {:?}: {}", failed.stage, failed.detail);
         }
-    }
-    println!("\n-> {}", answer.remedy());
-}
-
-fn print_compile_blocked(blocked: &gooir_derive::BlockedAnswer) {
-    println!("blocked plan {}", blocked.plan.plan_id);
-    for node in &blocked.blockage.nodes {
-        if node.missing_offer {
-            println!("  missing implementation for {}", node.capability);
-        }
-        for need in &node.missing_attesters {
-            println!(
-                "  missing independent attester for {} / {}",
-                need.capability, need.suite
-            );
-        }
-    }
-}
-
-fn print_compile_unreachable(unreachable: &gooir_derive::UnreachableAnswer) {
-    println!("unreachable target {}", unreachable.target);
-}
-
-fn print_compile_refusal(refusal: &Refusal) {
-    match refusal {
-        Refusal::InvalidRequest { detail }
-        | Refusal::InvalidSelection { detail }
-        | Refusal::AmbiguousSelection { detail, .. }
-        | Refusal::AdmissionPolicy { detail, .. } => println!("refused: {detail}"),
-    }
-}
-
-fn print_compile_failed(failed: &gooir_derive::FailedAnswer) {
-    println!("failed at {:?}: {}", failed.stage, failed.detail);
-}
-
-fn print_file_tree_build_answer(
-    answer: &FileTreeBuildAnswer<gooir_file_tree_materializer::LocalMaterializationReceipt>,
-) {
-    match answer {
-        FileTreeBuildAnswer::Materialized(materialized) => {
-            let receipt = &materialized.receipt;
-            println!("materialized admitted FileTree {}", receipt.fact_id());
-            println!("  authority {}", receipt.authority_record_id());
-            println!("  destination {}", receipt.destination().display());
-            println!("  {} file(s)", receipt.files().len());
-            for file in receipt.files() {
-                println!(
-                    "    {} ({} byte(s), {})",
-                    file.path(),
-                    file.bytes(),
-                    file.content_digest()
-                );
-            }
-            let durability = match receipt.durability() {
-                Durability::ParentDirectorySynced => "parent directory synced",
-                Durability::Uncertain => "uncertain; do not retry as if publication failed",
-            };
-            println!("  durability {durability}");
-            let policy = receipt.policy();
-            println!(
-                "  modes directory {:03o}, file {:03o}",
-                policy.directory_mode(),
-                policy.file_mode()
-            );
-        }
-        FileTreeBuildAnswer::Blocked(blocked) => print_compile_blocked(blocked),
-        FileTreeBuildAnswer::Unreachable(unreachable) => print_compile_unreachable(unreachable),
-        FileTreeBuildAnswer::Refused(refusal) => print_compile_refusal(refusal),
-        FileTreeBuildAnswer::Failed(failed) => print_compile_failed(failed),
     }
     println!("\n-> {}", answer.remedy());
 }
@@ -1052,9 +669,30 @@ fn run() -> Result<(), String> {
         }
         Some("compile") => {
             let compile = CompileArguments::parse(&args, compile_input_limits())?;
-            let loaded = LoadedLocalExecution::load(&compile.execution, "compile")?;
-            let target = resolve_value_kind(&loaded.registry, &compile.target)?;
-            let (mut driver, observations) = loaded.into_compiler()?;
+            let registry = installed_packages(&compile.packages)?;
+            let target = resolve_value_kind(&registry, &compile.target)?;
+            let mut budget = DocumentBudget::new(compile.input_limits)?;
+            let policy = read_compile_document::<AdmissionPolicy>(&compile.policy, &mut budget)?;
+            let mut observations = Vec::with_capacity(compile.observations.len());
+            for path in &compile.observations {
+                observations.push(read_compile_document::<SourceObservation>(
+                    path,
+                    &mut budget,
+                )?);
+            }
+            let mut bindings = Vec::with_capacity(compile.attesters.len());
+            for path in &compile.attesters {
+                bindings.push(read_compile_document::<LocalAttesterBinding>(
+                    path,
+                    &mut budget,
+                )?);
+            }
+            let host = LocalStdioHost::new(&registry, bindings, compile.stdio_limits)
+                .map_err(|error| error.to_string())?;
+            let authorities = host.authorities().cloned().collect::<Vec<_>>();
+            let mut driver =
+                CompilerDriver::new(&registry, policy, authorities, host, derivation_limits())
+                    .map_err(|error| error.to_string())?;
             let answer = driver.compile(target, observations);
             if compile.json {
                 println!(
@@ -1070,29 +708,6 @@ fn run() -> Result<(), String> {
                 CompileAnswer::Unreachable(_)
                 | CompileAnswer::Refused(_)
                 | CompileAnswer::Failed(_) => process::exit(1),
-            }
-        }
-        Some("build") => {
-            let build = FileTreeBuildArguments::parse(&args, compile_input_limits())?;
-            let loaded = LoadedLocalExecution::load(&build.execution, "build")?;
-            let (compiler, observations) = loaded.into_compiler()?;
-            let mut driver = FileTreeBuildDriver::new(compiler, LocalFileTreeMaterializer::new());
-            let answer = driver
-                .build(observations, &build.destination, &build.publication)
-                .map_err(|error| {
-                    format!(
-                        "{error}\n  admitted fact {}\n  authority {}",
-                        error.produced().target.fact_id,
-                        error.produced().target.authority_record_id
-                    )
-                })?;
-            print_file_tree_build_answer(&answer);
-            match answer {
-                FileTreeBuildAnswer::Materialized(_) => Ok(()),
-                FileTreeBuildAnswer::Blocked(_) => process::exit(3),
-                FileTreeBuildAnswer::Unreachable(_)
-                | FileTreeBuildAnswer::Refused(_)
-                | FileTreeBuildAnswer::Failed(_) => process::exit(1),
             }
         }
         Some("capabilities") => {
@@ -1323,13 +938,8 @@ mod tests {
     fn help_separates_package_planning_from_legacy_execution() {
         assert!(USAGE.contains("Compiler driver (GOOIR 0.1)"));
         assert!(USAGE.contains("exact copied package"));
-        assert!(USAGE.contains("N must be positive"));
-        assert!(USAGE.contains("--provider-environment JSON"));
-        assert!(USAGE.contains("unbound providers and every attester"));
+        assert!(USAGE.contains("N must be\npositive"));
         assert!(USAGE.contains("not a new stable compile receipt protocol"));
-        assert!(USAGE.contains("Physical FileTree build host"));
-        assert!(USAGE.contains("gooir build <destination>"));
-        assert!(USAGE.contains("not a stable serialized build protocol"));
         assert!(USAGE.contains("Package inspection and planning (GOOIR 0.1)"));
         assert!(USAGE.contains("--package DIR"));
         assert!(USAGE.contains("Legacy execution compatibility bridge"));
@@ -1389,8 +999,6 @@ mod tests {
             "observation.json",
             "--attester",
             "attester.json",
-            "--provider-environment",
-            "provider-environment.json",
             "--stdin-bytes",
             "1024",
             "--stdout-bytes",
@@ -1399,45 +1007,6 @@ mod tests {
             "512",
             "--timeout-ms",
             "1000",
-        ]
-        .map(str::to_owned)
-        .to_vec()
-    }
-
-    fn build_args() -> Vec<String> {
-        [
-            "build",
-            "generated-project",
-            "--package",
-            "package",
-            "--policy",
-            "policy.json",
-            "--observation",
-            "observation.json",
-            "--attester",
-            "attester.json",
-            "--provider-environment",
-            "provider-environment.json",
-            "--stdin-bytes",
-            "1024",
-            "--stdout-bytes",
-            "2048",
-            "--stderr-bytes",
-            "512",
-            "--timeout-ms",
-            "1000",
-            "--max-files",
-            "16",
-            "--max-directories",
-            "8",
-            "--max-file-bytes",
-            "4096",
-            "--max-total-bytes",
-            "16384",
-            "--directory-mode",
-            "0750",
-            "--file-mode",
-            "0o640",
         ]
         .map(str::to_owned)
         .to_vec()
@@ -1451,8 +1020,7 @@ mod tests {
             max_packages: 4,
             max_observations: 4,
             max_attesters: 4,
-            max_provider_environments: 4,
-            max_documents: 13,
+            max_documents: 9,
             max_document_bytes,
             max_total_document_bytes,
         }
@@ -1461,23 +1029,13 @@ mod tests {
     #[test]
     fn compile_grammar_is_closed_and_limits_are_positive_singletons() {
         let parsed = CompileArguments::parse(&compile_args(), compile_input_limits()).unwrap();
-        assert_eq!(parsed.execution.packages, [PathBuf::from("package")]);
-        assert_eq!(
-            parsed.execution.observations,
-            [PathBuf::from("observation.json")]
-        );
-        assert_eq!(parsed.execution.attesters, [PathBuf::from("attester.json")]);
-        assert_eq!(
-            parsed.execution.provider_environments,
-            [PathBuf::from("provider-environment.json")]
-        );
-        assert_eq!(parsed.execution.stdio_limits.max_stdin_bytes.get(), 1024);
-        assert_eq!(parsed.execution.stdio_limits.max_stdout_bytes.get(), 2048);
-        assert_eq!(parsed.execution.stdio_limits.max_stderr_bytes.get(), 512);
-        assert_eq!(
-            parsed.execution.stdio_limits.timeout_milliseconds.get(),
-            1000
-        );
+        assert_eq!(parsed.packages, [PathBuf::from("package")]);
+        assert_eq!(parsed.observations, [PathBuf::from("observation.json")]);
+        assert_eq!(parsed.attesters, [PathBuf::from("attester.json")]);
+        assert_eq!(parsed.stdio_limits.max_stdin_bytes.get(), 1024);
+        assert_eq!(parsed.stdio_limits.max_stdout_bytes.get(), 2048);
+        assert_eq!(parsed.stdio_limits.max_stderr_bytes.get(), 512);
+        assert_eq!(parsed.stdio_limits.timeout_milliseconds.get(), 1000);
 
         let mut trailing_attester = compile_args();
         trailing_attester.push("--attester".to_owned());
@@ -1525,77 +1083,6 @@ mod tests {
     }
 
     #[test]
-    fn build_grammar_fixes_explicit_no_replace_publication_policy() {
-        let parsed = FileTreeBuildArguments::parse(&build_args(), compile_input_limits()).unwrap();
-        assert_eq!(parsed.destination, PathBuf::from("generated-project"));
-        assert_eq!(parsed.execution.packages, [PathBuf::from("package")]);
-        assert_eq!(
-            parsed.publication.conflict(),
-            ConflictPolicy::RefuseExisting
-        );
-        assert_eq!(parsed.publication.directory_mode(), 0o750);
-        assert_eq!(parsed.publication.file_mode(), 0o640);
-        assert_eq!(parsed.publication.limits().max_files.get(), 16);
-        assert_eq!(parsed.publication.limits().max_directories.get(), 8);
-        assert_eq!(parsed.publication.limits().max_file_bytes.get(), 4096);
-        assert_eq!(parsed.publication.limits().max_total_bytes.get(), 16384);
-
-        let mut unknown = build_args();
-        unknown.push("--json".to_owned());
-        assert!(
-            FileTreeBuildArguments::parse(&unknown, compile_input_limits())
-                .unwrap_err()
-                .contains("unknown gooir build flag `--json`")
-        );
-
-        let mut duplicate = build_args();
-        duplicate.extend(["--file-mode".to_owned(), "600".to_owned()]);
-        assert!(
-            FileTreeBuildArguments::parse(&duplicate, compile_input_limits())
-                .unwrap_err()
-                .contains("gooir build accepts --file-mode exactly once")
-        );
-
-        let mut missing_limit = build_args();
-        let max_files = missing_limit
-            .iter()
-            .position(|value| value == "--max-files")
-            .unwrap();
-        missing_limit.drain(max_files..=max_files + 1);
-        assert!(
-            FileTreeBuildArguments::parse(&missing_limit, compile_input_limits())
-                .unwrap_err()
-                .contains("gooir build requires --max-files")
-        );
-
-        let mut zero_limit = build_args();
-        let max_files = zero_limit
-            .iter()
-            .position(|value| value == "--max-files")
-            .unwrap();
-        zero_limit[max_files + 1] = "0".to_owned();
-        assert!(
-            FileTreeBuildArguments::parse(&zero_limit, compile_input_limits())
-                .unwrap_err()
-                .contains("--max-files must be positive")
-        );
-
-        let mut unsafe_mode = build_args();
-        let mode = unsafe_mode
-            .iter()
-            .position(|value| value == "--directory-mode")
-            .unwrap();
-        unsafe_mode[mode + 1] = "0777".to_owned();
-        assert!(FileTreeBuildArguments::parse(&unsafe_mode, compile_input_limits()).is_ok());
-        unsafe_mode[mode + 1] = "1750".to_owned();
-        assert!(
-            FileTreeBuildArguments::parse(&unsafe_mode, compile_input_limits())
-                .unwrap_err()
-                .contains("publication policy is invalid")
-        );
-    }
-
-    #[test]
     fn compile_grammar_rejects_path_counts_before_accepting_excess_values() {
         let mut package_limited = compile_input_limits();
         package_limited.max_packages = 1;
@@ -1618,13 +1105,13 @@ mod tests {
         );
 
         let mut aggregate_limited = compile_input_limits();
-        aggregate_limited.max_documents = 4;
+        aggregate_limited.max_documents = 3;
         let mut documents = compile_args();
         documents.extend(["--attester".to_owned(), "second.json".to_owned()]);
         assert!(
             CompileArguments::parse(&documents, aggregate_limited)
                 .unwrap_err()
-                .contains("aggregate count limit 4")
+                .contains("aggregate count limit 3")
         );
     }
 
@@ -1634,7 +1121,6 @@ mod tests {
         let policy = directory.path().join("policy.json");
         let observation = directory.path().join("observation.json");
         let attester = directory.path().join("attester.json");
-        let provider_environment = directory.path().join("provider-environment.json");
         fs::write(
             &policy,
             br#"{"accepted_conformance":[{"extensions":{"same":1,"same":2}}]}"#,
@@ -1646,34 +1132,21 @@ mod tests {
             br#"{"authority":{"extensions":{"same":1,"same":2}}}"#,
         )
         .unwrap();
-        fs::write(
-            &provider_environment,
-            format!(
-                r#"{{"offer":"sha256:{}","variables":{{"same":"1","same":"2"}}}}"#,
-                "a".repeat(64)
-            ),
-        )
-        .unwrap();
 
         for error in [
-            read_execution_document::<AdmissionPolicy>(
+            read_compile_document::<AdmissionPolicy>(
                 &policy,
-                &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
+                &mut DocumentBudget::new(test_input_limits(1024, 4096)).unwrap(),
             )
             .unwrap_err(),
-            read_execution_document::<SourceObservation>(
+            read_compile_document::<SourceObservation>(
                 &observation,
-                &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
+                &mut DocumentBudget::new(test_input_limits(1024, 4096)).unwrap(),
             )
             .unwrap_err(),
-            read_execution_document::<LocalAttesterBinding>(
+            read_compile_document::<LocalAttesterBinding>(
                 &attester,
-                &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
-            )
-            .unwrap_err(),
-            read_execution_document::<LocalProviderEnvironmentBinding>(
-                &provider_environment,
-                &mut DocumentBudget::new(test_input_limits(1024, 4096), "compile").unwrap(),
+                &mut DocumentBudget::new(test_input_limits(1024, 4096)).unwrap(),
             )
             .unwrap_err(),
         ] {
@@ -1692,7 +1165,7 @@ mod tests {
         fs::write(&first, b"1234").unwrap();
         fs::write(&second, b"5678").unwrap();
 
-        let mut per_document = DocumentBudget::new(test_input_limits(3, 16), "compile").unwrap();
+        let mut per_document = DocumentBudget::new(test_input_limits(3, 16)).unwrap();
         assert!(
             per_document
                 .read(&first)
@@ -1700,7 +1173,7 @@ mod tests {
                 .contains("per-document limit 3")
         );
 
-        let mut aggregate = DocumentBudget::new(test_input_limits(8, 6), "compile").unwrap();
+        let mut aggregate = DocumentBudget::new(test_input_limits(8, 6)).unwrap();
         assert_eq!(aggregate.read(&first).unwrap(), b"1234");
         assert!(
             aggregate
@@ -1711,7 +1184,7 @@ mod tests {
 
         let mut count_limits = test_input_limits(8, 16);
         count_limits.max_documents = 1;
-        let mut count = DocumentBudget::new(count_limits, "compile").unwrap();
+        let mut count = DocumentBudget::new(count_limits).unwrap();
         assert_eq!(count.read(&first).unwrap(), b"1234");
         assert!(
             count
@@ -1725,7 +1198,7 @@ mod tests {
         fs::write(&target, b"{}").unwrap();
         symlink(&target, &link).unwrap();
         assert!(
-            DocumentBudget::new(test_input_limits(8, 16), "compile")
+            DocumentBudget::new(test_input_limits(8, 16))
                 .unwrap()
                 .read(&link)
                 .unwrap_err()
@@ -1733,7 +1206,7 @@ mod tests {
         );
 
         assert!(
-            DocumentBudget::new(test_input_limits(8, 16), "compile")
+            DocumentBudget::new(test_input_limits(8, 16))
                 .unwrap()
                 .read(directory.path())
                 .unwrap_err()
@@ -1743,7 +1216,7 @@ mod tests {
         let fifo = directory.path().join("input.fifo");
         mkfifo(&fifo, NixMode::S_IRUSR | NixMode::S_IWUSR).unwrap();
         assert!(
-            DocumentBudget::new(test_input_limits(8, 16), "compile")
+            DocumentBudget::new(test_input_limits(8, 16))
                 .unwrap()
                 .read(&fifo)
                 .unwrap_err()
