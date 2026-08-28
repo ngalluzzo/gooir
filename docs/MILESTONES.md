@@ -29,6 +29,8 @@
   heterogeneous, content-identified operations with exact local symbols.
 - Target-independent module legality planning over the existing capability
   graph, with exact occurrence binding and conservative full-coverage checks.
+- Explicit, policy-gated observation of exact facts contained by an admitted
+  module, without changing the invocation or authority-record protocols.
 
 ## Current boundary
 
@@ -57,9 +59,12 @@ The optional module dialect establishes the whole-unit semantic input needed
 by downstream code-generation consumers. Its separate planning adapter now
 standardizes exact target legality, candidate semantic planning, and binding a
 selected route back to contained operation occurrences. It does not yet link
-contained inputs to authority, execute the route, rewrite the module, or
-materialize target files. Those remain consumer-driven follow-up work over the
-established capability and authority substrate.
+contained inputs directly through inherited authority. Instead, the optional
+module observer can produce containment evidence and an untrusted child source
+observation; normal local policy must separately admit it. Once admitted, the
+child is ordinarily linkable in that ledger rather than scoped to one module
+invocation. Route execution, module rewriting, and target materialization
+remain consumer-driven follow-up work over the established substrate.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative
