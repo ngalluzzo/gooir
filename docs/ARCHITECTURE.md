@@ -49,12 +49,16 @@ declared dialect. Local symbol declarations and named, exactly typed symbol
 references provide structural links without interpreting either endpoint.
 
 The module contract deliberately contains no compilation target, pass
-pipeline, implementation selection, authority, or execution state. The
-current planner operates on outer value kinds and therefore does not infer
-progress or legality through same-kind `module -> module` rewrites. A future
-composition layer may expose contained facts to the existing capability graph
-and replace understood operations while preserving unknown operations and
-extensions, but that design does not change the five kernel concepts.
+pipeline, implementation selection, authority, or execution state.
+`gooir-module-planning` layers target legality over it without introducing a
+second transformation graph: candidate planning exposes the unique contained
+value-kind set to the existing semantic planner, while later route binding
+maps named initial uses to exact operation occurrences. A bound plan performs
+no replacements; it proves that every illegal occurrence is covered by the
+selected route and refuses same-kind/no-progress or uncovered-illegal cases.
+Legal operations remain outside the coverage claim. The plan still carries no
+authority or execution claim. This composition layer does not change the five
+kernel concepts.
 
 ## Five kernel concepts
 

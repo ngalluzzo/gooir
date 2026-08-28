@@ -689,6 +689,12 @@ impl SemanticPlanner {
         &self.scope_digest
     }
 
+    /// Finite bounds used by this immutable planning inventory.
+    #[must_use]
+    pub const fn limits(&self) -> PlanLimits {
+        self.limits
+    }
+
     /// Selects a route from a plan produced by this exact inventory snapshot.
     ///
     /// This is the inventory-bound form of [`SemanticPlan::select_route`]. It

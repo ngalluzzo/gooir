@@ -1,0 +1,19 @@
+[package]
+name = "gooir-module-planning"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gooir-capability.workspace = true
+gooir-module-v0.workspace = true
+gooir-planning.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
