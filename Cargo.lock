@@ -664,6 +664,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gooir-toolchain"
+version = "0.1.0"
+dependencies = [
+ "gooir-capability",
+ "gooir-derive",
+ "gooir-package",
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "gooir-wasip1-command-runtime"
 version = "0.1.0"
 dependencies = [

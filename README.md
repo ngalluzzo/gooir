@@ -35,6 +35,7 @@ The repository also contains narrow, optional support:
 | `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
+| `gooir-toolchain` | host SDK for measuring, staging, locking, and independently loading external provider/attester deployment images |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -68,6 +69,14 @@ An attester-binding document is local host configuration, not a package offer:
 
 The complete authority must be accepted by the policy, and its artifact digest
 must equal the copied installed resource bytes.
+
+External ecosystems do not need to recreate that deployment assembly.
+`gooir-toolchain` accepts exact offer-free package manifests plus explicitly
+named final provider and attester resources, measures their bytes, derives
+ordinary provider offers, retains attesters only as host bindings, publishes a
+create-only toolchain image, and independently reloads it into a package
+registry and attester inventory. It never discovers or builds executables,
+chooses a provider, or imports target meaning into GOOIR.
 
 This bounded adapter executes selected artifacts with the caller's OS
 privileges. It supplies no arguments or environment, performs no `PATH` lookup,

@@ -144,6 +144,18 @@ deadline bounds; timeout kills and reaps the child. The child retains the
 caller's ordinary OS authority, so this is not a sandbox, credential boundary,
 daemon lifecycle, or durable host.
 
+`gooir-toolchain` is optional host SDK support before that execution boundary.
+It turns explicit final external artifacts and exact package recipes into a
+create-only deployment image, then independently reloads the image through the
+ordinary package loader. Provider resources become package offers only through
+their measured bytes. Attester resources remain exact host bindings in a
+separate toolchain lock and never become semantic implementation offers. A
+loaded toolchain supplies inventory; it does not select, execute, attest, admit,
+or materialize a product artifact. Loading is bounded both per package and over
+the complete image. Create-only publication returns an explicit committed
+report, including uncertain parent-directory synchronization after the atomic
+commit rather than a retryable-looking error.
+
 ## Extension direction
 
 ```text
@@ -182,6 +194,11 @@ not authorize a second runtime inside GOOIR.
 
 `gooir-wasip1-command-runtime` is a reusable host library. It is not semantic
 meaning and it does not make WASI the required provider backend.
+
+`gooir-toolchain` is likewise reusable host support, not a backend registry or
+target SDK. Backend is an ecosystem role played by an ordinary provider. The
+toolchain SDK only removes repeated deployment measurement and binding
+machinery from those external ecosystems.
 
 ## Proven consumers
 

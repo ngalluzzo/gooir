@@ -9,6 +9,7 @@ members = [
     "crates/gooir-planning",
     "crates/gooir-plugin-process",
     "crates/gooir-provider",
+    "crates/gooir-toolchain",
     "crates/gooir-wasip1-command-runtime",
     "crates/lift-defeasible",
 ]
@@ -29,6 +30,7 @@ gooir-package = { path = "crates/gooir-package" }
 gooir-planning = { path = "crates/gooir-planning" }
 gooir-plugin-process = { path = "crates/gooir-plugin-process" }
 gooir-provider = { path = "crates/gooir-provider" }
+gooir-toolchain = { path = "crates/gooir-toolchain" }
 gooir-wasip1-command-runtime = { path = "crates/gooir-wasip1-command-runtime" }
 lift-defeasible = { path = "crates/lift-defeasible" }
 
