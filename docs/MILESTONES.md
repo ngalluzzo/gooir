@@ -20,6 +20,9 @@
 - A neutral v1 attester assessment-request and authoring seam.
 - Neutral graph diagnostics and explicitly loaded package manifests.
 - A bounded WASI command runtime usable by external hosts.
+- A separately versioned, bounded, content-addressed virtual file-tree
+  artifact contract with portable path and collision rules, but no filesystem
+  authority or materializer.
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
   downstream consumer.
@@ -40,6 +43,12 @@ conservative extension handling, and protocol framing. The data-model and
 native HTTP/Axum ecosystems exercise materially different provider shapes.
 Artifact measurement, execution policy, conformance, and admission remain host
 concerns and are not implied by SDK stability.
+
+The optional file-tree dialect standardizes only an artifact value shared by
+independent consumers. It does not widen `CompilerDriver`: destination choice,
+write policy, materialization, receipts, and product build orchestration remain
+outside the semantic driver. A future product build driver must resolve an
+exact admitted file-tree authority before invoking any host materializer.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,

@@ -35,6 +35,7 @@ The repository also contains narrow, optional support:
 | `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
+| `gooir-file-tree-v1` | portable content-addressed virtual-file artifact dialect; no filesystem effects |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -154,6 +155,12 @@ The short version:
   `Failed`, without collapsing their remedies;
 - unknown and incompatible claims fail closed;
 - GOOIR emits neutral documents; an external host performs effects.
+
+The optional `org.gooi.artifact.file_tree@1.0.0` dialect is one such neutral
+document. It can be the admitted output of a generation capability, but it
+contains only portable relative paths, exact bytes, media types, and content
+digests. It grants no destination or write authority and is not evidence that
+anything was materialized.
 
 ## Qualify
 
