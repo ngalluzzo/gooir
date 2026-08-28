@@ -94,6 +94,11 @@ backend abstraction; the reusable derivation and provider SDKs are sufficient.
 The legacy in-process CLI derivation path remains only as an isolated migration
 bridge and is not part of the 0.1 host contract.
 
+The first read-only prerequisite is now present in the artifact SDK: bounded
+recursive source capture and verified clean managed-output snapshot recovery.
+They remain authority-neutral host I/O; preset, frontend, bridge, backend, and
+Fleetd proof work stays external or above the kernel as Decision 0046 requires.
+
 The repository split in GOOIR-0033 is itself an acceptance gate: GOOIR must
 continue to compile and test while both extracted ecosystems compile and test
 solely as downstream users of its public crates.

@@ -233,6 +233,14 @@ nor claims that the named observer artifact executed. The exact output is
 preflighted as `ContentSet` before provider execution, and only a `Produced`
 answer can reach publication.
 
+The artifact SDK also exposes the reusable read-only filesystem pieces needed
+by product hosts. `LocalSourceTreeReader` recursively captures one bounded,
+no-symlink source root as `ContentSet`; `LocalPublisher::snapshot` recovers the
+exact bytes and verified manifest of one clean managed output without its host
+marker. Neither operation observes or admits a fact. A product host must apply
+its own explicit observation authority before using those bytes as derivation
+inputs.
+
 This reference path is intentionally a command composition rather than a new
 host or build protocol. Backend repositories supply provider and attester
 packages for installed toolchains, not per-dialect CLIs. Product hosts may call

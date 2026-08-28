@@ -10,6 +10,7 @@ use gooir_capability::protocol::AdmittedFactRef;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
+use crate::source::{ManagedTreeReadError, SourceTreeError, SourceTreeLimits, read_managed_tree};
 use crate::{Admitted, ContentPath, ContentSet};
 
 const MANIFEST_PROTOCOL: &str = "gooir-managed-output/1";
@@ -189,6 +190,13 @@ pub struct OwnershipManifest {
     pub output_id: ManagedOutputId,
     pub source: AdmittedFactRef,
     pub files: Vec<ManagedFile>,
+}
+
+/// One verified read-only recovery of a clean managed output.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ManagedSnapshot {
+    pub manifest: OwnershipManifest,
+    pub content: ContentSet,
 }
 
 impl OwnershipManifest {
@@ -722,6 +730,26 @@ impl LocalPublisher {
         platform::with_parent_lock(output, false, || self.diff_unlocked(artifact, output))
     }
 
+    /// Recovers the exact bytes of one existing clean managed output.
+    ///
+    /// The ownership marker is returned separately as the verified manifest
+    /// and is never included in the recovered content set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for every existing destination that is unmanaged,
+    /// owned by another identity, drifted, malformed, over configured bounds,
+    /// or changed during recovery. When the immediate parent exists and can be
+    /// locked, a missing destination returns `Ok(None)`. An absent immediate
+    /// parent is [`PublishError::MissingParent`] because no coordination lock
+    /// can be taken.
+    pub fn snapshot(
+        &self,
+        output: &ManagedOutput,
+    ) -> Result<Option<ManagedSnapshot>, PublishError> {
+        platform::with_parent_lock(output, false, || self.snapshot_unlocked(output))
+    }
+
     /// Creates or atomically replaces one clean dedicated managed directory.
     ///
     /// # Errors
@@ -837,6 +865,60 @@ impl LocalPublisher {
             state: inspection.state,
             changes,
         })
+    }
+
+    fn snapshot_unlocked(
+        &self,
+        output: &ManagedOutput,
+    ) -> Result<Option<ManagedSnapshot>, PublishError> {
+        let inspection = inspect(output, &self.limits)?;
+        let (manifest, content) = match inspection.state {
+            OutputState::Missing => return Ok(None),
+            OutputState::Unmanaged => {
+                return Err(PublishError::Unmanaged(output.destination.clone()));
+            }
+            OutputState::WrongOwner => {
+                let actual = inspection
+                    .manifest
+                    .as_ref()
+                    .map(|manifest| manifest.output_id.clone())
+                    .ok_or_else(|| PublishError::Unmanaged(output.destination.clone()))?;
+                return Err(PublishError::WrongOwner {
+                    expected: output.id.clone(),
+                    actual,
+                });
+            }
+            OutputState::ManagedDrifted => {
+                return Err(PublishError::Drift(output.destination.clone()));
+            }
+            OutputState::ManagedClean => (
+                inspection
+                    .manifest
+                    .clone()
+                    .expect("clean inspection has a manifest"),
+                inspection
+                    .content
+                    .clone()
+                    .expect("clean inspection has exact content"),
+            ),
+        };
+
+        // The shared lock coordinates other SDK publishers, but cannot stop a
+        // process that ignores it. Compare a second descriptor-anchored
+        // inspection so a non-cooperating change during recovery cannot be
+        // returned as a clean snapshot.
+        let rechecked = inspect(output, &self.limits)?;
+        if rechecked.state != OutputState::ManagedClean
+            || rechecked.manifest != inspection.manifest
+            || rechecked.observed != inspection.observed
+            || rechecked.content != inspection.content
+        {
+            return Err(PublishError::Race(
+                "managed output changed during recovery".to_owned(),
+            ));
+        }
+
+        Ok(Some(ManagedSnapshot { manifest, content }))
     }
 
     #[allow(clippy::too_many_lines)]
@@ -984,6 +1066,7 @@ fn inspect(output: &ManagedOutput, limits: &PublicationLimits) -> Result<Inspect
                 state: OutputState::Missing,
                 manifest: None,
                 observed: BTreeMap::new(),
+                content: None,
             });
         }
         Err(error) => return Err(io_error("inspect", destination, error)),
@@ -993,100 +1076,155 @@ fn inspect(output: &ManagedOutput, limits: &PublicationLimits) -> Result<Inspect
             state: OutputState::Unmanaged,
             manifest: None,
             observed: BTreeMap::new(),
+            content: None,
         });
     }
-    let marker = destination.join(crate::MANAGED_OUTPUT_MARKER);
-    let marker_metadata = match std::fs::symlink_metadata(&marker) {
-        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => metadata,
-        Ok(_) => {
-            return Ok(Inspection {
-                state: OutputState::Unmanaged,
-                manifest: None,
-                observed: BTreeMap::new(),
-            });
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(Inspection {
-                state: OutputState::Unmanaged,
-                manifest: None,
-                observed: BTreeMap::new(),
-            });
-        }
-        Err(error) => return Err(io_error("inspect marker", marker, error)),
+    let tree = match read_managed_tree(
+        destination,
+        SourceTreeLimits {
+            max_files: limits.max_files,
+            max_directories: limits.max_directories,
+            max_file_bytes: limits.max_file_bytes,
+            max_total_bytes: limits.max_total_bytes,
+        },
+        limits.max_manifest_bytes,
+        true,
+    ) {
+        Ok(tree) => tree,
+        Err(error) => return inspect_managed_tree_error(output, error),
     };
-    if marker_metadata.len() > limits.max_manifest_bytes {
+    let marker_bytes = tree
+        .marker
+        .as_deref()
+        .expect("required managed-tree reads return a marker");
+    let Some(manifest) = validated_ownership_manifest(marker_bytes) else {
         return Ok(Inspection {
             state: OutputState::Unmanaged,
             manifest: None,
             observed: BTreeMap::new(),
+            content: None,
         });
-    }
-    let marker_bytes = match platform::read_nofollow(&marker, limits.max_manifest_bytes) {
-        Ok(bytes) => bytes,
-        Err(PublishError::Drift(_)) => {
-            return Ok(Inspection {
-                state: OutputState::Unmanaged,
-                manifest: None,
-                observed: BTreeMap::new(),
-            });
-        }
-        Err(error) => return Err(error),
     };
-    let manifest: OwnershipManifest = match serde_json::from_slice(&marker_bytes) {
-        Ok(manifest) => manifest,
-        Err(_) => {
-            return Ok(Inspection {
-                state: OutputState::Unmanaged,
-                manifest: None,
-                observed: BTreeMap::new(),
-            });
-        }
-    };
-    if !manifest.source.extensions.is_empty()
-        || manifest.validate().is_err()
-        || manifest.to_canonical_json().ok().as_deref() != Some(&marker_bytes)
-    {
-        return Ok(Inspection {
-            state: OutputState::Unmanaged,
-            manifest: None,
-            observed: BTreeMap::new(),
-        });
-    }
+    let observed = observed_files(&tree.content);
     if manifest.output_id != output.id {
         return Ok(Inspection {
             state: OutputState::WrongOwner,
             manifest: Some(manifest),
-            observed: BTreeMap::new(),
+            observed,
+            content: Some(tree.content),
         });
     }
-    let observed_tree = match walk_managed(destination, limits) {
-        Ok(tree) => tree,
-        Err(WalkError::Drift) => {
-            return Ok(Inspection {
-                state: OutputState::ManagedDrifted,
-                manifest: Some(manifest),
-                observed: BTreeMap::new(),
-            });
-        }
-        Err(WalkError::Publish(error)) => return Err(error),
-    };
     let declared: BTreeMap<_, _> = manifest
         .files
         .iter()
         .map(|file| (file.path.clone(), (file.digest.clone(), file.bytes)))
         .collect();
     let declared_directories = managed_directories(manifest.files.iter().map(|file| &file.path));
-    let state =
-        if declared == observed_tree.files && declared_directories == observed_tree.directories {
-            OutputState::ManagedClean
-        } else {
-            OutputState::ManagedDrifted
-        };
+    let state = if declared == observed && declared_directories == tree.directories {
+        OutputState::ManagedClean
+    } else {
+        OutputState::ManagedDrifted
+    };
     Ok(Inspection {
         state,
         manifest: Some(manifest),
-        observed: observed_tree.files,
+        observed,
+        content: Some(tree.content),
     })
+}
+
+fn inspect_managed_tree_error(
+    output: &ManagedOutput,
+    error: ManagedTreeReadError,
+) -> Result<Inspection, PublishError> {
+    let manifest = error
+        .marker
+        .as_deref()
+        .and_then(validated_ownership_manifest);
+    if error.marker.is_none() {
+        return match error.source {
+            SourceTreeError::UnsupportedPlatform => Err(PublishError::UnsupportedPlatform),
+            SourceTreeError::Io {
+                operation,
+                path,
+                source,
+            } => Err(PublishError::Io {
+                operation,
+                path,
+                source,
+            }),
+            _ => Ok(Inspection {
+                state: OutputState::Unmanaged,
+                manifest: None,
+                observed: BTreeMap::new(),
+                content: None,
+            }),
+        };
+    }
+
+    let Some(manifest) = manifest else {
+        return Ok(Inspection {
+            state: OutputState::Unmanaged,
+            manifest: None,
+            observed: BTreeMap::new(),
+            content: None,
+        });
+    };
+
+    if manifest.output_id != output.id {
+        return Ok(Inspection {
+            state: OutputState::WrongOwner,
+            manifest: Some(manifest),
+            observed: BTreeMap::new(),
+            content: None,
+        });
+    }
+    match error.source {
+        SourceTreeError::UnsupportedPlatform => Err(PublishError::UnsupportedPlatform),
+        SourceTreeError::Io {
+            operation,
+            path,
+            source,
+        } => Err(PublishError::Io {
+            operation,
+            path,
+            source,
+        }),
+        _ => Ok(Inspection {
+            state: OutputState::ManagedDrifted,
+            manifest: Some(manifest),
+            observed: BTreeMap::new(),
+            content: None,
+        }),
+    }
+}
+
+fn validated_ownership_manifest(marker_bytes: &[u8]) -> Option<OwnershipManifest> {
+    let manifest: OwnershipManifest = serde_json::from_slice(marker_bytes).ok()?;
+    if !manifest.source.extensions.is_empty()
+        || manifest.validate().is_err()
+        || manifest.to_canonical_json().ok().as_deref() != Some(marker_bytes)
+    {
+        None
+    } else {
+        Some(manifest)
+    }
+}
+
+fn observed_files(content: &ContentSet) -> BTreeMap<ContentPath, (ContentDigest, u64)> {
+    content
+        .files
+        .iter()
+        .map(|file| {
+            (
+                file.path.clone(),
+                (
+                    ContentDigest::from_bytes(&file.content),
+                    u64::try_from(file.content.len()).unwrap_or(u64::MAX),
+                ),
+            )
+        })
+        .collect()
 }
 
 fn managed_directories<'a>(paths: impl Iterator<Item = &'a ContentPath>) -> BTreeSet<String> {
@@ -1098,89 +1236,6 @@ fn managed_directories<'a>(paths: impl Iterator<Item = &'a ContentPath>) -> BTre
         }
     }
     directories
-}
-
-enum WalkError {
-    Drift,
-    Publish(PublishError),
-}
-
-struct WalkedTree {
-    files: BTreeMap<ContentPath, (ContentDigest, u64)>,
-    directories: BTreeSet<String>,
-}
-
-fn walk_managed(destination: &Path, limits: &PublicationLimits) -> Result<WalkedTree, WalkError> {
-    let mut observed = BTreeMap::new();
-    let mut observed_directories = BTreeSet::new();
-    let mut stack = vec![destination.to_owned()];
-    let mut total = 0_u64;
-    while let Some(directory) = stack.pop() {
-        let entries = std::fs::read_dir(&directory).map_err(|error| {
-            WalkError::Publish(io_error("read managed directory", &directory, error))
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                WalkError::Publish(io_error("read managed entry", &directory, error))
-            })?;
-            let path = entry.path();
-            let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
-                WalkError::Publish(io_error("inspect managed entry", &path, error))
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(WalkError::Drift);
-            }
-            if metadata.is_dir() {
-                let relative = path
-                    .strip_prefix(destination)
-                    .map_err(|_| WalkError::Drift)?
-                    .to_str()
-                    .ok_or(WalkError::Drift)?
-                    .replace(std::path::MAIN_SEPARATOR, "/");
-                ContentPath::parse(&relative).map_err(|_| WalkError::Drift)?;
-                if observed_directories.len() >= limits.max_directories {
-                    return Err(WalkError::Drift);
-                }
-                observed_directories.insert(relative);
-                stack.push(path);
-                continue;
-            }
-            if !metadata.is_file() {
-                return Err(WalkError::Drift);
-            }
-            let relative = path
-                .strip_prefix(destination)
-                .map_err(|_| WalkError::Drift)?;
-            let relative = relative
-                .to_str()
-                .ok_or(WalkError::Drift)?
-                .replace(std::path::MAIN_SEPARATOR, "/");
-            if relative == crate::MANAGED_OUTPUT_MARKER {
-                continue;
-            }
-            if observed.len() >= limits.max_files || metadata.len() > limits.max_file_bytes {
-                return Err(WalkError::Drift);
-            }
-            total = total.checked_add(metadata.len()).ok_or(WalkError::Drift)?;
-            if total > limits.max_total_bytes {
-                return Err(WalkError::Drift);
-            }
-            let portable = ContentPath::parse(relative).map_err(|_| WalkError::Drift)?;
-            let bytes = platform::read_nofollow(&path, limits.max_file_bytes)
-                .map_err(WalkError::Publish)?;
-            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != metadata.len() {
-                return Err(WalkError::Drift);
-            }
-            observed.insert(
-                portable,
-                (ContentDigest::from_bytes(&bytes), metadata.len()),
-            );
-        }
-    }
-    Ok(WalkedTree {
-        files: observed,
-        directories: observed_directories,
-    })
 }
 
 fn clean_stage_after_error(stage: &Path, original: PublishError) -> PublishError {
@@ -1216,6 +1271,7 @@ struct Inspection {
     state: OutputState,
     manifest: Option<OwnershipManifest>,
     observed: BTreeMap<ContentPath, (ContentDigest, u64)>,
+    content: Option<ContentSet>,
 }
 
 fn io_error(operation: &'static str, path: impl Into<PathBuf>, source: io::Error) -> PublishError {
@@ -1238,10 +1294,6 @@ mod platform {
         _exclusive: bool,
         _operation: impl FnOnce() -> Result<T, PublishError>,
     ) -> Result<T, PublishError> {
-        Err(PublishError::UnsupportedPlatform)
-    }
-
-    pub(super) fn read_nofollow(_path: &Path, _max_bytes: u64) -> Result<Vec<u8>, PublishError> {
         Err(PublishError::UnsupportedPlatform)
     }
 

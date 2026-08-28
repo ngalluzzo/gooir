@@ -1,13 +1,16 @@
-//! Optional artifact contract and admitted local-publication SDK.
+//! Optional artifact contract and read-only/local-publication SDK.
 //!
 //! This crate is outside GOOIR's semantic kernel. External ecosystems may
 //! produce its portable [`ContentSet`] value through ordinary capabilities.
-//! A host may then resolve an exact admitted value and publish it under
-//! explicit local authority. Publication is never a capability edge.
+//! A host may read bounded source bytes, resolve an exact admitted value,
+//! recover a verified managed snapshot, and publish under explicit local
+//! authority. Filesystem I/O is never a capability edge and grants no semantic
+//! authority by itself.
 
 #![forbid(unsafe_code)]
 
 mod local;
+mod source;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -24,10 +27,11 @@ use serde_json::Value;
 
 pub use local::{
     CheckReport, CleanupStatus, ContentDigest, DiffReport, LocalPublisher, ManagedFile,
-    ManagedOutput, ManagedOutputError, ManagedOutputId, ManifestId, OutputState, OwnershipManifest,
-    PathChange, PathChangeKind, PublicationLimits, PublicationOutcome, PublicationReceipt,
-    PublicationReceiptId, PublishError, SyncStatus,
+    ManagedOutput, ManagedOutputError, ManagedOutputId, ManagedSnapshot, ManifestId, OutputState,
+    OwnershipManifest, PathChange, PathChangeKind, PublicationLimits, PublicationOutcome,
+    PublicationReceipt, PublicationReceiptId, PublishError, SyncStatus,
 };
+pub use source::{LocalSourceTreeReader, SourceTreeError, SourceTreeLimits};
 
 /// Exact package coordinate for the portable content-set contract.
 pub const CONTENT_SET_PACKAGE: &str = "org.gooi.artifact.content_set@1.0.0";
