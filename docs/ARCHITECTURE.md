@@ -200,6 +200,14 @@ This boundary adds no `Backend`, `Materialize`, lowering/lifting, or lens edge.
 Generation remains an ordinary capability. Concrete target contracts and
 providers remain external packages.
 
+Proposed Decision 0046 defines the application-generation proof above this
+boundary: one external TypeSpec frontend emits reusable portable facts,
+reusable bridges produce independent native surfaces, complete-root target
+providers consume them, target-native tools validate their output, and a thin
+workspace host publishes admitted `ContentSet`s. Parser ASTs, generator IRs,
+and workspace graphs do not enter the kernel. Fleetd must prove that path
+without manual artifact assembly before the decision is accepted.
+
 ## Reference managed-build composition
 
 The generic CLI demonstrates, but does not hide, the complete public Rust SDK

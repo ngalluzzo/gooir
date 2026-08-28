@@ -85,11 +85,14 @@ cooperative parent locking, refuses unmanaged or drifted state, and reports
 post-commit synchronization and cleanup uncertainty without implying a
 portable durability guarantee.
 
-The next meaningful semantic work should be driven by another real consumer
-encountering a specific missing protocol property, not by adding speculative
-dialects or a generic effect runtime. The legacy in-process CLI derivation path
-remains only as an isolated migration bridge and is not part of the 0.1 host
-contract.
+Proposed Decision 0046 defines the next product gate: source-tree observation
+and managed snapshots, minimal application and bridge contracts, the external
+TypeSpec frontend, a separately authorized locked workspace preset, complete
+artifact backends, and one real Fleetd vertical slice with no manual assembly.
+This work must not add another kernel compiler surface, universal IR, or
+backend abstraction; the reusable derivation and provider SDKs are sufficient.
+The legacy in-process CLI derivation path remains only as an isolated migration
+bridge and is not part of the 0.1 host contract.
 
 The repository split in GOOIR-0033 is itself an acceptance gate: GOOIR must
 continue to compile and test while both extracted ecosystems compile and test

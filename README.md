@@ -276,6 +276,11 @@ they are no longer active package surface.
 the substrate is finite. [Decision 0033](docs/DECISIONS/0033_SUBTRACT_AND_EXTRACT.md)
 records the repository split. [Decision 0034](docs/DECISIONS/0034_V1_DERIVATION_FACADE.md)
 defines the 0.1 product façade.
+[Decision 0045](docs/DECISIONS/0045_EXACT_PROVIDER_AUTHORITY.md) separates exact
+provider authority from independent conformance, and
+[Decision 0046](docs/DECISIONS/0046_APPLICATION_GENERATION_ECOSYSTEM.md)
+proposes the application-generation ecosystem above the kernel and names the
+Fleetd proof required before acceptance.
 
 The short version:
 
