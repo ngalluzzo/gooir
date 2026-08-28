@@ -582,6 +582,9 @@ dependencies = [
  "gooir-capability",
  "gooir-derive",
  "gooir-doctor",
+ "gooir-file-tree-build",
+ "gooir-file-tree-materializer",
+ "gooir-file-tree-v1",
  "gooir-package",
  "gooir-planning",
  "gooir-plugin-process",
@@ -589,6 +592,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 

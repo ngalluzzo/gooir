@@ -190,8 +190,18 @@ refused. `Blocked`, `Unreachable`, `Refused`, and `Failed` bypass the
 materializer unchanged. Physical success retains both the admitted
 `ProducedAnswer` and materializer receipt. Artifact-gate and materializer
 failures stay host-local errors and retain the admitted product for diagnosis.
-This composition adds no build dialect, capability edge, serialized receipt,
-retry policy, or durable journal.
+The library composition adds no build dialect, capability edge, serialized
+receipt, retry policy, or durable journal.
+
+`gooir build` is the concrete local product entrypoint over that composition.
+It loads only caller-named packages and authority documents, fixes the target
+to FileTree, and requires the caller to state one absent destination, every
+stdio and publication bound, and ordinary Unix modes. A non-produced semantic
+answer retains its category and exit remedy without entering the materializer.
+A successful local receipt is rendered for a human operator, including its
+durability state, but is not exposed as JSON or promoted to a stable protocol.
+Thus command orchestration knows about FileTree and filesystem effects while
+the compiler, planner, and dialect remain unaware of both.
 
 ## Extension direction
 

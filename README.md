@@ -32,7 +32,7 @@ The repository also contains narrow, optional support:
 
 | Crate | Status |
 | --- | --- |
-| `gooir-cli` | bounded local `compile`, neutral graph inspection, and a legacy execution adapter |
+| `gooir-cli` | bounded local `compile` and physical FileTree `build`, neutral graph inspection, and a legacy execution adapter |
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-file-tree-v1` | portable content-addressed virtual-file artifact dialect; no filesystem effects |
@@ -58,6 +58,25 @@ uses conservative complete selection, explicitly links each step, runs the
 exact copied offer artifact over local stdio, independently assesses it with an
 exact copied attester resource, and admits the result before linking a later
 step. Run `gooir --help` for the complete invocation.
+
+`gooir build <destination>` is the physical FileTree entrypoint over the same
+explicit package, observation, policy, attester, and bounded stdio inputs. It
+fixes the target to `org.gooi.artifact.file_tree/tree@1.0.0`, requires explicit
+positive file/directory/byte limits and Unix modes, and atomically refuses every
+existing destination. Only an admitted `Produced` answer reaches the local
+materializer. Success prints the semantic identity, local destination, exact
+file digests, modes, and durability state as host-local evidence; there is no
+JSON flag or stable serialized build receipt.
+
+```sh
+cargo run -q --bin gooir -- build ./generated-project \
+  --package /path/to/file-tree-provider-package \
+  --policy ./policy.json --observation ./source.json --attester ./attester.json \
+  --stdin-bytes 1048576 --stdout-bytes 1048576 --stderr-bytes 65536 \
+  --timeout-ms 5000 --max-files 4096 --max-directories 4096 \
+  --max-file-bytes 67108864 --max-total-bytes 268435456 \
+  --directory-mode 0750 --file-mode 0640
+```
 
 An attester-binding document is local host configuration, not a package offer:
 
@@ -180,6 +199,12 @@ host explicitly validates the compiler's complete-selection authority
 extension; every other unknown authority semantic and every FileTree extension
 still fails closed. Host failures retain the exact admitted product but do not
 become a serialized semantic outcome.
+
+The CLI exposes that exact composition as `gooir build`. This is the first
+end-to-end product path from explicitly installed dialect packages to actual
+files. It does not grant the dialect or compiler filesystem authority: the
+destination, no-replace policy, publication limits, and modes enter only at the
+host command boundary.
 
 ## Qualify
 

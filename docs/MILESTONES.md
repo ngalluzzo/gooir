@@ -29,6 +29,9 @@
 - A FileTree build host that composes the compiler driver and materializer,
   preserves all non-produced semantic outcomes without filesystem effects, and
   binds physical success to both the admitted product and effect receipt.
+- A bounded `gooir build` entrypoint that runs that exact composition from
+  explicit packages and authority documents to an atomically published local
+  project directory under caller-stated limits and modes.
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
   downstream consumer.
@@ -67,6 +70,13 @@ The first build host is deliberately in-process and policy-thin. It recognizes
 only the compiler's exact complete-selection authority extension, does not add
 a stable build protocol, and delegates retry and post-crash interpretation to
 the selected materializer and surrounding product host.
+
+The local `gooir build` command is one such surrounding host. It fixes the
+semantic target to FileTree and fixes conflict handling to no-replace while
+requiring explicit destination, stdio bounds, publication bounds, and Unix
+modes. It renders the local receipt for an operator but deliberately offers no
+JSON receipt surface. This makes physical generation usable without widening
+the semantic kernel or implying portable effect evidence.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,
