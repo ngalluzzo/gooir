@@ -339,6 +339,75 @@ fn compiler_driver_runs_exact_provider_authorized_hops_without_attesters() {
 }
 
 #[test]
+fn admitted_sources_fan_out_across_exact_outputs_without_reobservation() {
+    let fixture = Fixture::new(false);
+    let mut driver = fixture.provider_authorized_driver();
+    let inputs = driver
+        .admit_sources([fixture.source.clone()])
+        .expect("the source is explicitly authorized");
+    assert_eq!(inputs.len(), 1);
+    let source_snapshot = driver.ledger().export().unwrap();
+    assert_eq!(source_snapshot.facts.len(), 1);
+    assert_eq!(source_snapshot.authority_records.len(), 1);
+
+    let first_target = RouteOutputRef {
+        capability: capability("first"),
+        output_port: port("result"),
+        extensions: BTreeMap::new(),
+    };
+    let Answer::Produced(first) = driver.derive_output(first_target.clone(), &inputs) else {
+        panic!("the first exact output must be produced")
+    };
+    let intermediate = first
+        .output(&first_target)
+        .expect("the named admitted output must be harvestable");
+
+    let mut unsupported_target = first_target.clone();
+    unsupported_target
+        .extensions
+        .insert("test.unknown".to_owned(), json!(true));
+    assert!(first.output(&unsupported_target).is_none());
+    let mut ambiguous = first.as_ref().clone();
+    ambiguous.admitted.push(ambiguous.admitted[0].clone());
+    assert!(ambiguous.output(&first_target).is_none());
+    let mut wrong_selection = first.as_ref().clone();
+    wrong_selection.selection_id = serde_json::from_value(json!(sha('9'))).unwrap();
+    assert!(wrong_selection.output(&first_target).is_none());
+
+    let second_target = RouteOutputRef {
+        capability: capability("second"),
+        output_port: port("result"),
+        extensions: BTreeMap::new(),
+    };
+    let Answer::Produced(second) =
+        driver.derive_output(second_target.clone(), std::slice::from_ref(&intermediate))
+    else {
+        panic!("the second exact output must consume the admitted first output")
+    };
+    let target = second
+        .output(&second_target)
+        .expect("the terminal named output must be harvestable");
+
+    assert_eq!(driver.host().invocations.len(), 2);
+    assert_eq!(driver.host().assessments, 0);
+    let final_snapshot = driver.ledger().export().unwrap();
+    assert_eq!(final_snapshot.facts.len(), 3);
+    assert_eq!(final_snapshot.authority_records.len(), 3);
+    assert_eq!(
+        driver.ledger().resolve(&inputs[0]).unwrap().fact.payload,
+        json!({"value": 1})
+    );
+    assert_eq!(
+        driver.ledger().resolve(&intermediate).unwrap().fact.payload,
+        json!({"value": 2})
+    );
+    assert_eq!(
+        driver.ledger().resolve(&target).unwrap().fact.payload,
+        json!({"value": 3})
+    );
+}
+
+#[test]
 fn multi_hop_compile_uses_installed_offers_linking_host_assessment_and_admission() {
     let fixture = Fixture::new(true);
     let mut installed_artifacts = fixture

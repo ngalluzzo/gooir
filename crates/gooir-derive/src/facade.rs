@@ -5,7 +5,8 @@ use std::fmt;
 use std::num::NonZeroUsize;
 
 use gooir_capability::authority::{
-    AdmissionDecision, AdmissionLedger, AdmissionPolicy, AuthorityRecord, ConformanceAuthority,
+    AdmissionDecision, AdmissionLedger, AdmissionPolicy, AuthorityBasis, AuthorityRecord,
+    ConformanceAuthority,
 };
 use gooir_capability::protocol::{
     AdmittedFactRef, CapabilityFailure, CapabilityInvocation, ConformanceSuiteId, LinkedInput,
@@ -338,6 +339,55 @@ pub struct ProducedAnswer {
     pub selection_id: CompleteSelectionId,
     pub target: AdmittedFactRef,
     pub admitted: Vec<AuthorityRecord>,
+}
+
+impl ProducedAnswer {
+    /// Returns the one exact admitted output produced at these semantic
+    /// coordinates, including its contextual authority reference.
+    ///
+    /// Unsupported target extensions, invalid records, absent outputs, and
+    /// duplicate matches all return `None` rather than choosing implicitly.
+    #[must_use]
+    pub fn output(&self, target: &RouteOutputRef) -> Option<AdmittedFactRef> {
+        if !target.extensions.is_empty()
+            || self
+                .admitted
+                .iter()
+                .any(|authority| authority.validate().is_err())
+        {
+            return None;
+        }
+        let mut matching = self
+            .admitted
+            .iter()
+            .filter(|authority| match &authority.basis {
+                AuthorityBasis::Derived {
+                    output_port,
+                    invocation,
+                    ..
+                }
+                | AuthorityBasis::ProviderAuthorized {
+                    output_port,
+                    invocation,
+                    ..
+                } => {
+                    invocation
+                        .selection
+                        .extensions
+                        .get(COMPLETE_SELECTION_EXTENSION)
+                        .and_then(Value::as_str)
+                        == Some(self.selection_id.as_str())
+                        && invocation.specification.id == target.capability
+                        && *output_port == target.output_port
+                }
+                AuthorityBasis::Source { .. } => false,
+            });
+        let authority = matching.next()?;
+        if matching.next().is_some() {
+            return None;
+        }
+        Some(reference_for(authority))
+    }
 }
 
 /// One exact missing independent attester.

@@ -122,6 +122,26 @@ if let Answer::Produced(produced) = compiler.compile_output(exact_output, observ
 }
 ```
 
+For one-source-to-many-output builds, admit the source once and retain its
+authority reference. A multi-output frontend invocation exposes every named
+admitted output without requiring callers to unpack authority records:
+
+```rust
+let source = compiler.admit_sources(observations)?;
+let Answer::Produced(frontend) = compiler.derive_output(frontend_target, &source) else {
+    // Preserve and handle the exact non-produced answer.
+    return;
+};
+let schema = frontend.output(&json_schema_output).expect("declared output");
+let operations = frontend.output(&operations_output).expect("declared output");
+
+let rust = compiler.derive_output(rust_target, std::slice::from_ref(&schema));
+let routes = compiler.derive_output(routes_target, &[schema, operations]);
+```
+
+The frontend parser runs once. Later calls consume admitted semantic facts;
+they do not re-observe source bytes or introduce a serialized build graph.
+
 The CLI is only this reference host. Backend repositories ship independently
 versioned provider packages and, when their threat model requires
 per-candidate assessment, attester packages that can be assembled into a
@@ -167,6 +187,22 @@ let result = provider.invoke(&invocation, |context| {
     context.produced().output("program", program)?.finish()
 })?;
 ```
+
+One executable may serve several capabilities without rebuilding this
+dispatch by hand. `ProviderApp` registers exact capability/implementation
+pairs and uses the same neutral document framing and full specification
+validation as `Provider`; duplicate, unknown, and same-identity contract-drift
+requests are refused before a transformation handler runs:
+
+```rust
+let mut app = gooir_provider::neutral::ProviderApp::new();
+app.register(parse_spec(), parse_implementation(), parse_handler)?;
+app.register(generate_spec(), generate_implementation(), generate_handler)?;
+app.serve_stdio()?;
+```
+
+The app does not discover, rank, or select providers. The host still selects
+one exact installed offer and invokes the executable that contains it.
 
 The same surface authors lifts, lowerings, analyses, bridges, and generators;
 those are capability meanings, not separate kernel mechanisms. Multiple

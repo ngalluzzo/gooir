@@ -16,9 +16,10 @@
   default-deny contextual admission bases.
 - One bounded 0.1 derivation façade with exact complete selection and five
   remedy-preserving terminal answers.
-- One thin compiler driver that admits source observations and delegates the
-  complete multi-hop plan/link/invoke/authorize-or-assess/admit spine to that
-  façade.
+- One reusable compiler driver that atomically admits source observations,
+  retains their exact references across several requests, exposes named
+  admitted outputs, and delegates the complete multi-hop
+  plan/link/invoke/authorize-or-assess/admit spine to the façade.
 - One bounded local stdio host over exact copied offer and attester resources,
   with explicit byte/deadline bounds and kill-plus-reap timeout behavior.
 - A neutral v1 attester assessment-request and authoring seam.
@@ -29,6 +30,8 @@
   downstream consumer.
 - A neutral v1 provider-authoring SDK exercised independently by the
   authored-data-model provider and the native HTTP-to-Axum-to-Rust ecosystem.
+- Exact multi-capability provider dispatch for serving several implementations
+  from one executable without discovery, fallback, or per-capability mains.
 - A host-owned toolchain-image SDK for measuring final external provider and
   attester resources, deriving exact offers and bindings, atomically staging a
   create-only image, and independently reloading its package inventory.

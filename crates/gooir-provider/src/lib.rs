@@ -8,7 +8,8 @@
 //!
 //! The top-level registration helpers below are the older in-process
 //! compatibility surface. New package-backed providers should use
-//! [`neutral::Provider`].
+//! [`neutral::Provider`] or [`neutral::ProviderApp`] when one executable serves
+//! several exact capability implementations.
 //!
 //! # Legacy in-process adapter
 //!
