@@ -1,8 +1,8 @@
 # gooir-artifact-sdk
 
-Optional host SDK for publishing an exact admitted artifact into one dedicated
-managed directory. This crate is outside GOOIR's semantic kernel and contains
-no target-specific backend.
+Optional host SDK for reading bounded local content and publishing an exact
+admitted artifact into one dedicated managed directory. This crate is outside
+GOOIR's semantic kernel and contains no target-specific backend.
 
 The pure contract is `org.gooi.artifact.content_set@1.0.0`, value kind
 `org.gooi.artifact.content_set/set@1.0.0`. `ContentSet` is a canonical list of
@@ -41,11 +41,52 @@ exact admitted reference, and every file path, digest, and length. Unmanaged,
 wrong-owner, drifted, ambiguous, and symlink-containing state is never
 overwritten.
 
+## Read-only inputs
+
+`LocalSourceTreeReader` recursively reads one declared directory into a
+canonical `ContentSet`. It uses descriptor-relative, no-follow traversal on
+macOS and Linux; rejects symlinks, special files, nonportable paths, and
+detected races; and enforces file, directory, per-file, and aggregate byte
+bounds. The root is only a local anchor and is not included in content paths.
+
+```rust
+let source = LocalSourceTreeReader::default().read("spec")?;
+```
+
+Reading bytes does not observe or admit a GOOIR fact. A workspace host must
+separately construct the exact source observation and apply its own accepted
+observation authority.
+
+`LocalPublisher::snapshot` performs the inverse host-side read needed by
+stateful generators. It returns `None` only when the destination is missing
+under an existing immediate parent that the publisher can lock. An absent
+immediate parent is a `MissingParent` error because there is no directory on
+which to coordinate the read. For a clean output it returns the verified
+`OwnershipManifest` and exact `ContentSet` bytes without the host-owned marker.
+Unmanaged, wrong-owner, drifted, over-limit, symlinked, or
+changed-during-read state is refused.
+
+```rust
+if let Some(previous) = LocalPublisher::default().snapshot(&output)? {
+    assert_eq!(&previous.manifest.output_id, output.id());
+    use_previous_bytes(previous.content)?;
+}
+```
+
+Snapshots are host data, not admitted facts or migration semantics. A caller
+that uses one as a derivation input must observe and admit it explicitly.
+
 ## Platform and threat model
 
 The local publisher is available on macOS and Linux when the destination's
 local filesystem supports atomic no-replace rename and atomic directory
 exchange. Runtime lack of either operation is an explicit error before commit.
+
+The source reader anchors descendant opens to already opened directory
+descriptors and detects ordinary concurrent changes by identity, size, time,
+and repeated directory enumeration. It is not a filesystem snapshot against a
+privileged process able to rewrite bytes and restore metadata during a read;
+the caller must control the selected source root.
 
 The publisher takes `flock` on the immediate parent directory, so cooperating
 publishers serialize complete-tree inspection and replacement. It assumes the

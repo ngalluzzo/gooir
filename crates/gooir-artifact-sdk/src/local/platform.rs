@@ -1,44 +1,12 @@
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write as _;
-use std::io::{Read as _, Take};
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use rustix::fs::{FlockOperation, RenameFlags};
 
 use super::*;
-
-pub(super) fn read_nofollow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, PublishError> {
-    let descriptor = rustix::fs::open(
-        path,
-        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NOFOLLOW,
-        rustix::fs::Mode::empty(),
-    )
-    .map_err(|error| {
-        io_error(
-            "open regular file without following symlinks",
-            path,
-            std::io::Error::from_raw_os_error(error.raw_os_error()),
-        )
-    })?;
-    let file = File::from(descriptor);
-    let metadata = file
-        .metadata()
-        .map_err(|error| io_error("inspect opened file", path, error))?;
-    if !metadata.is_file() || metadata.len() > max_bytes {
-        return Err(PublishError::Drift(path.to_owned()));
-    }
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    let mut bounded: Take<File> = file.take(max_bytes.saturating_add(1));
-    bounded
-        .read_to_end(&mut bytes)
-        .map_err(|error| io_error("read regular file", path, error))?;
-    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) != metadata.len() {
-        return Err(PublishError::Drift(path.to_owned()));
-    }
-    Ok(bytes)
-}
 
 pub(super) fn with_parent_lock<T>(
     output: &ManagedOutput,
