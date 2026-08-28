@@ -1,1 +1,0 @@
-{"protocol":"org.gooi.package/v1","package":"org.gooi.module@0.1.0","content_digest":"sha256:9f25c5919970e62ec94e5703fe23cc94c9bf3b72ea404a21fd1f3a07296d08e7","dependencies":[],"resources":[],"dialects":[{"id":"org.gooi.module@0.1.0","value_kinds":[{"id":"org.gooi.module/module@0.1.0"}]}],"conformance_suites":[],"capabilities":[],"implementation_offers":[]}

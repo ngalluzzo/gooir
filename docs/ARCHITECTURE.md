@@ -40,37 +40,6 @@ A fact identity covers its exact value kind, payload, and preserved semantic
 extensions. It does not silently absorb provenance, implementation choice,
 conformance, or host policy. Those are evidence about the value.
 
-### Optional whole-unit composition
-
-`gooir-module-v0` is a dialect layered on this object graph, not another
-kernel level. A module is one ordinary fact containing an ordered sequence of
-operations; each operation wraps another ordinary fact from an explicitly
-declared dialect. Local symbol declarations and named, exactly typed symbol
-references provide structural links without interpreting either endpoint.
-
-The module contract deliberately contains no compilation target, pass
-pipeline, implementation selection, authority, or execution state.
-`gooir-module-planning` layers target legality over it without introducing a
-second transformation graph: candidate planning exposes the unique contained
-value-kind set to the existing semantic planner, while later route binding
-maps named initial uses to exact operation occurrences. A bound plan performs
-no replacements; it proves that every illegal occurrence is covered by the
-selected route and refuses same-kind/no-progress or uncovered-illegal cases.
-Legal operations remain outside the coverage claim. The plan still carries no
-authority or execution claim. This composition layer does not change the five
-kernel concepts.
-
-Contained operations cross the authority membrane through
-`gooir-module-observer`, not authority inheritance. The adapter first resolves
-the admitted enclosing module, verifies one exact occurrence, and creates a
-canonical containment witness plus an ordinary untrusted source observation.
-The normal local policy must explicitly accept the exact observer and artifact
-before admitting the child. The resulting child authority is an ordinary
-source basis with containment evidence; it is independently linkable in that
-ledger and is not dynamically scoped to one module invocation. Evidence bytes
-remain externally held at their locator, so snapshot validation trusts the
-recorded observer and digest rather than re-running containment.
-
 ## Five kernel concepts
 
 ### Fact

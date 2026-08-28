@@ -36,9 +36,6 @@ The repository also contains narrow, optional support:
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
-| `gooir-module-v0` | foundational heterogeneous module dialect; structural composition, not a kernel concept |
-| `gooir-module-planning` | target legality and exact occurrence binding over the existing capability graph |
-| `gooir-module-observer` | explicit containment evidence and policy-gated child source observations |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
 Nothing domain-specific is installed by default. The CLI receives exact
@@ -80,34 +77,6 @@ answer, not a new stable compile receipt, and no target-specific file is
 materialized. Planning remains separately inspectable and provider-neutral.
 The temporary `derive --pack ... --plugin ...` command remains an explicitly
 legacy compatibility bridge. GOOIR never scans for executable code.
-
-`gooir-module-v0` is the optional whole-unit composition vocabulary. One
-module fact contains ordered operations that wrap ordinary content-identified
-facts from any explicitly declared dialect. Operations may declare local
-symbols and carry named, exactly typed references to other operations. The
-module adds no target, pass pipeline, implementation choice, execution, or
-domain meaning; those remain compiler request, capability, and host concerns.
-
-`gooir-module-planning` supplies the corresponding compiler-request layer. A
-target names one required result and the exact operation kinds legal in the
-final module. Candidate planning presents the unique contained kind set to the
-ordinary semantic planner; route binding then maps named capability input uses
-back to exact operation occurrences and refuses to legalize a module unless
-every illegal occurrence is covered. Legal operations remain outside that
-coverage. These content-identified documents perform no provider execution,
-invocation linking, admission, rewriting, or target materialization, and a
-contained fact never becomes independently admitted merely because its module
-was admitted.
-
-`gooir-module-observer` bridges bound occurrences to the existing authority
-membrane without changing invocation or authority protocols. It resolves an
-exact admitted module, verifies the complete occurrence coordinate, emits a
-content-identified containment witness, and returns an ordinary untrusted
-source observation. Projection itself grants nothing: local policy must accept
-the exact observer implementation and artifact before the child becomes
-linkable. Once admitted, that child is an ordinary fact in that ledger; v1 does
-not restrict its later use to one module compilation. True invocation-scoped
-child authority would require a future protocol rather than an adapter trick.
 
 ## Writing a provider
 
