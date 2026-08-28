@@ -21,8 +21,11 @@
 - Neutral graph diagnostics and explicitly loaded package manifests.
 - A bounded WASI command runtime usable by external hosts.
 - A separately versioned, bounded, content-addressed virtual file-tree
-  artifact contract with portable path and collision rules, but no filesystem
-  authority or materializer.
+  artifact contract with portable path and collision rules; the contract
+  itself carries no filesystem authority.
+- A bounded local file-tree materializer that requires exact admitted
+  authority, rejects unknown semantic extensions and existing destinations,
+  and atomically publishes a synchronized same-parent staging tree.
 - One deterministic data-model ecosystem extracted as a downstream consumer.
 - One stateful Fleetd direct-conversation proof ecosystem extracted as a
   downstream consumer.
@@ -49,6 +52,12 @@ independent consumers. It does not widen `CompilerDriver`: destination choice,
 write policy, materialization, receipts, and product build orchestration remain
 outside the semantic driver. A future product build driver must resolve an
 exact admitted file-tree authority before invoking any host materializer.
+
+The first local materializer supplies that authority gate and a
+non-constructible host receipt. It intentionally supports only no-replace
+publication with mandatory limits and modes. It does not give the compiler
+driver filesystem authority, define overwrite or deletion policy, serialize a
+universal receipt, or recover an interrupted build.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,

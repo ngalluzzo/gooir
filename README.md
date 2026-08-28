@@ -36,6 +36,7 @@ The repository also contains narrow, optional support:
 | `gooir-provider` | neutral v1 provider and attester authoring SDKs plus legacy in-process adapter; not trusted kernel |
 | `gooir-plugin-process` | transitional process-provider adapter; host-side, not a universal ABI |
 | `gooir-file-tree-v1` | portable content-addressed virtual-file artifact dialect; no filesystem effects |
+| `gooir-file-tree-materializer` | admitted-authority gate and bounded atomic no-replace local publication host |
 | `gooir-wasip1-command-runtime` | bounded WASI command runner for hosts |
 | `lift-defeasible` | reusable value-plus-defeaters representation |
 
@@ -161,6 +162,14 @@ document. It can be the admitted output of a generation capability, but it
 contains only portable relative paths, exact bytes, media types, and content
 digests. It grants no destination or write authority and is not evidence that
 anything was materialized.
+
+The separate `gooir-file-tree-materializer` host library is the narrow bridge
+to physical files. It resolves an exact admitted reference inside the supplied
+host ledger, refuses unhandled extensions across the full authority chain and
+FileTree plus every existing destination, checks mandatory host limits and Unix
+modes, stages through retained no-follow directory descriptors, and atomically
+publishes the complete tree. Its receipt is local effect evidence, not another
+semantic fact or a claim that later actors cannot change the files.
 
 ## Qualify
 
