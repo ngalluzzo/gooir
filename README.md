@@ -92,11 +92,16 @@ The complete authority must be accepted by the policy, and its artifact digest
 must equal the copied installed resource bytes.
 
 This bounded adapter executes selected artifacts with the caller's OS
-privileges. It supplies no arguments or environment, performs no `PATH` lookup,
-and kills and reaps a child that exceeds its deadline, but it is not a sandbox
-or durable execution host. JSON output is the existing five-outcome derivation
-answer, not a new stable compile receipt, and no target-specific file is
-materialized. Planning remains separately inspectable and provider-neutral.
+privileges. It supplies no arguments and clears the environment by default.
+An optional local provider-environment document may grant explicit string
+values to one exact installed offer; the offer identity binds its capability,
+implementation, artifact digest, and extensions. Every unbound provider and
+every attester still receives an empty environment. Explicitly supplying
+`PATH` grants that provider path-discovery authority. The adapter kills and
+reaps a child that exceeds its deadline, but it is not a sandbox or durable
+execution host. JSON output is the existing five-outcome derivation answer,
+not a new stable compile receipt, and no target-specific file is materialized.
+Planning remains separately inspectable and provider-neutral.
 The temporary `derive --pack ... --plugin ...` command remains an explicitly
 legacy compatibility bridge. GOOIR never scans for executable code.
 

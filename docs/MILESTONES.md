@@ -16,7 +16,8 @@
 - One thin compiler driver that admits source observations and delegates the
   complete multi-hop plan/link/invoke/assess/admit spine to that façade.
 - One bounded local stdio host over exact copied offer and attester resources,
-  with explicit byte/deadline bounds and kill-plus-reap timeout behavior.
+  with explicit byte/deadline bounds, kill-plus-reap timeout behavior, and
+  optional bounded environment authority scoped to one exact installed offer.
 - A neutral v1 attester assessment-request and authoring seam.
 - Neutral graph diagnostics and explicitly loaded package manifests.
 - A bounded WASI command runtime usable by external hosts.
@@ -80,11 +81,13 @@ the semantic kernel or implying portable effect evidence.
 
 The local `gooir compile` composition is intentionally narrower than a general
 execution platform. It loads only explicit packages, source observations,
-policy, attester bindings, target, and resource limits; it produces the
-existing derivation answer without target-specific materialization or a new
-stable receipt protocol. Its child artifacts retain caller OS authority and
-receive no arguments or environment. Durable execution, credentials, retries,
-deployment, and sandboxing remain external-host concerns.
+policy, attester bindings, optional exact-offer provider environment bindings,
+target, and resource limits; it produces the existing derivation answer
+without target-specific materialization or a new stable receipt protocol. Its
+child artifacts retain caller OS authority, receive no arguments, and receive
+no environment unless the caller explicitly grants bounded values to that
+exact offer. Durable execution, credentials, retries, deployment, and
+sandboxing remain external-host concerns.
 
 The next meaningful semantic work should be driven by another real consumer
 encountering a specific missing protocol property, not by adding speculative
