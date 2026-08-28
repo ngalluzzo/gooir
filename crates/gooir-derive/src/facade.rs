@@ -26,6 +26,7 @@ use serde_json::Value;
 use crate::{
     AdmittedOutput, AttemptDocuments, DerivationHost, LinkedInvocationError,
     LinkedInvocationOutcome, WithheldDerivation, run_linked_invocation,
+    run_provider_authorized_invocation,
 };
 
 /// Exact in-memory shape of façade blockage analysis.
@@ -242,7 +243,8 @@ pub struct InitialBinding {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Exact attester choice for one selected capability step.
+/// Exact attester choice for one selected capability step that is not directly
+/// authorized by the admission policy.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelectedAttester {
     pub capability: CapabilityId,
@@ -262,7 +264,8 @@ pub struct ExplicitSelection {
     pub extensions: BTreeMap<String, Value>,
 }
 
-/// Canonical identity of one complete route/input/offer/suite/attester choice.
+/// Canonical identity of one complete route, input, offer, and required
+/// attester choice. A directly authorized offer needs no selected attester.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct CompleteSelectionId(String);
@@ -452,7 +455,9 @@ impl Answer {
     pub const fn remedy(&self) -> &'static str {
         match self {
             Self::Produced(_) => "use the admitted fact and its exact authority",
-            Self::Blocked(_) => "supply the missing implementation or attester",
+            Self::Blocked(_) => {
+                "supply the missing implementation or attester, or authorize an exact offer"
+            }
             Self::Unreachable(_) => "declare a semantic capability route",
             Self::Refused(_) => "fix the request, selection, or admission policy",
             Self::Failed(_) => "inspect the fixed attempt and repair its failing stage",
@@ -755,7 +760,7 @@ impl DerivationFacade {
         if let Err(detail) = validate_explicit_bindings(&explicit.route, &inputs, explicit) {
             return refused(Refusal::InvalidSelection { detail });
         }
-        if let Err(detail) = validate_explicit_attesters(&plan, inventory, explicit) {
+        if let Err(detail) = validate_explicit_attesters(&plan, policy, inventory, explicit) {
             return refused(Refusal::InvalidSelection { detail });
         }
         if let Some(rejected) = explicit
@@ -877,28 +882,19 @@ impl DerivationFacade {
     where
         H: DerivationHost,
     {
-        let attester = context
-            .prepared
-            .attesters
-            .iter()
-            .find(|attester| attester.capability == step.capability)
-            .ok_or_else(|| {
+        let (suite, attester) =
+            step_authority(context.prepared, policy, step).map_err(|detail| {
                 failed(
                     &context.prepared.selection_id,
                     &context.prepared.route,
                     Some(&step.capability),
                     FailureStage::Linking,
-                    "selected attester is absent".to_owned(),
+                    detail,
                     FailureEvidence::only_admitted(context.admitted.to_vec()),
                 )
             })?;
         let invocation = self
-            .link_step(
-                context.prepared,
-                step,
-                context.produced,
-                &attester.authority.suite,
-            )
+            .link_step(context.prepared, step, context.produced, &suite)
             .map_err(|(stage, detail)| {
                 failed(
                     &context.prepared.selection_id,
@@ -909,7 +905,13 @@ impl DerivationFacade {
                     FailureEvidence::only_admitted(context.admitted.to_vec()),
                 )
             })?;
-        match run_linked_invocation(ledger, policy, &invocation, &attester.authority, host) {
+        let outcome = match attester {
+            Some(attester) => {
+                run_linked_invocation(ledger, policy, &invocation, &attester.authority, host)
+            }
+            None => run_provider_authorized_invocation(ledger, policy, &invocation, host),
+        };
+        match outcome {
             Ok(LinkedInvocationOutcome::Admitted(admission)) => Ok(admission.outputs),
             Ok(LinkedInvocationOutcome::AuthorityNotAccepted(withheld)) => {
                 Err(Answer::Refused(Box::new(Refusal::AdmissionPolicy {
@@ -1130,6 +1132,31 @@ fn planned_capability<'plan>(
         .map(|index| &plan.capabilities[index])
 }
 
+fn step_authority<'prepared>(
+    prepared: &'prepared PreparedDerivation,
+    policy: &AdmissionPolicy,
+    step: &SelectedRouteStep,
+) -> Result<(ConformanceSuiteId, Option<&'prepared SelectedAttester>), String> {
+    let planned = planned_capability(&prepared.plan, &step.capability)
+        .ok_or_else(|| "selected capability left the exact plan".to_owned())?;
+    let offer = planned
+        .offers
+        .iter()
+        .find(|offer| offer.offer_id == step.offer)
+        .ok_or_else(|| "selected offer left the exact plan".to_owned())?;
+    if policy.accepts_provider_offer(offer) {
+        let suite = ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
+            .map_err(|error| error.to_string())?;
+        return Ok((suite, None));
+    }
+    let attester = prepared
+        .attesters
+        .iter()
+        .find(|attester| attester.capability == step.capability)
+        .ok_or_else(|| "selected attester is absent".to_owned())?;
+    Ok((attester.authority.suite.clone(), Some(attester)))
+}
+
 fn route_has_extensions(route: &SelectedRoute) -> bool {
     !route.extensions.is_empty()
         || source_has_extensions(&route.target)
@@ -1266,6 +1293,16 @@ fn attester_alternatives(
                 detail: format!("selected capability {} left the plan", step.capability),
             }
         })?;
+        let offer = planned
+            .offers
+            .iter()
+            .find(|offer| offer.offer_id == step.offer)
+            .ok_or_else(|| Refusal::InvalidSelection {
+                detail: format!("selected offer for {} left the plan", step.capability),
+            })?;
+        if policy.accepts_provider_offer(offer) {
+            continue;
+        }
         let suite = ConformanceSuiteId::parse(&planned.specification.default_conformance_suite)
             .map_err(|error| Refusal::InvalidSelection {
                 detail: error.to_string(),
@@ -1323,13 +1360,15 @@ fn eligible_offers(
                 capability: planned.specification.id.clone(),
                 offer: offer.offer_id.clone(),
             };
+            let directly_accepted = policy.accepts_provider_offer(offer);
             let exact = independent_attesters(attesters, &suite, planned, &offer.offer_id);
-            if !exact.is_empty() {
+            if directly_accepted || !exact.is_empty() {
                 available.insert(identity.clone());
             }
-            if exact
-                .iter()
-                .any(|authority| policy.accepted_conformance.contains(*authority))
+            if directly_accepted
+                || exact
+                    .iter()
+                    .any(|authority| policy.accepted_conformance.contains(*authority))
             {
                 policy_eligible.insert(identity);
             }
@@ -1485,6 +1524,7 @@ fn validate_explicit_bindings(
 
 fn validate_explicit_attesters(
     plan: &SemanticPlan,
+    policy: &AdmissionPolicy,
     inventory: &AttesterInventory,
     explicit: &ExplicitSelection,
 ) -> Result<(), String> {
@@ -1492,6 +1532,16 @@ fn validate_explicit_attesters(
         .route
         .steps
         .iter()
+        .filter(|step| {
+            planned_capability(plan, &step.capability)
+                .and_then(|planned| {
+                    planned
+                        .offers
+                        .iter()
+                        .find(|offer| offer.offer_id == step.offer)
+                })
+                .is_none_or(|offer| !policy.accepts_provider_offer(offer))
+        })
         .map(|step| step.capability.clone())
         .collect::<BTreeSet<_>>();
     let actual = explicit

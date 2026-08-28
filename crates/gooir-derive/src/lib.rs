@@ -3,7 +3,8 @@
 //! This crate neither selects graph routes nor defines an execution transport.
 //! It accepts an already-linked invocation, resolves every exact input against
 //! contextual admission state, and turns host output into linkable authority
-//! records only after independent conformance and local admission.
+//! records only after either exact provider authorization or independent
+//! conformance, followed by local admission.
 
 use std::error::Error;
 use std::fmt;
@@ -29,10 +30,10 @@ pub use local_stdio::*;
 
 /// Effectful operations supplied by an execution host for one linked invocation.
 ///
-/// Invocation and assessment remain separate calls. The returned assessment is
-/// still untrusted: the membrane validates that it is content-bound to the
-/// candidate and was produced by an implementation independent of the selected
-/// provider.
+/// Invocation and assessment remain separate calls. Provider-authorized
+/// invocations use only `invoke`. When `assess` is selected, its returned
+/// assessment is still untrusted: the membrane validates that it is
+/// content-bound to the candidate and independent of the selected provider.
 pub trait DerivationHost {
     /// Host-local failure type. It is deliberately not part of serialized
     /// derivation data.
@@ -92,7 +93,8 @@ pub struct AdmittedDerivation {
     pub outputs: Vec<AdmittedOutput>,
 }
 
-/// A validated assessment and the exact decision that withheld its candidate.
+/// A validated candidate and the exact decision that withheld it. Independently
+/// assessed attempts carry an assessment; provider-authorized attempts do not.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WithheldDerivation {
     pub documents: AttemptDocuments,
@@ -270,46 +272,14 @@ pub fn run_linked_invocation<H: DerivationHost>(
     host: &mut H,
 ) -> Result<LinkedInvocationOutcome, LinkedInvocationError<H::Error>> {
     preflight_linked_invocation(ledger, policy, invocation, attester)?;
-    let mut documents = AttemptDocuments {
-        invocation: invocation.clone(),
-        result: None,
-        candidate: None,
-        assessment: None,
-    };
-    let result = host
-        .invoke(invocation)
-        .map_err(LinkedInvocationError::HostInvocation)?;
-    documents.result = Some(result.clone());
-    if let Err(error) = result.validate_against(invocation) {
-        return Err(LinkedInvocationError::InvalidHostResult {
-            documents: Box::new(documents),
-            error,
-        });
-    }
-
-    if let CapabilityOutcome::Unable { failure, .. } = &result.outcome {
-        return Ok(LinkedInvocationOutcome::ProviderUnable(Box::new(
-            ProviderUnableDerivation {
-                documents,
-                failure: failure.clone(),
-            },
-        )));
-    }
-
-    let candidate = match CapabilityCandidate::new(
-        invocation,
-        result.clone(),
-        std::collections::BTreeMap::new(),
-    ) {
-        Ok(candidate) => candidate,
-        Err(error) => {
-            return Err(LinkedInvocationError::InvalidHostResult {
-                documents: Box::new(documents),
-                error,
-            });
+    let (result, candidate, mut documents) = match invoke_candidate(invocation, host)? {
+        InvokedCandidate::Unable(unable) => {
+            return Ok(LinkedInvocationOutcome::ProviderUnable(unable));
+        }
+        InvokedCandidate::Produced(produced) => {
+            (produced.result, produced.candidate, produced.documents)
         }
     };
-    documents.candidate = Some(candidate.clone());
     let assessment = match host.assess(invocation, &result, &candidate, attester) {
         Ok(assessment) => assessment,
         Err(error) => {
@@ -337,18 +307,119 @@ pub fn run_linked_invocation<H: DerivationHost>(
     admit_linked_candidate(ledger, policy, invocation, &result, &candidate, documents)
 }
 
+/// Execute and contextually admit one linked invocation whose exact provider
+/// offer is directly accepted by the local policy.
+///
+/// This path retains the same structural validation, input-authority checks,
+/// candidate construction, and atomic admission membrane as
+/// [`run_linked_invocation`]. It deliberately performs no independent
+/// assessment; the complete selected offer and local policy are the recorded
+/// authority basis.
+///
+/// # Errors
+///
+/// Returns the same typed membrane failures as [`run_linked_invocation`],
+/// except that no attester or assessment failure can occur.
+pub fn run_provider_authorized_invocation<H: DerivationHost>(
+    ledger: &mut AdmissionLedger,
+    policy: &AdmissionPolicy,
+    invocation: &CapabilityInvocation,
+    host: &mut H,
+) -> Result<LinkedInvocationOutcome, LinkedInvocationError<H::Error>> {
+    preflight_provider_invocation(ledger, policy, invocation)?;
+    if !policy.accepts_provider_offer(&invocation.selection.offer) {
+        return Err(LinkedInvocationError::InvalidPolicy(
+            AuthorityError::ProviderOfferNotAccepted(invocation.selection.offer.offer_id.clone()),
+        ));
+    }
+    let (result, candidate, documents) = match invoke_candidate(invocation, host)? {
+        InvokedCandidate::Unable(unable) => {
+            return Ok(LinkedInvocationOutcome::ProviderUnable(unable));
+        }
+        InvokedCandidate::Produced(produced) => {
+            (produced.result, produced.candidate, produced.documents)
+        }
+    };
+    let admission = ledger
+        .admit_provider_candidate(policy, invocation, &result, &candidate)
+        .map_err(|error| LinkedInvocationError::Admission {
+            documents: Box::new(documents.clone()),
+            error,
+        })?;
+    finish_admission(ledger, admission, documents)
+}
+
+enum InvokedCandidate {
+    Unable(Box<ProviderUnableDerivation>),
+    Produced(Box<ProducedCandidateAttempt>),
+}
+
+struct ProducedCandidateAttempt {
+    result: CapabilityResult,
+    candidate: CapabilityCandidate,
+    documents: AttemptDocuments,
+}
+
+fn invoke_candidate<H: DerivationHost>(
+    invocation: &CapabilityInvocation,
+    host: &mut H,
+) -> Result<InvokedCandidate, LinkedInvocationError<H::Error>> {
+    let mut documents = AttemptDocuments {
+        invocation: invocation.clone(),
+        result: None,
+        candidate: None,
+        assessment: None,
+    };
+    let result = host
+        .invoke(invocation)
+        .map_err(LinkedInvocationError::HostInvocation)?;
+    documents.result = Some(result.clone());
+    if let Err(error) = result.validate_against(invocation) {
+        return Err(LinkedInvocationError::InvalidHostResult {
+            documents: Box::new(documents),
+            error,
+        });
+    }
+
+    if let CapabilityOutcome::Unable { failure, .. } = &result.outcome {
+        return Ok(InvokedCandidate::Unable(Box::new(
+            ProviderUnableDerivation {
+                documents,
+                failure: failure.clone(),
+            },
+        )));
+    }
+
+    let candidate = match CapabilityCandidate::new(
+        invocation,
+        result.clone(),
+        std::collections::BTreeMap::new(),
+    ) {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            return Err(LinkedInvocationError::InvalidHostResult {
+                documents: Box::new(documents),
+                error,
+            });
+        }
+    };
+    documents.candidate = Some(candidate.clone());
+    Ok(InvokedCandidate::Produced(Box::new(
+        ProducedCandidateAttempt {
+            result,
+            candidate,
+            documents,
+        },
+    )))
+}
+
 fn preflight_linked_invocation<E>(
     ledger: &AdmissionLedger,
     policy: &AdmissionPolicy,
     invocation: &CapabilityInvocation,
     attester: &ConformanceAuthority,
 ) -> Result<(), LinkedInvocationError<E>> {
-    invocation
-        .validate()
-        .map_err(LinkedInvocationError::InvalidInvocation)?;
-    policy
-        .validate()
-        .map_err(LinkedInvocationError::InvalidPolicy)?;
+    preflight_provider_invocation(ledger, policy, invocation)?;
     attester
         .validate()
         .map_err(LinkedInvocationError::InvalidAttester)?;
@@ -364,7 +435,20 @@ fn preflight_linked_invocation<E>(
             AuthorityError::AttesterNotIndependent,
         ));
     }
+    Ok(())
+}
 
+fn preflight_provider_invocation<E>(
+    ledger: &AdmissionLedger,
+    policy: &AdmissionPolicy,
+    invocation: &CapabilityInvocation,
+) -> Result<(), LinkedInvocationError<E>> {
+    invocation
+        .validate()
+        .map_err(LinkedInvocationError::InvalidInvocation)?;
+    policy
+        .validate()
+        .map_err(LinkedInvocationError::InvalidPolicy)?;
     for input in &invocation.inputs {
         let resolved = ledger
             .resolve(&input.admitted)
@@ -391,12 +475,21 @@ fn admit_linked_candidate<E>(
         .assessment
         .as_ref()
         .expect("admission receives an assessed attempt");
-    match ledger
+    let admission = ledger
         .admit_candidate(policy, invocation, result, candidate, assessment)
         .map_err(|error| LinkedInvocationError::Admission {
             documents: Box::new(documents.clone()),
             error,
-        })? {
+        })?;
+    finish_admission(ledger, admission, documents)
+}
+
+fn finish_admission<E>(
+    ledger: &AdmissionLedger,
+    admission: AdmissionOutcome,
+    documents: AttemptDocuments,
+) -> Result<LinkedInvocationOutcome, LinkedInvocationError<E>> {
+    match admission {
         AdmissionOutcome::Admitted { decision, links } => {
             let mut outputs = Vec::with_capacity(links.len());
             for link in links {
@@ -867,6 +960,7 @@ mod tests {
     struct FacadeFixture {
         ledger: AdmissionLedger,
         policy: AdmissionPolicy,
+        provider_offer: Option<CapabilityOffer>,
         facade: DerivationFacade,
         request: DerivationRequest,
         attesters: AttesterInventory,
@@ -880,6 +974,7 @@ mod tests {
             fixture.invocation.selection.offer.implementation.clone(),
             with_offer,
         );
+        let provider_offer = registry.offers().next().cloned();
         let request = DerivationRequest {
             target: DerivationGoal::ValueKind(fixture.output.value_kind.clone()),
             inputs: vec![fixture.invocation.inputs[0].admitted.clone()],
@@ -891,6 +986,7 @@ mod tests {
         FacadeFixture {
             ledger: fixture.ledger,
             policy: fixture.policy,
+            provider_offer,
             facade: DerivationFacade::new(&registry, limits()).unwrap(),
             request,
             attesters: AttesterInventory::new([fixture.conformance], limits().max_attesters)
@@ -963,6 +1059,62 @@ mod tests {
             LinkedInvocationOutcome::ProviderUnable(_)
         ));
         assert_eq!(host.invocations, 1);
+        assert_eq!(host.assessments, 0);
+        assert_eq!(fixture.ledger.export().unwrap(), baseline);
+    }
+
+    #[test]
+    fn exact_provider_authority_skips_assessment_without_skipping_admission() {
+        let mut fixture = fixture(false);
+        let policy = fixture
+            .policy
+            .clone()
+            .with_accepted_provider_offers([fixture.invocation.selection.offer.clone()])
+            .unwrap();
+        let mut host = TestHost::new(fixture.output);
+        host.assessment = AssessmentBehavior::HostFailure;
+
+        let outcome = run_provider_authorized_invocation(
+            &mut fixture.ledger,
+            &policy,
+            &fixture.invocation,
+            &mut host,
+        )
+        .unwrap();
+
+        let LinkedInvocationOutcome::Admitted(admitted) = outcome else {
+            panic!("the exact provider offer must be admitted")
+        };
+        assert_eq!(host.invocations, 1);
+        assert_eq!(host.assessments, 0);
+        assert!(admitted.documents.assessment.is_none());
+        assert!(matches!(
+            admitted.outputs[0].authority.basis,
+            AuthorityBasis::ProviderAuthorized { .. }
+        ));
+    }
+
+    #[test]
+    fn provider_authorized_entry_point_rejects_unaccepted_offer_before_invocation() {
+        let mut fixture = fixture(false);
+        let baseline = fixture.ledger.export().unwrap();
+        let mut host = TestHost::new(fixture.output);
+
+        let error = run_provider_authorized_invocation(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.invocation,
+            &mut host,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            LinkedInvocationError::InvalidPolicy(AuthorityError::ProviderOfferNotAccepted(
+                ref offer_id
+            )) if offer_id == &fixture.invocation.selection.offer.offer_id
+        ));
+        assert_eq!(host.invocations, 0);
         assert_eq!(host.assessments, 0);
         assert_eq!(fixture.ledger.export().unwrap(), baseline);
     }
@@ -1235,6 +1387,66 @@ mod tests {
         );
         assert_eq!(no_attester.host.invocations, 0);
         assert_eq!(no_attester.host.assessments, 0);
+    }
+
+    #[test]
+    fn facade_runs_an_exact_provider_authorized_route_without_attesters() {
+        let mut fixture = facade_fixture(false, true);
+        let offer = fixture
+            .provider_offer
+            .clone()
+            .expect("fixture installs one exact offer");
+        fixture.policy = fixture
+            .policy
+            .with_accepted_provider_offers([offer])
+            .unwrap();
+        fixture.attesters = AttesterInventory::new([], limits().max_attesters).unwrap();
+        fixture.host.assessment = AssessmentBehavior::HostFailure;
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        let Answer::Produced(produced) = answer else {
+            panic!("expected provider-authorized production: {answer:?}")
+        };
+        assert_eq!(fixture.host.invocations, 1);
+        assert_eq!(fixture.host.assessments, 0);
+        assert!(
+            produced
+                .admitted
+                .iter()
+                .all(|record| matches!(record.basis, AuthorityBasis::ProviderAuthorized { .. }))
+        );
+    }
+
+    #[test]
+    fn exact_provider_authority_takes_precedence_over_accepted_attesters() {
+        let mut fixture = facade_fixture(true, true);
+        let offer = fixture
+            .provider_offer
+            .clone()
+            .expect("fixture installs one exact offer");
+        fixture.policy = fixture
+            .policy
+            .with_accepted_provider_offers([offer])
+            .unwrap();
+
+        let answer = fixture.facade.answer(
+            &mut fixture.ledger,
+            &fixture.policy,
+            &fixture.attesters,
+            &mut fixture.host,
+            &fixture.request,
+        );
+
+        assert!(matches!(answer, Answer::Produced(_)));
+        assert_eq!(fixture.host.invocations, 1);
+        assert_eq!(fixture.host.assessments, 0);
     }
 
     #[test]

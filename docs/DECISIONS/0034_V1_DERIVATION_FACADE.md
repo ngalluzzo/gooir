@@ -3,6 +3,11 @@
 > Decision 0043 supersedes the value-kind-only target statements below. A v1
 > request may now name either a value-kind query or an exact capability output;
 > the remaining selection, authority, outcome, and host boundaries still apply.
+>
+> Decision 0045 supersedes the requirement below that every selected offer
+> have an independent attester. A host policy may directly authorize one exact
+> complete `CapabilityOffer`; all other offers retain the attester path defined
+> here.
 
 Status: accepted
 

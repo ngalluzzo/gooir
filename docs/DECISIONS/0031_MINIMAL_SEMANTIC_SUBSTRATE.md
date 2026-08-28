@@ -151,12 +151,13 @@ The GOOIR trusted computing base is a closed list:
 7. validation of a caller-selected implementation offer and invocation
    linking;
 8. invocation, result, candidate, and evidence-reference binding;
-9. independent conformance-result validation; and
+9. exact provider-authority and independent conformance-result validation; and
 10. contextual admission.
 
-The TCB does not implement or invoke domain payload validation. It consumes
-independently produced, typed conformance results and applies local admission
-policy to them.
+The TCB does not implement domain payload validation. It applies local policy
+to either an exact provider offer explicitly authorized by the host or an
+independently produced, typed conformance result. Decision 0045 defines that
+disjoint choice.
 
 The TCB is allowed to be implementation machinery. It does not need to prove
 itself by recursively expressing its own loader, planner, dispatcher, or
